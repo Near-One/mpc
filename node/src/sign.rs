@@ -1,7 +1,7 @@
 use crate::assets::{ProtocolsStorage, UniqueId};
 use crate::background::InFlightGenerationTracker;
 use crate::config::PresignatureConfig;
-use crate::hkdf::derive_randomness;
+use crate::hkdf::{derive_public_key, derive_randomness};
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::primitives::{participants_from_triples, ParticipantId, PresignOutputWithParticipants};
 use crate::protocol::run_protocol;
@@ -11,7 +11,7 @@ use crate::{metrics, tracking};
 use cait_sith::protocol::Participant;
 use cait_sith::triples::TripleGenerationOutput;
 use cait_sith::{FullSignature, KeygenOutput, PresignArguments, PresignOutput};
-use k256::{elliptic_curve::CurveArithmetic, Scalar, Secp256k1};
+use k256::{Scalar, Secp256k1};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -65,12 +65,6 @@ pub async fn pre_sign_unowned(
     pre_sign(channel, me, threshold, triple0, triple1, keygen_out).await
 }
 
-type PublicKey = <Secp256k1 as CurveArithmetic>::AffinePoint;
-
-fn derive_key(public_key: PublicKey, tweak: Scalar) -> PublicKey {
-    (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * tweak + public_key).to_affine()
-}
-
 /// Performs an MPC signature operation. This is the same for the initiator
 /// and for passive participants.
 /// The entropy is used to rerandomize the presignature (inspired by [GS21])
@@ -91,7 +85,7 @@ pub async fn sign(
         .map(Participant::from)
         .collect::<Vec<_>>();
 
-    let public_key = derive_key(keygen_out.public_key, tweak);
+    let public_key = derive_public_key(keygen_out.public_key, tweak);
 
     // rerandomize the presignature: a variant of [GS21]
     let PresignOutput { big_r, k, sigma } = presign_out;
