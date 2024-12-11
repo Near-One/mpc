@@ -3676,6 +3676,7 @@ dependencies = [
  "borsh",
  "cait-sith",
  "clap",
+ "crypto-shared",
  "flume",
  "futures",
  "futures-util",

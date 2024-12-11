@@ -37,6 +37,7 @@ fn benchmark_single_threaded_signature_generation() {
             &presignatures,
             keygens[&Participant::from(0)].public_key,
             Scalar::random(&mut rand::thread_rng()),
+            Scalar::random(&mut rand::thread_rng()),
         );
     }
     let end_time = std::time::Instant::now();

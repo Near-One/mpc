@@ -1,3 +1,4 @@
+use crate::hkdf::derive_public_key;
 use cait_sith::protocol::{run_protocol, Participant, Protocol};
 use cait_sith::triples::TripleGenerationOutput;
 use cait_sith::{FullSignature, KeygenOutput, PresignArguments, PresignOutput};
@@ -6,6 +7,7 @@ use std::collections::HashMap;
 
 mod basic_cluster;
 mod benchmark;
+mod contract;
 mod research;
 
 /// Convenient test utilities to generate keys, triples, presignatures, and signatures.
@@ -100,21 +102,29 @@ impl TestGenerators {
         &self,
         presignatures: &HashMap<Participant, PresignOutput<Secp256k1>>,
         public_key: AffinePoint,
+        tweak: Scalar,
         msg_hash: Scalar,
     ) -> FullSignature<Secp256k1> {
         let mut protocols: Vec<ParticipantAndProtocol<FullSignature<Secp256k1>>> = Vec::new();
         let participants = (0..self.num_participants)
             .map(|i| Participant::from(i as u32))
             .collect::<Vec<_>>();
+        let derived_public_key = derive_public_key(public_key, tweak);
         for i in 0..self.num_participants {
+            let original_presig = &presignatures[&participants[i]];
+            let tweaked_presig = PresignOutput {
+                big_r: original_presig.big_r,
+                k: original_presig.k,
+                sigma: original_presig.sigma + tweak * original_presig.k,
+            };
             protocols.push((
                 participants[i],
                 Box::new(
                     cait_sith::sign::<Secp256k1>(
                         &participants,
                         participants[i],
-                        public_key,
-                        presignatures[&participants[i]].clone(),
+                        derived_public_key,
+                        tweaked_presig,
                         msg_hash,
                     )
                     .unwrap(),
