@@ -33,9 +33,18 @@ pub struct MpcClient {
     presignature_store: Arc<PresignatureStorage>,
     sign_request_store: Arc<SignRequestStorage>,
     root_keyshare: RootKeyshareData,
+    web_client: Arc<reqwest::Client>
 }
 
 impl MpcClient {
+    pub fn get_config(&self) -> Arc<Config> {
+        self.config.clone()
+    }
+
+    pub fn get_web_client(&self) -> Arc<reqwest::Client> {
+        self.web_client.clone()
+    }
+
     pub fn new(
         config: Arc<Config>,
         client: Arc<MeshNetworkClient>,
@@ -43,6 +52,7 @@ impl MpcClient {
         presignature_store: Arc<PresignatureStorage>,
         sign_request_store: Arc<SignRequestStorage>,
         root_keyshare: RootKeyshareData,
+        web_client: Arc<reqwest::Client>
     ) -> Self {
         Self {
             config,
@@ -51,6 +61,7 @@ impl MpcClient {
             presignature_store,
             sign_request_store,
             root_keyshare,
+            web_client
         }
     }
 

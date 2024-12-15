@@ -1,0 +1,47 @@
+my_participant_id: 4271063273
+my_near_account_id: 4271063273
+participants:
+  threshold: 3
+  participants:
+    - id: 2719987951
+      address: node0
+      port: 10000
+      p2p_public_key: ed25519:33YZ7ggLjJ8ck1tyyxohHooqCGyxgXSW6wFJ7yKBMbr8
+      near_account_id: 2719987951
+    - id: 4271063273
+      address: node1
+      port: 10001
+      p2p_public_key: ed25519:CGkGYBaZYtaYFqgvdktLWsbu75WdvASNyHYoAp66ffBA
+      near_account_id: 4271063273
+    - id: 3961734869
+      address: node2
+      port: 10002
+      p2p_public_key: ed25519:Ba1V1jWYPLqeUhn7GiSAkvmmxxBMVHbbrbKMe17dY8XR
+      near_account_id: 3961734869
+    - id: 1480181394
+      address: node3
+      port: 10003
+      p2p_public_key: ed25519:7BWuGYJQGG5URtPs98kkWiwg3bQUP7v2wLQHyFq7RLVS
+      near_account_id: 1480181394
+p2p_private_key_file: p2p_key
+web_ui:
+  host: 0.0.0.0
+  port: 20000
+indexer:
+  stream_while_syncing: false
+  validate_genesis: true
+  sync_mode: Interruption
+  concurrency: 1
+  mpc_contract_id: test0
+  near_credentials_file: validator_key.json
+triple:
+  concurrency: 4
+  desired_triples_to_buffer: 65536
+  timeout_sec: 60
+  parallel_triple_generation_stagger_time_sec: 1
+presignature:
+  concurrency: 16
+  desired_presignatures_to_buffer: 8192
+  timeout_sec: 60
+signature:
+  timeout_sec: 60

@@ -1,26 +1,24 @@
 use crate::config::WebUIConfig;
 use crate::mpc_client::MpcClient;
-use crate::sign_request::SignatureRequest;
+use crate::sign_request::{SignatureId, SignatureRequest};
 use crate::tracking::{self, TaskHandle};
 use anyhow::Context;
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
-use axum::{
-    extract::{Query, State},
-    routing::get,
-    Router,
-};
+use axum::{extract::{Query, State}, routing::get, Json, Router};
 use futures::future::BoxFuture;
 use futures::{stream, FutureExt, StreamExt, TryStreamExt};
 use k256::elliptic_curve::scalar::FromUintUnchecked;
 use k256::sha2::{Digest, Sha256};
-use k256::{Scalar, U256};
+use k256::{AffinePoint, Scalar, U256};
 use prometheus::{default_registry, Encoder, TextEncoder};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use axum::routing::post;
+use futures_util::future::join_all;
 use tokio::sync::OnceCell;
 use tokio::time;
 
@@ -79,6 +77,157 @@ async fn debug_index(
     }
     Ok(())
 }
+
+// ------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UserSignatureRequest {
+    pub uid: String,
+    pub message: Scalar,
+    // pub proof: ProofModel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct IndexRequest {
+    user_signature_request: UserSignatureRequest,
+    id: SignatureId,
+    entropy: [u8; 32],
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SignatureResponse {
+    pub big_r: AffinePoint,
+    pub signature: Scalar,
+}
+
+async fn announce_signature(
+    mpc_client: Arc<MpcClient>,
+    index_request: IndexRequest
+) {
+    let config = mpc_client.get_config();
+    let web_client = mpc_client.get_web_client();
+    let web_ui_port = config.web_ui.port;
+
+    // TODO: We should do the index logic for ourselves right away,
+    //   instead of doing it via http request
+    let post_calls = config
+        .mpc
+        .participants
+        .participants
+        .iter()
+        .map(|participant| {
+            let address = &participant.address;
+            let url = format!("http://{}:{}/index", address, web_ui_port);
+            let data = serde_json::to_value(index_request.clone()).unwrap();
+            let web_client = web_client.clone();
+            async move {
+                let response = web_client
+                    .post(&url)
+                    .json(&data) // Attach the JSON payload
+                    .send()
+                    .await?;
+
+                if response.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Failed to notify participant at {}: {}",
+                        address,
+                        response.status()
+                    ))
+                }
+            }
+        });
+
+    let results: Vec<Result<(), anyhow::Error>> = join_all(post_calls).await;
+
+    for result in results {
+        if let Err(e) = result {
+            eprintln!("Error in announcing signature: {}", e);
+        }
+    }
+}
+
+pub fn from_uid_to_scalar(uid: &String) -> Scalar {
+    let mut hasher = Sha256::new();
+    hasher.update(uid);
+    Scalar::from_uint_unchecked(U256::from_le_slice(&hasher.finalize()))
+}
+
+fn current_time_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis() as u64
+}
+
+async fn index(
+    State(state): State<WebServerState>,
+    Json(index_request): Json<IndexRequest>,
+) -> Result<(), AnyhowErrorWrapper> {
+    let Some(mpc_client) = state.mpc_client.unwrap().get().cloned() else {
+        return Err(anyhow::anyhow!("MPC client not ready").into());
+    };
+
+    let tweak = from_uid_to_scalar(&index_request.user_signature_request.uid);
+    mpc_client.clone().add_sign_request(&SignatureRequest {
+        id: index_request.id,
+        msg_hash: index_request.user_signature_request.message,
+        tweak,
+        entropy: index_request.entropy,
+        timestamp_nanosec: 0,
+    });
+
+    Ok(())
+}
+
+async fn sign(
+    State(state): State<WebServerState>,
+    Json(user_signature_request): Json<UserSignatureRequest>,
+) -> Result<Json<SignatureResponse>, AnyhowErrorWrapper> {
+    let Some(mpc_client) = state.mpc_client.unwrap().get().cloned() else {
+        return Err(anyhow::anyhow!("MPC client not ready").into());
+    };
+    let mpc_client = Arc::new(mpc_client);
+
+    let entropy = generate_ids(1, current_time_millis())[0];
+    let id = SignatureId::from(entropy.clone());
+
+    let index_request = IndexRequest {
+        user_signature_request,
+        id,
+        entropy,
+    };
+    announce_signature(mpc_client.clone(), index_request).await;
+
+    let result = state
+        .task_handle
+        .scope("debug_sign", async move {
+            let timeout = Duration::from_secs(10);
+            let signature = time::timeout(timeout, {
+                tracking::spawn(
+                    &format!("sign #{:?}", id),
+                    mpc_client.clone().make_signature(id),
+                )
+                    .map(|result| anyhow::Ok(result??))
+            })
+                .await
+                .context("timeout")?
+                .context("signature failed")?;
+
+            anyhow::Ok(Json(
+                SignatureResponse {
+                    big_r: signature.big_r,
+                    signature: signature.s,
+                }
+            ))
+        })
+        .await?;
+
+    Ok(result)
+}
+
+// ------------------------------------------------------------
 
 async fn debug_sign(
     State(state): State<WebServerState>,
@@ -200,6 +349,8 @@ pub async fn start_web_server(
         router
             .route("/debug/index", get(debug_index))
             .route("/debug/sign", get(debug_sign))
+            .route("/sign", post(sign))
+            .route("/index", post(index))
     } else {
         router
     };

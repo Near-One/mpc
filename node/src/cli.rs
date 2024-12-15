@@ -106,80 +106,60 @@ impl Cli {
                 let root_keyshare =
                     load_root_keyshare(&home_dir, secrets.local_storage_aes_key, &root_keyshare)?;
 
-                let (chain_config_sender, mut chain_config_receiver) = mpsc::channel(10);
+                // let (chain_config_sender, mut chain_config_receiver) = mpsc::channel(10);
                 let (sign_request_sender, sign_request_receiver) = mpsc::channel(10000);
                 let (sign_response_sender, sign_response_receiver) = mpsc::channel(10000);
 
                 // Start the near indexer
-                let indexer_handle = config.indexer.clone().map(|indexer_config| {
-                    let config = config.clone();
-                    let home_dir = home_dir.clone();
-                    std::thread::spawn(move || {
-                        actix::System::new().block_on(async {
-                            let transaction_signer = account_secret_key.map(|account_secret_key| {
-                                Arc::new(TransactionSigner::from_key(
-                                    config.my_near_account_id.clone(),
-                                    account_secret_key,
-                                ))
-                            });
-                            let indexer = near_indexer::Indexer::new(
-                                indexer_config.to_near_indexer_config(home_dir.clone()),
-                            )
-                            .expect("Failed to initialize the Indexer");
-                            let stream = indexer.streamer();
-                            let (view_client, client) = indexer.client_actors();
-                            let stats: Arc<Mutex<IndexerStats>> =
-                                Arc::new(Mutex::new(IndexerStats::new()));
+                // let indexer_handle = config.indexer.clone().map(|indexer_config| {
+                //     let config = config.clone();
+                //     let home_dir = home_dir.clone();
+                //     std::thread::spawn(move || {
+                //         actix::System::new().block_on(async {
+                //             let transaction_signer = account_secret_key.map(|account_secret_key| {
+                //                 Arc::new(TransactionSigner::from_key(
+                //                     config.my_near_account_id.clone(),
+                //                     account_secret_key,
+                //                 ))
+                //             });
+                //             let indexer = near_indexer::Indexer::new(
+                //                 indexer_config.to_near_indexer_config(home_dir.clone()),
+                //             )
+                //             .expect("Failed to initialize the Indexer");
+                //             let stream = indexer.streamer();
+                //             let (view_client, client) = indexer.client_actors();
+                //             let stats: Arc<Mutex<IndexerStats>> =
+                //                 Arc::new(Mutex::new(IndexerStats::new()));
+                //
+                //             actix::spawn(read_participants_from_chain(
+                //                 indexer_config.mpc_contract_id.clone(),
+                //                 indexer_config.port_override,
+                //                 view_client.clone(),
+                //                 client.clone(),
+                //                 chain_config_sender,
+                //             ));
+                //             actix::spawn(indexer_logger(Arc::clone(&stats), view_client.clone()));
+                //             actix::spawn(handle_sign_responses(
+                //                 transaction_signer,
+                //                 indexer_config.mpc_contract_id.clone(),
+                //                 sign_response_receiver,
+                //                 view_client,
+                //                 client,
+                //             ));
+                //             listen_blocks(
+                //                 stream,
+                //                 indexer_config.concurrency,
+                //                 Arc::clone(&stats),
+                //                 indexer_config.mpc_contract_id,
+                //                 sign_request_sender,
+                //             )
+                //             .await;
+                //         });
+                //     })
+                // });
 
-                            actix::spawn(read_participants_from_chain(
-                                indexer_config.mpc_contract_id.clone(),
-                                indexer_config.port_override,
-                                view_client.clone(),
-                                client.clone(),
-                                chain_config_sender,
-                            ));
-                            actix::spawn(indexer_logger(Arc::clone(&stats), view_client.clone()));
-                            actix::spawn(handle_sign_responses(
-                                transaction_signer,
-                                indexer_config.mpc_contract_id.clone(),
-                                sign_response_receiver,
-                                view_client,
-                                client,
-                            ));
-                            listen_blocks(
-                                stream,
-                                indexer_config.concurrency,
-                                Arc::clone(&stats),
-                                indexer_config.mpc_contract_id,
-                                sign_request_sender,
-                            )
-                            .await;
-                        });
-                    })
-                });
-
-                // Replace participants in config with those listed in the smart contract state
-                let participants = if config.indexer.is_some() {
-                    let Some(chain_config) = chain_config_receiver.recv().await else {
-                        anyhow::bail!("Participant sender dropped by indexer");
-                    };
-                    let chain_config = chain_config?;
-                    tracing::info!(target: "mpc", "read chain config {:?} from chain", chain_config);
-                    let public_key_from_keyshare =
-                        affine_point_to_public_key(root_keyshare.public_key)?;
-                    if chain_config.root_public_key != public_key_from_keyshare {
-                        anyhow::bail!(
-                            "Root public key mismatch: {:?} != {:?}",
-                            chain_config.root_public_key,
-                            public_key_from_keyshare
-                        );
-                    }
-                    chain_config.participants
-                } else {
-                    let Some(participants) = config.participants.clone() else {
-                        anyhow::bail!("Participants must either be read from on chain or specified statically in the config");
-                    };
-                    participants
+                let Some(participants) = config.participants.clone() else {
+                    anyhow::bail!("Participants must either be read from on chain or specified statically in the config");
                 };
 
                 let mpc_config = MpcConfig::from_participants_with_near_account_id(
@@ -206,7 +186,7 @@ impl Cli {
                             config.web_ui.clone(),
                             Some(mpc_client_cell.clone()),
                         )
-                        .await?,
+                            .await?,
                     );
 
                     let (sender, receiver) =
@@ -233,6 +213,7 @@ impl Cli {
 
                     let sign_request_store = Arc::new(SignRequestStorage::new(secret_db.clone())?);
 
+                    let web_client = Arc::new(reqwest::Client::new());
                     let config = Arc::new(config);
                     let mpc_client = MpcClient::new(
                         config.clone(),
@@ -241,6 +222,7 @@ impl Cli {
                         presignature_store,
                         sign_request_store,
                         root_keyshare,
+                        web_client,
                     );
                     mpc_client_cell
                         .set(mpc_client.clone())
@@ -259,11 +241,11 @@ impl Cli {
                 });
 
                 root_task.await?;
-                if let Some(indexer_handle) = indexer_handle {
-                    indexer_handle
-                        .join()
-                        .map_err(|_| anyhow::anyhow!("Indexer thread panicked"))?;
-                }
+                // if let Some(indexer_handle) = indexer_handle {
+                //     indexer_handle
+                //         .join()
+                //         .map_err(|_| anyhow::anyhow!("Indexer thread panicked"))?;
+                // }
 
                 Ok(())
             }
