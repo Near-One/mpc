@@ -49,13 +49,14 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 url = "2"
 x509-parser = "0.16.0"
 
-# TODO(#82): temporary: rev d85bd53a6: based on 2.4.0-rc.2 with indexer fixes.
-near-indexer = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
-near-indexer-primitives = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
-near-client = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
-near-config-utils = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
-near-crypto = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
-near-o11y = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
+# TODO(#82): temporary: rev 859da4b5f4732dd332e535feafe731dff060111f: includes indexer fixes for single shard tracking.
+# Move on to 2.5.0 when the release is cut.
+near-indexer = { git = "https://github.com/near/nearcore", rev = "859da4b5f4732dd332e535feafe731dff060111f" }
+near-indexer-primitives = { git = "https://github.com/near/nearcore", rev = "859da4b5f4732dd332e535feafe731dff060111f" }
+near-client = { git = "https://github.com/near/nearcore", rev = "859da4b5f4732dd332e535feafe731dff060111f" }
+near-config-utils = { git = "https://github.com/near/nearcore", rev = "859da4b5f4732dd332e535feafe731dff060111f" }
+near-crypto = { git = "https://github.com/near/nearcore", rev = "859da4b5f4732dd332e535feafe731dff060111f" }
+near-o11y = { git = "https://github.com/near/nearcore", rev = "859da4b5f4732dd332e535feafe731dff060111f" }
 
 mpc-contract = { git = "https://github.com/near/mpc/", tag = "1.0.0-rc.5" }
 

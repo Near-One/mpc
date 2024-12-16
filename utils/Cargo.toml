@@ -13,7 +13,7 @@ path = "key-migration.rs"
 
 [dependencies]
 mpc-node = { path = "../node" }
-near-crypto = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
+near-crypto = { git = "https://github.com/near/nearcore", rev = "859da4b5f4732dd332e535feafe731dff060111f" }
 rand = "0.8.5"
 hex = "0.4.3"
 anyhow = "1.0.94"

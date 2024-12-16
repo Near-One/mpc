@@ -15,7 +15,7 @@ pub(crate) struct TransactionSigner {
 impl TransactionSigner {
     pub(crate) fn from_key(account_id: AccountId, key: SecretKey) -> Self {
         TransactionSigner {
-            signer: Signer::InMemory(InMemorySigner::from_secret_key(account_id, key)),
+            signer: InMemorySigner::from_secret_key(account_id, key),
             nonce: Mutex::new(0),
         }
     }
