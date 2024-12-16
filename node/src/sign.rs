@@ -1,7 +1,7 @@
 use crate::assets::{ProtocolsStorage, UniqueId};
 use crate::background::InFlightGenerationTracker;
 use crate::config::PresignatureConfig;
-use crate::hkdf::derive_randomness;
+use crate::hkdf::{derive_public_key, derive_randomness};
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::primitives::{participants_from_triples, ParticipantId, PresignOutputWithParticipants};
 use crate::protocol::run_protocol;
@@ -11,10 +11,11 @@ use crate::{metrics, tracking};
 use cait_sith::protocol::Participant;
 use cait_sith::triples::TripleGenerationOutput;
 use cait_sith::{FullSignature, KeygenOutput, PresignArguments, PresignOutput};
-use k256::{elliptic_curve::CurveArithmetic, Scalar, Secp256k1};
+use k256::{AffinePoint, Scalar, Secp256k1};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use k256::elliptic_curve::CurveArithmetic;
 use tokio::time::timeout;
 
 /// Performs an MPC presignature operation. This is shared for the initiator
@@ -83,7 +84,7 @@ pub async fn sign(
     msg_hash: Scalar,
     tweak: Scalar,
     entropy: [u8; 32],
-) -> anyhow::Result<FullSignature<Secp256k1>> {
+) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
     let cs_participants = channel
         .participants
         .iter()
@@ -91,7 +92,7 @@ pub async fn sign(
         .map(Participant::from)
         .collect::<Vec<_>>();
 
-    let public_key = derive_key(keygen_out.public_key, tweak);
+    let public_key = derive_public_key(keygen_out.public_key, tweak);
 
     // rerandomize the presignature: a variant of [GS21]
     let PresignOutput { big_r, k, sigma } = presign_out;
@@ -123,7 +124,7 @@ pub async fn sign(
     )?;
     let signature = run_protocol("sign", channel, me, protocol).await?;
     metrics::MPC_NUM_SIGNATURES_GENERATED.inc();
-    Ok(signature)
+    Ok((signature, public_key))
 }
 
 pub type PresignatureStorage = ProtocolsStorage<PresignOutputWithParticipants>;

@@ -250,8 +250,8 @@ async fn sign(
 
             anyhow::Ok(Json(
                 SignatureResponse {
-                    big_r: signature.big_r,
-                    signature: signature.s,
+                    big_r: signature.0.big_r,
+                    signature: signature.0.s,
                 }
             ))
         })
@@ -321,9 +321,10 @@ async fn debug_sign(
             anyhow::Ok(axum::Json(
                 signatures
                     .into_iter()
-                    .map(|s| DebugSignatureOutput {
+                    .map(|(s, pk)| DebugSignatureOutput {
                         big_r: format!("{:?}", s.big_r),
                         s: format!("{:?}", s.s),
+                        public_key: format!("{:?}", pk),
                     })
                     .collect(),
             ))
@@ -370,6 +371,7 @@ struct DebugSignatureRequest {
 struct DebugSignatureOutput {
     big_r: String,
     s: String,
+    public_key: String,
 }
 
 #[derive(Clone)]

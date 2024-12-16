@@ -107,6 +107,11 @@ pub fn derive_tweak(predecessor_id: &AccountId, path: &str) -> Scalar {
     )
 }
 
+/// Derives a public key from a tweak and a master public key by computing PK + [tweak] G
+pub fn derive_public_key(public_key: AffinePoint, tweak: Scalar) -> AffinePoint {
+    (AffinePoint::GENERATOR * tweak + public_key).to_affine()
+}
+
 // Test with a couple of different input values the randomness are also different.
 #[cfg(test)]
 mod derive_tests {
