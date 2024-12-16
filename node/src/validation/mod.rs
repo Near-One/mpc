@@ -1,12 +1,18 @@
 mod near;
-mod light_proofs;
+mod evm;
 
-use std::path::PathBuf;
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use near_primitives::borsh::{BorshDeserialize, BorshSerialize};
-use near_sdk::bs58;
-use web3::ethabi::Contract;
 use anyhow::Result;
+use borsh::{BorshDeserialize, BorshSerialize};
+use futures_util::stream::FuturesUnordered;
+use near_sdk::bs58;
+use sha2::{Digest, Sha256};
+use tokio_stream::StreamExt;
+use tracing::log::error;
+use web3::ethabi::Contract;
+use crate::validation::evm::EvmThresholdVerifier;
+use crate::validation::near::NearThresholdVerifier;
 
 pub(crate) const HOT_VERIFY_ABI: &'static str = r#"[{"inputs":[{"internalType":"bytes32","name":"msg_hash","type":"bytes32"},{"internalType":"bytes","name":"walletId","type":"bytes"},{"internalType":"bytes","name":"userPayload","type":"bytes"},{"internalType":"bytes","name":"metadata","type":"bytes"}],"name":"hot_verify","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"}]"#;
 pub(crate) const HOT_VERIFY_METHOD_NAME: &'static str = "hot_verify";
@@ -86,130 +92,184 @@ pub struct WalletAccessModel {
     pub chain_id: usize,
 }
 
-pub struct Validation {
-    // near_validation: NearValidation,
-    // base_validation: BaseValidation,
-    // eth_validation: EthValidation,
+pub(crate) trait SingleVerifier {
+    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool>;
 }
 
-pub struct NearValidationConfig {
+pub(crate) trait ThresholdVerifier {
+    fn get_verifiers(&self) -> Vec<impl SingleVerifier>;
+    fn get_threshold(&self) -> usize;
+
+    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool> {
+        let verifiers = self.get_verifiers();
+        let mut futures: FuturesUnordered<_> = verifiers
+            .iter()
+            .map(|caller| {
+                caller.verify(auth_contract_id, args.clone())
+            })
+            .collect();
+
+        let mut count = 0;
+        let threshold = self.get_threshold();
+        while let Some(result) = futures.next().await {
+            if let Ok(verdict) = result {
+                if verdict {
+                    count += 1
+                }
+            }
+            if count >= threshold {
+                break;
+            }
+        }
+
+        Ok(count >= threshold)
+    }
+}
+
+pub struct Validation {
+    near_validation: NearThresholdVerifier,
+    base_validation: EvmThresholdVerifier,
+    eth_validation: EvmThresholdVerifier,
+}
+
+pub struct ValidationConfig {
     pub threshold: usize,
     pub servers: Vec<String>,
 }
 
-pub struct LightProofConfig {
-    pub untrusted_rpc_url: String,
-    pub consensus_rpc: String,
-    pub data_dir: Option<PathBuf>,
+pub(crate) fn uid_to_wallet_id(uid: &str) -> Result<String> {
+    let uid_bytes = hex::decode(uid)?;
+    let sha256_bytes = Sha256::new_with_prefix(uid_bytes).finalize();
+    let uid_b58 = bs58::encode(sha256_bytes.as_slice()).into_string();
+    Ok(uid_b58)
 }
 
-// impl Validation {
-//     pub async fn new(
-//         near_validation_config: NearValidationConfig,
-//     ) -> Self {
-//         let evm_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
-//         let near_validation = NearValidation::new(near_validation_config);
-//
-//         Self { near_validation }
-//     }
-//
-//     pub async fn verify(
-//         &self,
-//         uid: String, // same as "tweak"/"epsilon"
-//         message_hex: String,
-//         proof: ProofModel,
-//     ) -> Result<bool> {
-//         let message_bs58 = hex::decode(&message_hex)
-//             .map(|message_bytes| {
-//                 bs58::encode(message_bytes).into_string()
-//             })?;
-//
-//         let wallet_id = near::uid_to_wallet_id(&uid)?;
-//         let wallet = self.near_validation.get_wallet_data(&wallet_id).await?;
-//         let wallet_access = &wallet.access_list[proof.auth_id];
-//         if let Some(chain) = Chain::from_usize(wallet_access.chain_id) {
-//             let verify_args = VerifyArgs {
-//                 wallet_id: Some(wallet_id),
-//                 msg_hash: message_bs58,
-//                 metadata: wallet_access.metadata.clone(),
-//                 user_payload: proof.user_payload,
-//             };
-//
-//             let result = match chain {
-//                 Chain::Near => {
-//                     self.near_validation.verify(wallet_access.account_id.as_str(), verify_args).await?
-//                 }
-//                 // Chain::Ethereum => {
-//                 //     self.eth_validation.verify(wallet_access.account_id.as_str(), verify_args).await?
-//                 // }
-//                 // Chain::Base => {
-//                 //     self.base_validation.verify(wallet_access.account_id.as_str(), verify_args).await?
-//                 // }
-//                 _ => { false }
-//             };
-//
-//             Ok(result)
-//         } else {
-//             Ok(false)
-//         }
-//     }
-// }
+impl Validation {
+    pub fn new(
+        client: Arc<reqwest::Client>,
+        near_validation_config: ValidationConfig,
+        base_validation_config: ValidationConfig,
+        eth_validation_config: ValidationConfig,
+    ) -> Self {
+        let near_validation = NearThresholdVerifier::new(near_validation_config, client.clone());
 
-// #[cfg(test)]
-// mod tests {
-//     use tempfile::tempdir;
-//     use super::*;
-//
-//     async fn build_validation() -> Validation {
-//         let near_config: NearValidationConfig = NearValidationConfig {
-//             threshold: 2,
-//             servers: vec!(
-//                 "https://rpc.mainnet.near.org".to_string(),
-//                 "https://rpc.near.org".to_string(),
-//                 "https://nearrpc.aurora.dev".to_string(),
-//             ),
-//         };
-//
-//         let base_config: LightProofConfig = LightProofConfig {
-//             untrusted_rpc_url: "https://rpc-base.hotdao.ai".to_string(),
-//             consensus_rpc: "https://base.operationsolarstorm.org".to_string(),
-//             data_dir: None,
-//         };
-//
-//         let tmp_dir = tempdir().expect("Failed to create temporary directory");
-//         let tmp_dir_path: PathBuf = tmp_dir.path().to_path_buf();
-//
-//         let eth_config: LightProofConfig = LightProofConfig {
-//             untrusted_rpc_url: "https://eth.meowrpc.com".to_string(),
-//             consensus_rpc: "https://ethereum.operationsolarstorm.org".to_string(),
-//             data_dir: Some(tmp_dir_path),
-//         };
-//
-//         let validation = Validation::new(near_config).await;
-//         validation
-//     }
-//
-//
-//     #[tokio::test]
-//     async fn validate_on_near() {
-//         // Making a single run due two timely setup
-//         let validation = build_validation().await;
-//
-//         // Near
-//         {
-//             let uid = "0887d14fbe253e8b6a7b8193f3891e04f88a9ed744b91f4990d567ffc8b18e5f".to_string();
-//             let message = "57f42da8350f6a7c6ad567d678355a3bbd17a681117e7a892db30656d5caee32".to_string();
-//             let proof = ProofModel {
-//                 auth_id: 0,
-//                 message_body: Some("S8safEk4JWgnJsVKxans4TqBL796cEuV5GcrqnFHPdNW91AupymrQ6zgwEXoeRb6P3nyaSskoFtMJzaskXTDAnQUTKs5dGMWQHsz7irQJJ2UA2aDHSQ4qxgsU3h1U83nkq4rBstK8PL1xm6WygSYihvBTmuaMjuKCK6JT1tB4Uw71kGV262kU914YDwJa53BiNLuVi3s2rj5tboEwsSEpyJo9x5diq4Ckmzf51ZjZEDYCH8TdrP1dcY4FqkTCBA7JhjfCTToJR5r74ApfnNJLnDhTxkvJb4ReR9T9Ga7hPNazCFGE8Xq1deu44kcPjXNvb1GJGWLAZ5k1wxq9nnARb3bvkqBTmeYiDcPDamauhrwYWZkMNUsHtoMwF6286gcmY3ZgE3jja1NGuYKYQHnvscUqcutuT9qH".to_string()),
-//                 user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
-//                 account_id: Some("keys.auth.hot.tg".to_string()),
-//             };
-//
-//             let actual = validation.verify(uid, message, proof).await.unwrap();
-//             assert!(actual)
-//         }
-//
-//         // TODO: Base, Eth
-//     }
-// }
+        let contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let base_validation = EvmThresholdVerifier::new(
+            base_validation_config,
+            client.clone(),
+            contract.clone(),
+        );
+
+        let eth_validation = EvmThresholdVerifier::new(
+            eth_validation_config,
+            client.clone(),
+            contract.clone(),
+        );
+
+        Self {
+            near_validation,
+            base_validation,
+            eth_validation,
+        }
+    }
+
+    pub async fn verify(
+        &self,
+        uid: String, // same as "tweak"/"epsilon"
+        message_hex: String,
+        proof: ProofModel,
+    ) -> Result<bool> {
+        let message_bs58 = hex::decode(&message_hex)
+            .map(|message_bytes| {
+                bs58::encode(message_bytes).into_string()
+            })?;
+
+        let wallet_id = uid_to_wallet_id(&uid)?;
+        let wallet = self.near_validation.get_wallet_data(&wallet_id).await?;
+        let wallet_access = &wallet.access_list[proof.auth_id];
+        if let Some(chain) = Chain::from_usize(wallet_access.chain_id) {
+            let verify_args = VerifyArgs {
+                wallet_id: Some(wallet_id),
+                msg_hash: message_bs58,
+                metadata: wallet_access.metadata.clone(),
+                user_payload: proof.user_payload,
+            };
+
+            let result = match chain {
+                Chain::Near => {
+                    self.near_validation.verify(wallet_access.account_id.as_str(), verify_args).await?
+                }
+                Chain::Ethereum => {
+                    self.eth_validation.verify(wallet_access.account_id.as_str(), verify_args).await?
+                }
+                Chain::Base => {
+                    self.base_validation.verify(wallet_access.account_id.as_str(), verify_args).await?
+                }
+            };
+
+            Ok(result)
+        } else {
+            error!("Unexpected chain id: {}", wallet_access.chain_id);
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn validate_on_near() {
+        let validation = Validation::new(
+            Arc::new(reqwest::Client::new()),
+            ValidationConfig {
+                threshold: 2,
+                servers: vec!(
+                    "https://rpc.mainnet.near.org".to_string(),
+                    "https://rpc.near.org".to_string(),
+                    "https://nearrpc.aurora.dev".to_string(),
+                ),
+            },
+            ValidationConfig {
+                threshold: 1,
+                servers: vec![
+                    "http://localhost:8545".to_string(),
+                    "http://bad-rpc:8545".to_string(),
+                ],
+            },
+            ValidationConfig {
+                threshold: 1,
+                servers: vec![
+                    "http://localhost:8546".to_string(),
+                    "http://bad-rpc:8546".to_string(),
+                ],
+            }
+        );
+
+        // Near
+        {
+            let uid = "0887d14fbe253e8b6a7b8193f3891e04f88a9ed744b91f4990d567ffc8b18e5f".to_string();
+            let message = "57f42da8350f6a7c6ad567d678355a3bbd17a681117e7a892db30656d5caee32".to_string();
+            let proof = ProofModel {
+                auth_id: 0,
+                message_body: Some("S8safEk4JWgnJsVKxans4TqBL796cEuV5GcrqnFHPdNW91AupymrQ6zgwEXoeRb6P3nyaSskoFtMJzaskXTDAnQUTKs5dGMWQHsz7irQJJ2UA2aDHSQ4qxgsU3h1U83nkq4rBstK8PL1xm6WygSYihvBTmuaMjuKCK6JT1tB4Uw71kGV262kU914YDwJa53BiNLuVi3s2rj5tboEwsSEpyJo9x5diq4Ckmzf51ZjZEDYCH8TdrP1dcY4FqkTCBA7JhjfCTToJR5r74ApfnNJLnDhTxkvJb4ReR9T9Ga7hPNazCFGE8Xq1deu44kcPjXNvb1GJGWLAZ5k1wxq9nnARb3bvkqBTmeYiDcPDamauhrwYWZkMNUsHtoMwF6286gcmY3ZgE3jja1NGuYKYQHnvscUqcutuT9qH".to_string()),
+                user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
+                account_id: Some("keys.auth.hot.tg".to_string()),
+            };
+            let actual = validation.verify(uid, message, proof).await.unwrap();
+            assert!(actual)
+        }
+
+        // TODO
+
+        // Base
+        {
+        }
+
+
+        // Eth
+        {
+        }
+    }
+}

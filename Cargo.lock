@@ -3865,7 +3865,6 @@ dependencies = [
  "near-indexer",
  "near-indexer-primitives",
  "near-o11y",
- "near-primitives 0.27.0",
  "near-sdk",
  "prometheus",
  "quinn",
