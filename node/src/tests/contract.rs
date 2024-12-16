@@ -25,15 +25,21 @@ fn test_recover_with_contract() {
             tweak,
             Scalar::from_bytes(hash).unwrap(),
         );
+
+        let msg_hash = Scalar::from_bytes(hash).unwrap();
+        let pubkey = derive_public_key(root_pubkey, tweak);
+
         let recovery_id =
             ChainRespondArgs::ecdsa_recovery_from_big_r(&signature.big_r, &signature.s);
 
-        let pubkey = derive_public_key(root_pubkey, tweak);
+        // let recovery_id =
+        //     ChainRespondArgs::brute_force_recovery_id(&pubkey ,&signature, &msg_hash).unwrap();
+
         if check_ec_signature(
             &pubkey,
             &signature.big_r,
             &signature.s,
-            Scalar::from_bytes(hash).unwrap(),
+            msg_hash,
             recovery_id,
         )
         .is_ok()

@@ -229,11 +229,12 @@ impl MpcClient {
                                 )
                                 .await??;
 
+
                                 metrics::MPC_NUM_SIGN_REQUESTS_LEADER
                                     .with_label_values(&["succeeded"])
                                     .inc();
 
-                                let response = ChainRespondArgs::new(&request, &signature);
+                                let response = ChainRespondArgs::new(&request, &signature, &self.root_keyshare.public_key)?;
                                 let _ = sign_response_sender.send(response).await;
                             }
 
