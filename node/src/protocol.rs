@@ -3,7 +3,7 @@ use crate::tracking;
 use crate::{network::NetworkTaskChannel, tracking::TaskHandle};
 use cait_sith::protocol::{Action, Protocol};
 use futures::TryFutureExt;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{atomic::AtomicUsize, Arc};
 use tokio::sync::mpsc;
 
@@ -144,10 +144,14 @@ pub async fn run_protocol<T>(
 struct MessageCounters {
     name: String,
     task: Arc<TaskHandle>,
-    sent: HashMap<ParticipantId, AtomicUsize>,
-    in_flight: HashMap<ParticipantId, AtomicUsize>,
-    received: HashMap<ParticipantId, AtomicUsize>,
+    counters: BTreeMap<ParticipantId, PerParticipantCounters>,
     current_action: AtomicUsize, // 1 = receiving, 0 = computing
+}
+
+struct PerParticipantCounters {
+    sent: AtomicUsize,
+    in_flight: AtomicUsize,
+    received: AtomicUsize,
 }
 
 impl MessageCounters {
@@ -155,46 +159,48 @@ impl MessageCounters {
         Self {
             name,
             task: tracking::current_task(),
-            sent: participants
+            counters: participants
                 .iter()
-                .map(|p| (*p, AtomicUsize::new(0)))
-                .collect(),
-            in_flight: participants
-                .iter()
-                .map(|p| (*p, AtomicUsize::new(0)))
-                .collect(),
-            received: participants
-                .iter()
-                .map(|p| (*p, AtomicUsize::new(0)))
+                .map(|p| {
+                    (
+                        *p,
+                        PerParticipantCounters {
+                            sent: AtomicUsize::new(0),
+                            in_flight: AtomicUsize::new(0),
+                            received: AtomicUsize::new(0),
+                        },
+                    )
+                })
                 .collect(),
             current_action: AtomicUsize::new(0),
         }
     }
 
     pub fn queue_send(&self, participant: ParticipantId, num_messages: usize) {
-        self.in_flight
+        self.counters
             .get(&participant)
             .unwrap()
+            .in_flight
             .fetch_add(num_messages, std::sync::atomic::Ordering::Relaxed);
         self.report_progress();
     }
 
     pub fn sent(&self, participant: ParticipantId, num_messages: usize) {
-        self.sent
-            .get(&participant)
-            .unwrap()
+        let counters = self.counters.get(&participant).unwrap();
+        counters
+            .sent
             .fetch_add(num_messages, std::sync::atomic::Ordering::Relaxed);
-        self.in_flight
-            .get(&participant)
-            .unwrap()
+        counters
+            .in_flight
             .fetch_sub(num_messages, std::sync::atomic::Ordering::Relaxed);
         self.report_progress();
     }
 
     pub fn received(&self, participant: ParticipantId, num_messages: usize) {
-        self.received
+        self.counters
             .get(&participant)
             .unwrap()
+            .received
             .fetch_add(num_messages, std::sync::atomic::Ordering::Relaxed);
         self.current_action
             .store(0, std::sync::atomic::Ordering::Relaxed);
@@ -208,19 +214,20 @@ impl MessageCounters {
 
     fn report_progress(&self) {
         self.task.set_progress(&format!(
-            "{}: sent {:?} (inflight {:?}), received {:?} ({})",
+            "{}: parties: {:?}, sent {:?} (inflight [{:?}]), received [{:?}] ({})",
             self.name,
-            self.sent
-                .iter()
-                .map(|(p, a)| (p, a.load(std::sync::atomic::Ordering::Relaxed)))
+            self.counters.keys().collect::<Vec<_>>(),
+            self.counters
+                .values()
+                .map(|c| c.sent.load(std::sync::atomic::Ordering::Relaxed))
                 .collect::<Vec<_>>(),
-            self.in_flight
-                .iter()
-                .map(|(p, a)| (p, a.load(std::sync::atomic::Ordering::Relaxed)))
+            self.counters
+                .values()
+                .map(|c| c.in_flight.load(std::sync::atomic::Ordering::Relaxed))
                 .collect::<Vec<_>>(),
-            self.received
-                .iter()
-                .map(|(p, a)| (p, a.load(std::sync::atomic::Ordering::Relaxed)))
+            self.counters
+                .values()
+                .map(|c| c.received.load(std::sync::atomic::Ordering::Relaxed))
                 .collect::<Vec<_>>(),
             if self
                 .current_action

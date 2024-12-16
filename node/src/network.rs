@@ -2,6 +2,7 @@ use crate::primitives::{BatchedMessages, MpcMessage, MpcPeerMessage, MpcTaskId, 
 use crate::tracking::{self, AutoAbortTask};
 use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use lru::LruCache;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::option::Option;
@@ -21,13 +22,22 @@ pub trait MeshNetworkTransportSender: Send + Sync + 'static {
     fn my_participant_id(&self) -> ParticipantId;
     /// Returns the participant IDs of all nodes in the network, including the current node.
     fn all_participant_ids(&self) -> Vec<ParticipantId>;
+    /// Returns an identifier for the current persistent connection to the participant. This
+    /// identifier should change whenever the connection is reset.
+    fn connection_version(&self, participant_id: ParticipantId) -> usize;
     /// Sends a message to the specified recipient.
     /// It is not expected to really block. It's only async because messages may be congested.
     /// Returns an error if something serious goes wrong so that the task that expects the
     /// message to be sent has no meaningful way to proceed. Otherwise, just because the
     /// message is sent doesn't guarantee that the recipient will receive it; that is up to
-    /// the user of the networking layer to deal with.
-    async fn send(&self, recipient_id: ParticipantId, message: MpcMessage) -> anyhow::Result<()>;
+    /// the user of the networking layer to deal with. This method should fail if the current
+    /// connection version is different from the one supplied (i.e. the connection was reset).
+    async fn send(
+        &self,
+        recipient_id: ParticipantId,
+        message: MpcMessage,
+        connection_version: usize,
+    ) -> anyhow::Result<()>;
     /// Waits until at least `threshold` nodes in the network have been connected to initially,
     /// the threshold includes ourselves.
     async fn wait_for_ready(&self, threshold: usize) -> anyhow::Result<()>;
@@ -51,6 +61,7 @@ pub trait MeshNetworkTransportReceiver: Send + 'static {
 pub struct MeshNetworkClient {
     transport_sender: Arc<dyn MeshNetworkTransportSender>,
     senders_for_tasks: Arc<Mutex<HashMap<MpcTaskId, mpsc::Sender<MpcPeerMessage>>>>,
+    deleted_channels: Arc<Mutex<LruCache<MpcTaskId, ()>>>,
 }
 
 impl MeshNetworkClient {
@@ -72,6 +83,7 @@ impl MeshNetworkClient {
         match self.sender_for(task_id, participants) {
             SenderOrNewChannel::Existing(_) => anyhow::bail!("Channel already exists"),
             SenderOrNewChannel::NewChannel { channel, .. } => Ok(channel),
+            SenderOrNewChannel::RemovedChannel => anyhow::bail!("Channel was removed"),
         }
     }
 
@@ -99,6 +111,9 @@ impl MeshNetworkClient {
         task_id: MpcTaskId,
         participants: Vec<ParticipantId>,
     ) -> SenderOrNewChannel {
+        if self.deleted_channels.lock().unwrap().contains(&task_id) {
+            return SenderOrNewChannel::RemovedChannel;
+        }
         let mut senders_for_tasks = self.senders_for_tasks.lock().unwrap();
         match senders_for_tasks.entry(task_id) {
             Entry::Occupied(entry) => SenderOrNewChannel::Existing(entry.get().clone()),
@@ -108,7 +123,9 @@ impl MeshNetworkClient {
                 drop(senders_for_tasks); // release lock
 
                 let senders_for_tasks = self.senders_for_tasks.clone();
+                let deleted_channels = self.deleted_channels.clone();
                 let drop_fn = move || {
+                    deleted_channels.lock().unwrap().put(task_id, ());
                     senders_for_tasks.lock().unwrap().remove(&task_id);
                 };
 
@@ -117,6 +134,12 @@ impl MeshNetworkClient {
                     channel: NetworkTaskChannel {
                         task_id,
                         my_participant_id: self.my_participant_id(),
+                        connection_versions: Arc::new(
+                            participants
+                                .iter()
+                                .map(|id| (*id, self.transport_sender.connection_version(*id)))
+                                .collect(),
+                        ),
                         sender: self.transport_sender.clone(),
                         receiver,
                         drop: Some(Box::new(drop_fn)),
@@ -134,6 +157,7 @@ enum SenderOrNewChannel {
         sender: mpsc::Sender<MpcPeerMessage>,
         channel: NetworkTaskChannel,
     },
+    RemovedChannel,
 }
 
 /// Runs the loop of receiving messages from the transport and dispatching them to the
@@ -163,6 +187,14 @@ async fn run_receive_messages_loop(
                 );
                 new_channel_sender.send(channel).await?;
             }
+            SenderOrNewChannel::RemovedChannel => {
+                tracing::debug!(
+                    target: "network",
+                    "[{}] [Task {:?}] Ignoring message for removed channel",
+                    client.my_participant_id(),
+                    task_id
+                );
+            }
         }
     }
 }
@@ -182,6 +214,7 @@ pub fn run_network_client(
     let client = Arc::new(MeshNetworkClient {
         transport_sender,
         senders_for_tasks: Arc::new(Mutex::new(HashMap::new())),
+        deleted_channels: Arc::new(Mutex::new(LruCache::new(10000.try_into().unwrap()))),
     });
     let (new_channel_sender, new_channel_receiver) = mpsc::channel(1000);
     let handle = tracking::spawn_checked(
@@ -200,6 +233,7 @@ pub struct NetworkTaskChannel {
     pub task_id: MpcTaskId,
     my_participant_id: ParticipantId, // for debugging
     pub participants: Vec<ParticipantId>,
+    connection_versions: Arc<HashMap<ParticipantId, usize>>,
     sender: Arc<dyn MeshNetworkTransportSender>,
     receiver: tokio::sync::mpsc::Receiver<MpcPeerMessage>,
     drop: Option<Box<dyn FnOnce() + Send + Sync>>,
@@ -245,10 +279,12 @@ impl NetworkTaskChannel {
     /// i.e. can only be decrypted by the recipient.
     pub fn sender(&self) -> SendFnForTaskChannel {
         let transport_sender = self.sender.clone();
+        let connection_versions = self.connection_versions.clone();
         let task_id = self.task_id;
         Arc::new(
             move |recipient_id, message, participants: Vec<ParticipantId>| {
                 let transport_sender = transport_sender.clone();
+                let connection_versions = connection_versions.clone();
                 async move {
                     transport_sender
                         .send(
@@ -258,6 +294,7 @@ impl NetworkTaskChannel {
                                 data: message,
                                 participants,
                             },
+                            connection_versions.get(&recipient_id).copied().unwrap_or(0),
                         )
                         .await?;
                     Ok(())
@@ -347,10 +384,15 @@ pub mod testing {
             self.transport.participant_ids.clone()
         }
 
+        fn connection_version(&self, _participant_id: ParticipantId) -> usize {
+            0
+        }
+
         async fn send(
             &self,
             recipient_id: ParticipantId,
             message: crate::primitives::MpcMessage,
+            _connection_version: usize,
         ) -> anyhow::Result<()> {
             self.transport
                 .senders

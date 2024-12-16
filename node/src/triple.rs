@@ -95,7 +95,7 @@ pub async fn run_background_triple_generation(
                 count: SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE as u32,
             };
             let participants = choose_random_participants(
-                client.all_alive_participant_ids(),
+                current_active_participants_ids,
                 client.my_participant_id(),
                 threshold,
             );

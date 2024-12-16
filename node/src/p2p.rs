@@ -91,11 +91,12 @@ impl ClientCertVerifier for DummyClientCertVerifier {
 /// connection is broken.
 struct PersistentConnection {
     target_participant_id: ParticipantId,
-    // Current connection. This is an Option because it can be None if the
-    // connection was never established. It is a Weak because the connection
-    // is owned by the loop-to-connect task (see the `new` method) and when
-    // the connection is closed it is dropped.
-    current: tokio::sync::watch::Receiver<Option<Weak<quinn::Connection>>>,
+    // Current connection and version. The connection is an Option because it
+    // can be None if the connection was never established. It is a Weak
+    // because the connection is owned by the loop-to-connect task (see the
+    // `new` method) and when the connection is closed it is dropped. The
+    // version is incremented every time the connection is re-established.
+    current: tokio::sync::watch::Receiver<Option<(usize, Weak<quinn::Connection>)>>,
     // Atomic to quickly read whether a connection is alive. It's faster than
     // checking the current connection.
     is_alive: Arc<AtomicBool>,
@@ -113,15 +114,24 @@ impl PersistentConnection {
     /// drops while the stream is used; but if the connection is already known
     /// to have failed before the stream is opened, this will re-establish the
     /// connection first.
-    async fn new_stream(&self) -> anyhow::Result<quinn::SendStream> {
-        let conn = self
-            .current
-            .borrow()
-            .clone()
-            .and_then(|weak| weak.upgrade())
-            .ok_or_else(|| {
-                anyhow::anyhow!("Connection to {} is broken", self.target_participant_id)
-            })?;
+    async fn new_stream(&self, expected_version: usize) -> anyhow::Result<quinn::SendStream> {
+        let Some(conn) = self.current.borrow().clone() else {
+            anyhow::bail!(
+                "Connection to {} was never established",
+                self.target_participant_id
+            );
+        };
+
+        let (version, conn) = conn;
+        if version != expected_version {
+            anyhow::bail!(
+                "Connection to {} is not the original connection expected",
+                self.target_participant_id
+            );
+        }
+        let Some(conn) = conn.upgrade() else {
+            anyhow::bail!("Connection to {} was dropped", self.target_participant_id);
+        };
         let stream = conn.open_uni().await?;
         Ok(stream)
     }
@@ -155,6 +165,7 @@ impl PersistentConnection {
                     Ok(conn)
                 }
 
+                let mut connection_version = 1;
                 loop {
                     let new_conn = match connect(
                         &endpoint,
@@ -183,11 +194,12 @@ impl PersistentConnection {
                     };
                     let new_conn = Arc::new(new_conn);
                     if current_sender
-                        .send(Some(Arc::downgrade(&new_conn)))
+                        .send(Some((connection_version, Arc::downgrade(&new_conn))))
                         .is_err()
                     {
                         break;
                     }
+                    connection_version += 1;
                     is_alive_clone.store(true, Ordering::Relaxed);
                     new_conn.closed().await;
                     is_alive_clone.store(false, Ordering::Relaxed);
@@ -498,14 +510,26 @@ impl MeshNetworkTransportSender for QuicMeshSender {
         self.participants.clone()
     }
 
-    async fn send(&self, recipient_id: ParticipantId, message: MpcMessage) -> Result<()> {
+    fn connection_version(&self, participant_id: ParticipantId) -> usize {
+        self.connections
+            .get(&participant_id)
+            .map(|conn| conn.current.borrow().clone().map(|(v, _)| v).unwrap_or(0))
+            .unwrap_or(0)
+    }
+
+    async fn send(
+        &self,
+        recipient_id: ParticipantId,
+        message: MpcMessage,
+        connection_version: usize,
+    ) -> Result<()> {
         // For now, every message opens a new stream. This is totally fine
         // for performance, but it does mean messages may not arrive in order.
         let mut stream = self
             .connections
             .get(&recipient_id)
             .ok_or_else(|| anyhow!("Recipient not found"))?
-            .new_stream()
+            .new_stream(connection_version)
             .await?;
 
         let msg = borsh::to_vec(&message)?;
@@ -528,7 +552,7 @@ impl MeshNetworkTransportSender for QuicMeshSender {
                 while receiver
                     .borrow()
                     .clone()
-                    .is_none_or(|weak| weak.upgrade().is_none())
+                    .is_none_or(|(_, weak)| weak.upgrade().is_none())
                 {
                     tracing::info!("Waiting for connection to {}, me {}", participant_id, my_id);
                     receiver.changed().await?;
@@ -670,6 +694,7 @@ mod tests {
                             task_id: crate::primitives::MpcTaskId::KeyGeneration,
                             participants: vec![],
                         },
+                        1,
                     )
                     .await
                     .unwrap();
@@ -685,6 +710,7 @@ mod tests {
                             task_id: crate::primitives::MpcTaskId::KeyGeneration,
                             participants: vec![],
                         },
+                        1,
                     )
                     .await
                     .unwrap();
