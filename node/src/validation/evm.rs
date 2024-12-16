@@ -1,16 +1,15 @@
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
-use web3::ethabi;
-use web3::types::{CallRequest, H160};
-use async_trait::async_trait;
-use web3::ethabi::Contract;
 use crate::validation::{SingleVerifier, ThresholdVerifier, ValidationConfig, VerifyArgs, HOT_VERIFY_ABI, HOT_VERIFY_METHOD_NAME};
 use anyhow::{Context, Result};
 use k256::elliptic_curve::bigint::Zero;
 use k256::U256;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
+use web3::ethabi;
+use web3::ethabi::Contract;
+use web3::types::{CallRequest, H160};
 
 #[derive(Serialize, Deserialize)]
 struct RpcRequest {
@@ -35,7 +34,7 @@ impl RpcRequest {
 struct EvmSingleVerifier {
     client: Arc<reqwest::Client>,
     server: String,
-    contract: Contract
+    contract: Contract,
 }
 
 impl EvmSingleVerifier {
@@ -101,7 +100,7 @@ impl SingleVerifier for EvmSingleVerifier {
 
 pub struct EvmThresholdVerifier {
     threshold: usize,
-    callers: Vec<EvmSingleVerifier>
+    callers: Vec<EvmSingleVerifier>,
 }
 
 impl EvmThresholdVerifier {
@@ -137,9 +136,9 @@ impl ThresholdVerifier for EvmThresholdVerifier {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     // Start local light client(s) before running tests.
     use crate::validation::{VerifyArgs, HOT_VERIFY_ABI};
-    use super::*;
 
     #[tokio::test]
     async fn base_single_verifier() {
@@ -196,7 +195,7 @@ mod tests {
                 servers: vec![
                     "http://localhost:8545".to_string(),
                     "http://localhost:8545".to_string(),
-                ]
+                ],
             },
             Arc::new(reqwest::Client::new()),
             evm_hot_verify_contract,
@@ -228,7 +227,7 @@ mod tests {
                     "http://localhost:8545".to_string(),
                     "http://localhost:1000".to_string(),
                     "http://localhost:1000".to_string(),
-                ]
+                ],
             },
             Arc::new(reqwest::Client::new()),
             evm_hot_verify_contract,
@@ -259,7 +258,7 @@ mod tests {
                     "http://localhost:1000".to_string(),
                     "http://localhost:1000".to_string(),
                     "http://localhost:1000".to_string(),
-                ]
+                ],
             },
             Arc::new(reqwest::Client::new()),
             evm_hot_verify_contract,

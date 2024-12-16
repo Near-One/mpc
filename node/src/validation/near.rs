@@ -1,15 +1,15 @@
+use crate::validation::{GetWalletArgs, SingleVerifier, ThresholdVerifier, ValidationConfig, VerifyArgs, WalletModel, HOT_VERIFY_METHOD_NAME, MPC_GET_WALLET_METHOD, MPC_HOT_WALLET_CONTRACT};
+use anyhow::{anyhow, Context, Result};
+use futures_util::stream::FuturesUnordered;
+use near_sdk::base64::prelude::BASE64_STANDARD;
+use near_sdk::base64::Engine;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::{Result, anyhow, Context};
-use futures_util::stream::FuturesUnordered;
-use near_sdk::base64::Engine;
-use near_sdk::base64::prelude::BASE64_STANDARD;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest};
 use tokio_stream::StreamExt;
-use crate::validation::{GetWalletArgs, SingleVerifier, ThresholdVerifier, ValidationConfig, VerifyArgs, WalletModel, HOT_VERIFY_METHOD_NAME, MPC_GET_WALLET_METHOD, MPC_HOT_WALLET_CONTRACT};
 
 #[derive(Serialize, Deserialize)]
 struct RpcParams {
@@ -17,7 +17,7 @@ struct RpcParams {
     finality: String,
     account_id: String,
     method_name: String,
-    args_base64: String
+    args_base64: String,
 }
 
 impl RpcParams {
@@ -65,7 +65,7 @@ struct NearSingleVerifier {
 
 impl NearSingleVerifier {
     fn new(client: Arc<reqwest::Client>, server: String) -> Self {
-        Self { client, server, }
+        Self { client, server }
     }
 
     async fn get_wallet(&self, wallet_id: String) -> Result<WalletModel> {
@@ -74,7 +74,7 @@ impl NearSingleVerifier {
         let rpc_args = RpcRequest::build(
             MPC_HOT_WALLET_CONTRACT.to_string(),
             MPC_GET_WALLET_METHOD.to_string(),
-            args_base64
+            args_base64,
         );
         let wallet_model = self.call_rpc(serde_json::to_value(&rpc_args)?).await?;
         let wallet_model = serde_json::from_slice::<WalletModel>(wallet_model.as_slice())?;
@@ -184,8 +184,8 @@ impl ThresholdVerifier for NearThresholdVerifier {
 
 #[cfg(test)]
 mod tests {
-    use crate::validation::{uid_to_wallet_id, ProofModel, WalletAccessModel};
     use super::*;
+    use crate::validation::{uid_to_wallet_id, ProofModel, WalletAccessModel};
 
     #[tokio::test]
     async fn near_single_verifier() {

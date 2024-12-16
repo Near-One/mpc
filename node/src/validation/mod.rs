@@ -1,18 +1,18 @@
 mod near;
 mod evm;
 
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
+use crate::validation::evm::EvmThresholdVerifier;
+use crate::validation::near::NearThresholdVerifier;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
 use futures_util::stream::FuturesUnordered;
 use near_sdk::bs58;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tracing::log::error;
 use web3::ethabi::Contract;
-use crate::validation::evm::EvmThresholdVerifier;
-use crate::validation::near::NearThresholdVerifier;
 
 pub(crate) const HOT_VERIFY_ABI: &'static str = r#"[{"inputs":[{"internalType":"bytes32","name":"msg_hash","type":"bytes32"},{"internalType":"bytes","name":"walletId","type":"bytes"},{"internalType":"bytes","name":"userPayload","type":"bytes"},{"internalType":"bytes","name":"metadata","type":"bytes"}],"name":"hot_verify","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"}]"#;
 pub(crate) const HOT_VERIFY_METHOD_NAME: &'static str = "hot_verify";
@@ -244,7 +244,7 @@ mod tests {
                     "http://localhost:8546".to_string(),
                     "http://bad-rpc:8546".to_string(),
                 ],
-            }
+            },
         );
 
         // Near
@@ -264,12 +264,10 @@ mod tests {
         // TODO
 
         // Base
-        {
-        }
+        {}
 
 
         // Eth
-        {
-        }
+        {}
     }
 }
