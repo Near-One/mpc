@@ -257,10 +257,16 @@ impl TaskHandle {
     {
         let child = self.new_child(description);
         let description_clone = description.to_string();
+        let child_clone = child.clone();
         CURRENT_TASK.scope(Arc::new(TaskHandleScoped(child)), async move {
             let result = f.await;
             if let Err(err) = result {
-                tracing::error!("Task failed: {}: {}", description_clone, err);
+                tracing::error!(
+                    "Task failed: {}: {}; last status: {}",
+                    description_clone,
+                    err,
+                    child_clone.progress.lock().unwrap().0
+                );
             }
         })
     }

@@ -12,7 +12,7 @@ use crate::key_generation::{
 };
 use crate::mpc_client::MpcClient;
 use crate::network::{run_network_client, MeshNetworkTransportSender};
-use crate::p2p::{generate_test_p2p_configs, new_quic_mesh_network};
+use crate::p2p::{generate_test_p2p_configs, new_tls_mesh_network};
 use crate::sign::PresignatureStorage;
 use crate::sign_request::SignRequestStorage;
 use crate::tracking;
@@ -188,7 +188,7 @@ impl Cli {
                     );
 
                     let (sender, receiver) =
-                        new_quic_mesh_network(&config.mpc, &config.secrets.p2p_private_key).await?;
+                        new_tls_mesh_network(&config.mpc, &config.secrets.p2p_private_key).await?;
                     sender
                         .wait_for_ready(config.mpc.participants.threshold as usize)
                         .await?;
@@ -282,7 +282,7 @@ impl Cli {
                     );
 
                     let (sender, receiver) =
-                        new_quic_mesh_network(&config.mpc, &config.secrets.p2p_private_key).await?;
+                        new_tls_mesh_network(&config.mpc, &config.secrets.p2p_private_key).await?;
                     // Must wait for all participants to be ready before starting key generation.
                     sender
                         .wait_for_ready(config.mpc.participants.participants.len())

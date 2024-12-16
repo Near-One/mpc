@@ -133,21 +133,6 @@ impl TestGenerators {
     }
 }
 
-pub async fn wait_till_udp_port_free(port: u16) {
-    let mut retries_left = 20;
-    while retries_left > 0 {
-        tracing::info!("Waiting for UDP port {} to be free...", port);
-        let result = std::net::UdpSocket::bind(format!("127.0.0.1:{}", port));
-        if result.is_ok() {
-            break;
-        }
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        retries_left -= 1;
-    }
-    tracing::info!("UDP Port {} is free", port);
-    assert!(retries_left > 0, "Failed to free UDP port {}", port);
-}
-
 pub async fn wait_till_tcp_port_free(port: u16) {
     let mut retries_left = 20;
     while retries_left > 0 {
@@ -164,7 +149,7 @@ pub async fn wait_till_tcp_port_free(port: u16) {
 }
 
 pub async fn free_resources_after_shutdown(config: &ConfigFile) {
-    let tcp = wait_till_tcp_port_free(config.web_ui.port);
+    let web = wait_till_tcp_port_free(config.web_ui.port);
     let p2p_port = config
         .participants
         .as_ref()
@@ -174,6 +159,6 @@ pub async fn free_resources_after_shutdown(config: &ConfigFile) {
         .find(|participant| participant.near_account_id == config.my_near_account_id)
         .unwrap()
         .port;
-    let udp = wait_till_udp_port_free(p2p_port);
-    futures::future::join(tcp, udp).await;
+    let p2p = wait_till_tcp_port_free(p2p_port);
+    futures::future::join(web, p2p).await;
 }

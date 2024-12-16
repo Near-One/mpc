@@ -174,7 +174,7 @@ pub struct ParticipantsConfig {
 pub struct ParticipantInfo {
     pub id: ParticipantId,
     /// Address and port that this participant can be directly reached at.
-    /// Used for the P2P communication. The protocol required is UDP (QUIC).
+    /// Used for the P2P communication. Communication happens over TCP.
     pub address: String,
     pub port: u16,
     /// Public key that corresponds to this P2P peer's private key.

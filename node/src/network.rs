@@ -266,14 +266,10 @@ impl NetworkTaskChannel {
     /// Returns an error only if there is something seriously wrong with the networking layer so
     /// that there's no meaningful way for the MPC task to proceed.
     ///
-    /// This does not guarantee that the message will be received by the recipient. Although the
-    /// communication layer uses a persistent QUIC connection, there can be disconnects, node
-    /// restarts, etc. and there API does not provide an application-layer acknowledgment or retry
-    /// mechanism. The MPC task's implementation shall not assume reliable message passing, and
-    /// should instead have an appropriate timeout or retry mechanism.
-    ///
-    /// Even multiple messages sent to the same recipient may be received in a different order.
-    /// However, the messages will be received in whole, i.e. they will never be split or combined.
+    /// This does not guarantee that the message will be received by the recipient. However, it
+    /// does guarantee that any messages sent via this channel would be received in the same order,
+    /// if they would be received at all. This implies that the underlying persistent connection is
+    /// reset, future sends will fail as we cannot ensure that previous messages were received.
     ///
     /// The implementation of this function will guarantee that all messages sent are encrypted,
     /// i.e. can only be decrypted by the recipient.
@@ -306,9 +302,8 @@ impl NetworkTaskChannel {
 
     /// Receives a message from another participant in the MPC task.
     ///
-    /// If there are multiple messages available, they may be received in arbitrary order, even if
-    /// they were sent from the same participant. However, any message that is received will always
-    /// be received in whole, exactly as they were sent, never split or combined.
+    /// Messages from the same sender are guaranteed to be received in the same order they were
+    /// sent. However, messages from different senders may be received in arbitrary order.
     ///
     /// Returns an error if the networking client is dropped (during node shutdown).
     ///
