@@ -8,6 +8,28 @@ x-environment: &common-envs
   RUST_LOG: info
 
 services:
+  helios-base:
+    build:
+      context: ../..
+      dockerfile: helios/Dockerfile
+    environment:
+      STACK: opstack
+      NETWORK: base
+      EXECUTION_RPC: https://rpc-base.hotdao.ai
+      CONSENSUS_RPC: https://base.operationsolarstorm.org
+    ports:
+      - "8545:8545"
+  helios-eth:
+    build:
+      context: ../..
+      dockerfile: helios/Dockerfile
+    environment:
+      STACK: ethereum
+      NETWORK: mainnet
+      EXECUTION_RPC: https://eth.meowrpc.com
+      CONSENSUS_RPC: https://ethereum.operationsolarstorm.org
+    ports:
+      - "8546:8545"
   node0:
     build:
       <<: *build-context
