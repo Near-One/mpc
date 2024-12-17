@@ -4,6 +4,7 @@ use near_crypto::PublicKey;
 use near_indexer_primitives::types::AccountId;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use crate::validation::ChainValidationConfig;
 
 /// The full configuration needed to run the node.
 #[derive(Debug)]
@@ -14,6 +15,7 @@ pub struct Config {
     pub triple: TripleConfig,
     pub presignature: PresignatureConfig,
     pub signature: SignatureConfig,
+    pub validation: ValidationConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +125,14 @@ pub struct ConfigFile {
     /// If specified, this is the static configuration for the MPC protocol,
     /// replacing what would be read from the contract.
     pub participants: Option<ParticipantsConfig>,
+    pub validation: ValidationConfig
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ValidationConfig {
+    pub near: ChainValidationConfig,
+    pub base: ChainValidationConfig,
+    pub eth: ChainValidationConfig,
 }
 
 impl ConfigFile {
@@ -140,6 +150,7 @@ impl ConfigFile {
             triple: self.triple,
             presignature: self.presignature,
             signature: self.signature,
+            validation: self.validation
         }
     }
 }

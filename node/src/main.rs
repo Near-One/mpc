@@ -23,6 +23,7 @@ mod tracing;
 mod tracking;
 mod triple;
 mod web;
+mod validation;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

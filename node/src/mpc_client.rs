@@ -24,6 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
+use crate::validation::Validation;
 
 #[derive(Clone)]
 pub struct MpcClient {
@@ -33,17 +34,14 @@ pub struct MpcClient {
     presignature_store: Arc<PresignatureStorage>,
     sign_request_store: Arc<SignRequestStorage>,
     root_keyshare: RootKeyshareData,
-    web_client: Arc<reqwest::Client>
+    web_client: Arc<reqwest::Client>,
+    validation: Arc<Validation>,
 }
 
 impl MpcClient {
-    pub fn get_config(&self) -> Arc<Config> {
-        self.config.clone()
-    }
-
-    pub fn get_web_client(&self) -> Arc<reqwest::Client> {
-        self.web_client.clone()
-    }
+    pub fn get_config(&self) -> Arc<Config> { self.config.clone() }
+    pub fn get_web_client(&self) -> Arc<reqwest::Client> { self.web_client.clone() }
+    pub fn get_validation(&self) -> Arc<Validation> { self.validation.clone() }
 
     pub fn new(
         config: Arc<Config>,
@@ -52,7 +50,8 @@ impl MpcClient {
         presignature_store: Arc<PresignatureStorage>,
         sign_request_store: Arc<SignRequestStorage>,
         root_keyshare: RootKeyshareData,
-        web_client: Arc<reqwest::Client>
+        web_client: Arc<reqwest::Client>,
+        validation: Arc<Validation>
     ) -> Self {
         Self {
             config,
@@ -61,7 +60,8 @@ impl MpcClient {
             presignature_store,
             sign_request_store,
             root_keyshare,
-            web_client
+            web_client,
+            validation
         }
     }
 
@@ -296,7 +296,7 @@ impl MpcClient {
     }
 
     // TODO: this is testonly and needs to be protected
-    pub fn add_sign_request(self, request: &SignatureRequest) {
+    pub fn add_sign_request(&self, request: &SignatureRequest) {
         self.sign_request_store.add(request);
     }
 

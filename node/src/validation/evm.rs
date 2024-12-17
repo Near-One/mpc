@@ -1,4 +1,4 @@
-use crate::validation::{SingleVerifier, ThresholdVerifier, ValidationConfig, VerifyArgs, HOT_VERIFY_ABI, HOT_VERIFY_METHOD_NAME};
+use crate::validation::{SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, HOT_VERIFY_ABI, HOT_VERIFY_METHOD_NAME};
 use anyhow::{Context, Result};
 use k256::elliptic_curve::bigint::Zero;
 use k256::U256;
@@ -7,6 +7,7 @@ use serde_json::json;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use async_trait::async_trait;
 use web3::ethabi;
 use web3::ethabi::Contract;
 use web3::types::{CallRequest, H160};
@@ -67,6 +68,7 @@ impl EvmSingleVerifier {
     }
 }
 
+#[async_trait]
 impl SingleVerifier for EvmSingleVerifier {
     async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool> {
         let data = self.contract
@@ -104,7 +106,7 @@ pub struct EvmThresholdVerifier {
 }
 
 impl EvmThresholdVerifier {
-    pub fn new(validation_config: ValidationConfig, client: Arc<reqwest::Client>, contract: Contract) -> Self {
+    pub fn new(validation_config: ChainValidationConfig, client: Arc<reqwest::Client>, contract: Contract) -> Self {
         let threshold = validation_config.threshold;
         let servers = validation_config.servers;
         if threshold > servers.len() {
@@ -190,7 +192,7 @@ mod tests {
         let auth_contract_id = "0xf22Ef29d5Bb80256B569f4233a76EF09Cae996eC";
 
         let validation = EvmThresholdVerifier::new(
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 1,
                 servers: vec![
                     "http://localhost:8545".to_string(),
@@ -217,7 +219,7 @@ mod tests {
         let auth_contract_id = "0xf22Ef29d5Bb80256B569f4233a76EF09Cae996eC";
 
         let validation = EvmThresholdVerifier::new(
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 1,
                 servers: vec![
                     "http://localhost:1000".to_string(),
@@ -249,7 +251,7 @@ mod tests {
         let auth_contract_id = "0xf22Ef29d5Bb80256B569f4233a76EF09Cae996eC";
 
         let validation = EvmThresholdVerifier::new(
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 1,
                 servers: vec![
                     "http://localhost:1000".to_string(),

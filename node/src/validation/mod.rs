@@ -10,6 +10,7 @@ use near_sdk::bs58;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use async_trait::async_trait;
 use tokio_stream::StreamExt;
 use tracing::log::error;
 use web3::ethabi::Contract;
@@ -92,6 +93,8 @@ pub struct WalletAccessModel {
     pub chain_id: usize,
 }
 
+
+#[async_trait]
 pub(crate) trait SingleVerifier {
     async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool>;
 }
@@ -132,7 +135,8 @@ pub struct Validation {
     eth_validation: EvmThresholdVerifier,
 }
 
-pub struct ValidationConfig {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChainValidationConfig {
     pub threshold: usize,
     pub servers: Vec<String>,
 }
@@ -147,9 +151,9 @@ pub(crate) fn uid_to_wallet_id(uid: &str) -> Result<String> {
 impl Validation {
     pub fn new(
         client: Arc<reqwest::Client>,
-        near_validation_config: ValidationConfig,
-        base_validation_config: ValidationConfig,
-        eth_validation_config: ValidationConfig,
+        near_validation_config: ChainValidationConfig,
+        base_validation_config: ChainValidationConfig,
+        eth_validation_config: ChainValidationConfig,
     ) -> Self {
         let near_validation = NearThresholdVerifier::new(near_validation_config, client.clone());
 
@@ -223,7 +227,7 @@ mod tests {
     async fn validate_on_near() {
         let validation = Validation::new(
             Arc::new(reqwest::Client::new()),
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 2,
                 servers: vec!(
                     "https://rpc.mainnet.near.org".to_string(),
@@ -231,14 +235,14 @@ mod tests {
                     "https://nearrpc.aurora.dev".to_string(),
                 ),
             },
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 1,
                 servers: vec![
                     "http://localhost:8545".to_string(),
                     "http://bad-rpc:8545".to_string(),
                 ],
             },
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 1,
                 servers: vec![
                     "http://localhost:8546".to_string(),

@@ -8,7 +8,7 @@ actix = "0.13.0"
 aes-gcm = "0.10.3"
 anyhow = "1.0.92"
 async-trait = "0.1.83"
-axum = "0.7.9"
+axum = { version = "0.7.9", features = ["macros"] }
 borsh = { version = "1.5.1", features = ["derive"] }
 cait-sith = { git = "https://github.com/Near-One/cait-sith.git", features = ["k256"], rev = "75af6bf8c25359dd2be25a838057f3a0dc88f633" }
 clap = { version = "4.5.20", features = ["derive", "env"] }

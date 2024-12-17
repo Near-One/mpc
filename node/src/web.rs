@@ -20,7 +20,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::routing::post;
 use futures_util::future::join_all;
 use tokio::sync::OnceCell;
-use tokio::time;
+use tokio::{join, time};
+use crate::validation::ProofModel;
 
 /// Wrapper to make Axum understand how to convert anyhow::Error into a 500
 /// response.
@@ -84,7 +85,7 @@ async fn debug_index(
 pub struct UserSignatureRequest {
     pub uid: String,
     pub message: Scalar,
-    // pub proof: ProofModel,
+    pub proof: ProofModel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +101,25 @@ pub struct SignatureResponse {
     pub signature: Scalar,
 }
 
-async fn announce_signature(
+async fn announce_signature_to_us(
+    client: Arc<MpcClient>,
+    index_request: IndexRequest
+) -> Result<(), AnyhowErrorWrapper> {
+    validate(client.clone(), index_request.user_signature_request.clone()).await?;
+
+    let tweak = from_uid_to_scalar(&index_request.user_signature_request.uid);
+    client.add_sign_request(&SignatureRequest {
+        id: index_request.id,
+        msg_hash: index_request.user_signature_request.message,
+        tweak,
+        entropy: index_request.entropy,
+        timestamp_nanosec: 0,
+    });
+
+    Ok(())
+}
+
+async fn announce_signature_to_others(
     mpc_client: Arc<MpcClient>,
     index_request: IndexRequest
 ) {
@@ -108,13 +127,12 @@ async fn announce_signature(
     let web_client = mpc_client.get_web_client();
     let web_ui_port = config.web_ui.port;
 
-    // TODO: We should do the index logic for ourselves right away,
-    //   instead of doing it via http request
     let post_calls = config
         .mpc
         .participants
         .participants
         .iter()
+        .filter(|participant| participant.id != config.mpc.my_participant_id)
         .map(|participant| {
             let address = &participant.address;
             let url = format!("http://{}:{}/index", address, web_ui_port);
@@ -123,7 +141,7 @@ async fn announce_signature(
             async move {
                 let response = web_client
                     .post(&url)
-                    .json(&data) // Attach the JSON payload
+                    .json(&data)
                     .send()
                     .await?;
 
@@ -161,6 +179,24 @@ fn current_time_millis() -> u64 {
         .as_millis() as u64
 }
 
+async fn validate(
+    mpc_client: Arc<MpcClient>,
+    user_signature_request: UserSignatureRequest,
+) -> Result<(), AnyhowErrorWrapper> {
+    let validation = mpc_client.clone().get_validation();
+
+    let verification_result = validation.verify(
+        user_signature_request.uid,
+        hex::encode(user_signature_request.message.to_bytes()),
+        user_signature_request.proof,
+    ).await.context("Verification process failed during execution")?;
+    if !verification_result {
+        return Err(anyhow::anyhow!("Verification failed").into());
+    }
+
+    Ok(())
+}
+
 async fn index(
     State(state): State<WebServerState>,
     Json(index_request): Json<IndexRequest>,
@@ -168,17 +204,8 @@ async fn index(
     let Some(mpc_client) = state.mpc_client.unwrap().get().cloned() else {
         return Err(anyhow::anyhow!("MPC client not ready").into());
     };
-
-    let tweak = from_uid_to_scalar(&index_request.user_signature_request.uid);
-    mpc_client.clone().add_sign_request(&SignatureRequest {
-        id: index_request.id,
-        msg_hash: index_request.user_signature_request.message,
-        tweak,
-        entropy: index_request.entropy,
-        timestamp_nanosec: 0,
-    });
-
-    Ok(())
+    let client = Arc::new(mpc_client);
+    announce_signature_to_us(client, index_request).await
 }
 
 async fn sign(
@@ -198,7 +225,12 @@ async fn sign(
         id,
         entropy,
     };
-    announce_signature(mpc_client.clone(), index_request).await;
+
+    let (validation_succeeded_on_us, _) = join!(
+        announce_signature_to_us(mpc_client.clone(), index_request.clone()),
+        announce_signature_to_others(mpc_client.clone(), index_request)
+    );
+    validation_succeeded_on_us?;
 
     let result = state
         .task_handle

@@ -23,7 +23,6 @@ participants:
       port: 10003
       p2p_public_key: ed25519:7BWuGYJQGG5URtPs98kkWiwg3bQUP7v2wLQHyFq7RLVS
       near_account_id: 1480181394
-p2p_private_key_file: p2p_key
 web_ui:
   host: 0.0.0.0
   port: 20000
@@ -45,3 +44,19 @@ presignature:
   timeout_sec: 60
 signature:
   timeout_sec: 60
+validation:
+  near:
+    threshold: 2
+    servers:
+      - "https://rpc.mainnet.near.org"
+      - "https://rpc.near.org"
+      - "https://nearrpc.aurora.dev"
+  base:
+    threshold: 1
+    servers:
+      - "helios-base:8545"
+  eth:
+    threshold: 1
+    servers:
+      - "helios-eth:8545"
+

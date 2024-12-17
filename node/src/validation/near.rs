@@ -1,14 +1,14 @@
-use crate::validation::{GetWalletArgs, SingleVerifier, ThresholdVerifier, ValidationConfig, VerifyArgs, WalletModel, HOT_VERIFY_METHOD_NAME, MPC_GET_WALLET_METHOD, MPC_HOT_WALLET_CONTRACT};
+use crate::validation::{GetWalletArgs, SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, WalletModel, HOT_VERIFY_METHOD_NAME, MPC_GET_WALLET_METHOD, MPC_HOT_WALLET_CONTRACT};
 use anyhow::{anyhow, Context, Result};
 use futures_util::stream::FuturesUnordered;
 use near_sdk::base64::prelude::BASE64_STANDARD;
 use near_sdk::base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use async_trait::async_trait;
 use tokio_stream::StreamExt;
 
 #[derive(Serialize, Deserialize)]
@@ -107,6 +107,7 @@ impl NearSingleVerifier {
     }
 }
 
+#[async_trait]
 impl SingleVerifier for NearSingleVerifier {
     async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool> {
         let args_base64 = BASE64_STANDARD.encode(serde_json::to_vec(&args)?);
@@ -127,7 +128,7 @@ pub struct NearThresholdVerifier {
 }
 
 impl NearThresholdVerifier {
-    pub fn new(near_validation_config: ValidationConfig, client: Arc<reqwest::Client>) -> Self {
+    pub fn new(near_validation_config: ChainValidationConfig, client: Arc<reqwest::Client>) -> Self {
         let threshold = near_validation_config.threshold;
         let servers = near_validation_config.servers;
         if threshold > servers.len() {
@@ -273,7 +274,7 @@ mod tests {
     #[tokio::test]
     async fn near_threshold_verifier() {
         let rpc_validation = NearThresholdVerifier::new(
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 2,
                 servers: vec!(
                     "https://rpc.mainnet.near.org".to_string(),
@@ -300,7 +301,7 @@ mod tests {
     #[tokio::test]
     async fn near_threshold_verifier_all_rpcs_bad() {
         let rpc_validation = NearThresholdVerifier::new(
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 2,
                 servers: vec!(
                     "https://hello.com".to_string(),
@@ -371,7 +372,7 @@ mod tests {
     #[tokio::test]
     async fn threshold_verifier_get_wallet() {
         let rpc_validation = NearThresholdVerifier::new(
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 2,
                 servers: vec!(
                     "https://rpc.mainnet.near.org".to_string(),
@@ -403,7 +404,7 @@ mod tests {
     #[tokio::test]
     async fn threshold_verifier_get_wallet_bad_rpcs() {
         let rpc_validation = NearThresholdVerifier::new(
-            ValidationConfig {
+            ChainValidationConfig {
                 threshold: 3,
                 servers: vec!(
                     "https://google.com".to_string(),

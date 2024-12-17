@@ -9,7 +9,7 @@ data = {
         "account_id": "keys.auth.hot.tg"
     }
 }
-for _ in range(5):
+for _ in range(20):
     import time
 
     start = time.time()

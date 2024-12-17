@@ -1,7 +1,4 @@
-use crate::config::{
-    load_config_file, ConfigFile, IndexerConfig, PresignatureConfig, SignatureConfig, SyncMode,
-    TripleConfig, WebUIConfig,
-};
+use crate::config::{load_config_file, ConfigFile, IndexerConfig, PresignatureConfig, SignatureConfig, SyncMode, TripleConfig, ValidationConfig, WebUIConfig};
 use crate::config::{BlockArgs, MpcConfig, SecretsConfig};
 use crate::db::{DBCol, SecretDB};
 use crate::indexer::configs::InitConfigArgs;
@@ -31,6 +28,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex, OnceCell};
+use crate::validation::{ChainValidationConfig, Validation};
 
 #[derive(Parser, Debug)]
 pub enum Cli {
@@ -214,6 +212,15 @@ impl Cli {
                     let sign_request_store = Arc::new(SignRequestStorage::new(secret_db.clone())?);
 
                     let web_client = Arc::new(reqwest::Client::new());
+                    let validation_config = config.validation.clone();
+                    let validation = Arc::new(
+                        Validation::new(
+                            web_client.clone(),
+                            validation_config.near,
+                            validation_config.base,
+                            validation_config.eth,
+                        )
+                    );
                     let config = Arc::new(config);
                     let mpc_client = MpcClient::new(
                         config.clone(),
@@ -223,6 +230,7 @@ impl Cli {
                         sign_request_store,
                         root_keyshare,
                         web_client,
+                        validation
                     );
                     mpc_client_cell
                         .set(mpc_client.clone())
@@ -335,6 +343,11 @@ impl Cli {
                             timeout_sec: 60,
                         },
                         signature: SignatureConfig { timeout_sec: 60 },
+                        validation: ValidationConfig {
+                            near: ChainValidationConfig { threshold: 0, servers: vec![] },
+                            base: ChainValidationConfig { threshold: 0, servers: vec![] },
+                            eth: ChainValidationConfig { threshold: 0, servers: vec![] },
+                        },
                     };
                     std::fs::write(
                         format!("{}/p2p_key", subdir),
