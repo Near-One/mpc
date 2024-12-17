@@ -67,7 +67,7 @@ pub async fn pre_sign_unowned(
 
 type PublicKey = <Secp256k1 as CurveArithmetic>::AffinePoint;
 
-fn derive_key(public_key: PublicKey, tweak: Scalar) -> PublicKey {
+pub fn derive_key(public_key: PublicKey, tweak: Scalar) -> PublicKey {
     (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * tweak + public_key).to_affine()
 }
 

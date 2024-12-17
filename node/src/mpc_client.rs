@@ -19,7 +19,7 @@ use crate::triple::{
 
 use crate::key_generation::RootKeyshareData;
 use cait_sith::FullSignature;
-use k256::Secp256k1;
+use k256::{AffinePoint, Secp256k1};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -42,6 +42,7 @@ impl MpcClient {
     pub fn get_config(&self) -> Arc<Config> { self.config.clone() }
     pub fn get_web_client(&self) -> Arc<reqwest::Client> { self.web_client.clone() }
     pub fn get_validation(&self) -> Arc<Validation> { self.validation.clone() }
+    pub fn get_public_key(&self) -> AffinePoint { self.root_keyshare.public_key }
 
     pub fn new(
         config: Arc<Config>,

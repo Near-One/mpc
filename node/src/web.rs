@@ -21,6 +21,7 @@ use axum::routing::post;
 use futures_util::future::join_all;
 use tokio::sync::OnceCell;
 use tokio::{join, time};
+use crate::sign::derive_key;
 use crate::validation::ProofModel;
 
 /// Wrapper to make Axum understand how to convert anyhow::Error into a 500
@@ -259,6 +260,31 @@ async fn sign(
     Ok(result)
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct PublicKeyRequest {
+    pub uid: String
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PublicKeyResponse {
+    pub public_key: AffinePoint,
+}
+
+async fn public_key(
+    State(state): State<WebServerState>,
+    Json(public_key_request): Json<PublicKeyRequest>,
+) -> Result<Json<PublicKeyResponse>, AnyhowErrorWrapper> {
+    let Some(mpc_client) = state.mpc_client.unwrap().get().cloned() else {
+        return Err(anyhow::anyhow!("MPC client not ready").into());
+    };
+    let scalar = from_uid_to_scalar(&public_key_request.uid);
+    let public_key = mpc_client.get_public_key();
+    let derived_public_key = derive_key(public_key, scalar);
+    Ok(Json(PublicKeyResponse {
+        public_key: derived_public_key
+    }))
+}
+
 // ------------------------------------------------------------
 
 async fn debug_sign(
@@ -383,6 +409,7 @@ pub async fn start_web_server(
             .route("/debug/sign", get(debug_sign))
             .route("/sign", post(sign))
             .route("/index", post(index))
+            .route("/public_key", post(public_key))
     } else {
         router
     };
