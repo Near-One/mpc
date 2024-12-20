@@ -79,7 +79,7 @@ impl SingleVerifier for EvmSingleVerifier {
                 ethabi::token::Token::Bytes(vec![]),
                 ethabi::token::Token::Bytes(hex::decode(args.user_payload).unwrap()),
                 ethabi::token::Token::Bytes(vec![]),
-            ])?;
+            ]).context("Bad arguments for evm smart contract")?;
 
         let call_request = CallRequest::builder()
             .to(H160::from_str(auth_contract_id)?)
@@ -152,6 +152,25 @@ mod tests {
             user_payload: "00000000000000000000000000000000000000000000005dac769be0b6d400000000000000000000000000000000000000000000000000000000000000000000".into(),
         };
         let auth_contract_id = "0xf22Ef29d5Bb80256B569f4233a76EF09Cae996eC";
+        let validation = EvmSingleVerifier::new(
+            Arc::new(reqwest::Client::new()),
+            "http://localhost:8545".to_string(),
+            evm_hot_verify_contract,
+        );
+        let actual = validation.verify(auth_contract_id, args).await.unwrap();
+        assert!(actual);
+    }
+
+    #[tokio::test]
+    async fn base_single_verifier_non_trivial_message() {
+        let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let args = VerifyArgs {
+            wallet_id: None,
+            msg_hash: "ef32edffb454d2a3172fd0af3fdb0e43fac5060a929f1b83b6de2b73754e3f45".into(),
+            metadata: None,
+            user_payload: "00000000000000000000000000000000000000000000005e095d2c286c4414050000000000000000000000000000000000000000000000000000000000000000".into(),
+        };
+        let auth_contract_id = "0x42351e68420D16613BBE5A7d8cB337A9969980b4";
         let validation = EvmSingleVerifier::new(
             Arc::new(reqwest::Client::new()),
             "http://localhost:8545".to_string(),
