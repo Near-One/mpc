@@ -1,7 +1,7 @@
 mod assets;
 mod background;
 pub mod cli;
-mod config;
+pub mod config;
 mod db;
 mod hkdf;
 mod indexer;

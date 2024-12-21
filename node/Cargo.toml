@@ -7,7 +7,7 @@ edition = "2021"
 path = "src/lib.rs"
 
 [[bin]]
-name = "node"
+name = "mpc-node"
 path = "src/main.rs"
 
 [dependencies]

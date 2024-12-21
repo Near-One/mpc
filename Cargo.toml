@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "node",
+    "utils"
 ]
 resolver = "2"
 exclude = ["libs"]

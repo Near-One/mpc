@@ -1,4 +1,4 @@
-use crate::primitives::ParticipantId;
+pub use crate::primitives::ParticipantId;
 use anyhow::Context;
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::AccountId;
