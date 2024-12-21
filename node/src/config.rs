@@ -116,6 +116,7 @@ pub struct ConfigFile {
     /// used, this account is used to sign transactions for the on-chain
     /// contract. If static config is used, this account is used to look up
     /// the participant ID.
+    #[serde(default = "near_account_id_from_env")]
     pub my_near_account_id: AccountId,
     pub web_ui: WebUIConfig,
     pub indexer: Option<IndexerConfig>,
@@ -126,6 +127,13 @@ pub struct ConfigFile {
     /// replacing what would be read from the contract.
     pub participants: Option<ParticipantsConfig>,
     pub validation: ValidationConfig
+}
+
+fn near_account_id_from_env() -> AccountId {
+    std::env::var("MPC_NEAR_ACCOUNT_ID")
+        .ok()
+        .and_then(|id| id.parse().ok())
+        .expect("MPC_NEAR_ACCOUNT_ID not found in environment variables")
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

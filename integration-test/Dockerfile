@@ -5,6 +5,7 @@ WORKDIR /app
 FROM chef AS planner
 
 COPY node node
+COPY utils utils
 COPY Cargo.lock Cargo.lock
 COPY Cargo.toml Cargo.toml
 COPY .git .git
@@ -22,6 +23,7 @@ RUN git submodule update --init --recursive
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY node node
+COPY utils utils
 COPY Cargo.lock Cargo.lock
 COPY Cargo.toml Cargo.toml
 
