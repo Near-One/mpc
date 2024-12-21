@@ -31,9 +31,9 @@ fn main() -> Result<()> {
 
     {
         let mut local_config = File::create("local-config.env")?;
-        writeln!(local_config, "MPC_HOME_DIR: /app/data")?;
-        writeln!(local_config, "RUST_BACKTRACE: full")?;
-        writeln!(local_config, "RUST_LOG: info")?;
+        writeln!(local_config, "MPC_HOME_DIR=/app/data")?;
+        writeln!(local_config, "RUST_BACKTRACE=full")?;
+        writeln!(local_config, "RUST_LOG=info")?;
 
         writeln!(local_config, "MPC_P2P_PRIVATE_KEY={}", secret_key)?;
         writeln!(local_config, "MPC_NEAR_ACCOUNT_ID={}", near_account_id)?;
