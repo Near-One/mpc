@@ -115,9 +115,14 @@ pub(crate) trait ThresholdVerifier {
         let mut count = 0;
         let threshold = self.get_threshold();
         while let Some(result) = futures.next().await {
-            if let Ok(verdict) = result {
-                if verdict {
-                    count += 1
+            match result {
+                Ok(verdict) => {
+                    if verdict {
+                        count += 1
+                    }
+                }
+                Err(err) => {
+                    error!("{:?}", err);
                 }
             }
             if count >= threshold {
