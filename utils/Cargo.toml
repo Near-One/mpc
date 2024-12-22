@@ -7,6 +7,10 @@ edition = "2021"
 name = "config-generator"
 path = "config-generator.rs"
 
+[[bin]]
+name = "key-migration"
+path = "key-migration.rs"
+
 [dependencies]
 mpc-node = { path = "../node" }
 near-crypto = { git = "https://github.com/near/nearcore", rev = "d85bd53a6" }
@@ -15,3 +19,9 @@ hex = "0.4.3"
 anyhow = "1.0.94"
 serde = { version = "1.0.215", features = ["derive"] }
 serde_yaml = "0.9.34+deprecated"
+aes = "0.8.4"
+clap = { version = "4.5.22", features = ["derive"] }
+tokio = "1.42.0"
+cbc = {version = "0.1.2", features = ["alloc"]}
+near-sdk = "5.2.1"
+dotenv-parser = "0.1.3"

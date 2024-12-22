@@ -77,7 +77,7 @@ pub fn load_root_keyshare(
 }
 
 /// Saves the root keyshare (keygen output) to disk.
-fn save_root_keyshare(
+pub fn save_root_keyshare(
     home_dir: &Path,
     encryption_key: [u8; 16],
     root_keyshare: &RootKeyshareData,

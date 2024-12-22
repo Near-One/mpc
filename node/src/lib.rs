@@ -5,7 +5,7 @@ pub mod config;
 mod db;
 mod hkdf;
 mod indexer;
-mod key_generation;
+pub mod key_generation;
 mod metrics;
 mod mpc_client;
 mod network;
