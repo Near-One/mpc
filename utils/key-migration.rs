@@ -25,8 +25,8 @@ pub struct Cli {
 
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
-async fn load_old_share(aes_key: &[u8], path_to_private_share: &PathBuf) -> Result<RootKeyshareData> {
-    let mut file = File::open(path_to_private_share).await?;
+async fn load_old_share(aes_key: &[u8], filename_of_private_share: String) -> Result<RootKeyshareData> {
+    let mut file = File::open(format!("/app/data/{filename_of_private_share}")).await?;
     let mut b64 = Vec::new();
     file.read_to_end(&mut b64).await?;
 
@@ -44,7 +44,7 @@ async fn load_old_share(aes_key: &[u8], path_to_private_share: &PathBuf) -> Resu
 }
 
 async fn get_new_aes_key() -> String {
-    let mut local_config_env = File::open("local-config.env").await.unwrap();
+    let mut local_config_env = File::open("/app/data/local-config.env").await.unwrap();
     let mut source = String::new();
     local_config_env.read_to_string(&mut source).await.unwrap();
 
@@ -56,16 +56,15 @@ async fn get_new_aes_key() -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let path_to_private_share = env::args().nth(1).expect("Usage: program <path_to_private_share> <old_aes_key>");
-    let path_to_private_share = PathBuf::from(path_to_private_share);
+    let filename_of_private_share = env::args().nth(1).expect("Usage: program <filename_of_private_share> <old_aes_key>");
     let aes_key = env::args().nth(2).expect("Usage: program <path_to_private_share> <old_aes_key>");
 
     let old_aes_key = hex::decode(aes_key).expect("Couldn't decode old aes key from hex");
-    let share = load_old_share(old_aes_key.as_slice(), &path_to_private_share).await?;
+    let share = load_old_share(old_aes_key.as_slice(), filename_of_private_share).await?;
     let new_aes_key = hex::decode(get_new_aes_key().await).context("Couldn't decode new aes key from hex")?;
     let new_aes_key = <[u8; 16]>::try_from(new_aes_key).unwrap();
 
-    save_root_keyshare(&PathBuf::from("./"), new_aes_key, &share)?;
+    save_root_keyshare(&PathBuf::from("/app/data/"), new_aes_key, &share)?;
 
     println!("Key successfully migrated");
 

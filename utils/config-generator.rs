@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     let aes_key = hex::encode(generate_aes_key());
 
     {
-        let mut local_config = File::create("local-config.env")?;
+        let mut local_config = File::create("/app/data/local-config.env")?;
         writeln!(local_config, "MPC_HOME_DIR=/app/data")?;
         writeln!(local_config, "RUST_BACKTRACE=full")?;
         writeln!(local_config, "RUST_LOG=info")?;
@@ -51,7 +51,7 @@ fn main() -> Result<()> {
             port: 10000,
             near_account_id: near_account_id.to_string().parse()?,
         };
-        let mut public_part_file = File::create("public-part.yaml")?;
+        let mut public_part_file = File::create("/app/data/public-part.yaml")?;
         let yaml_data = serde_yaml::to_string(&public_part)?;
         public_part_file.write_all(yaml_data.as_bytes())?;
 
