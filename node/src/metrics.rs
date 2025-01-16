@@ -1,4 +1,5 @@
 use lazy_static::lazy_static;
+use near_o11y::metrics::exponential_buckets;
 
 lazy_static! {
     pub static ref MPC_NUM_TRIPLES_GENERATED: prometheus::IntCounter =
@@ -74,6 +75,17 @@ lazy_static! {
 }
 
 lazy_static! {
+    pub static ref MPC_SIGN_COMPUTATION_LATENCY: prometheus::Histogram =
+        prometheus::register_histogram!(
+            "mpc_signature_computation_latency",
+            "Time elapsed between the leader initiating a signature computation
+             and obtaining a full signature",
+            exponential_buckets(0.1, 2.0, 10).unwrap(),
+        )
+        .unwrap();
+}
+
+lazy_static! {
     pub static ref MPC_NUM_SIGN_RESPONSES_SENT: prometheus::IntCounter =
         prometheus::register_int_counter!(
             "mpc_num_signature_responses_sent",
@@ -95,10 +107,12 @@ lazy_static! {
 }
 
 lazy_static! {
-    pub static ref MPC_NUM_SIGN_RESPONSES_INDEXED: prometheus::IntCounter =
-        prometheus::register_int_counter!(
-            "mpc_num_sign_responses_indexed",
-            "Number of signature responses sent by this node subsequently observed on chain",
+    pub static ref MPC_SIGN_REQUEST_TO_RESPONSE_LATENCY: prometheus::Histogram =
+        prometheus::register_histogram!(
+            "mpc_signature_request_to_response_latency",
+            "Latency from the block containing the signature request to the
+             block containing the signature response",
+            exponential_buckets(0.5, 2.0, 10).unwrap(),
         )
         .unwrap();
 }
@@ -106,8 +120,19 @@ lazy_static! {
 lazy_static! {
     pub static ref MPC_NUM_SIGN_RESPONSES_TIMED_OUT: prometheus::IntCounter =
         prometheus::register_int_counter!(
-            "mpc_num_sign_responses_timed_out",
-            "Number of signature responses sent by this node which did not appear on chain in time",
+            "mpc_num_signature_responses_timed_out",
+            "Number of times the node sent a response and failed to observe it
+             on-chain before timing out",
+        )
+        .unwrap();
+}
+
+lazy_static! {
+    pub static ref MPC_NUM_SIGN_RESPONSES_ABANDONED: prometheus::IntCounter =
+        prometheus::register_int_counter!(
+            "mpc_num_signature_responses_abandoned",
+            "Number of responses which we constructed successfully but failed to
+             submit and observe on-chain within the retry limit",
         )
         .unwrap();
 }

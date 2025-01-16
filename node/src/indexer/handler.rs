@@ -125,7 +125,7 @@ async fn handle_message(
     }
 
     for nonce in my_tx_nonces {
-        indexer_state.insert_nonce(nonce);
+        indexer_state.insert_nonce(nonce, streamer_message.block.header.timestamp_nanosec);
     }
 
     let mut stats_lock = stats.lock().await;

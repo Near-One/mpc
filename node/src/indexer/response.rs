@@ -248,6 +248,7 @@ async fn ensure_respond_tx(
     response_ser: std::string::String,
     timeout: Duration,
     num_attempts: NonZeroUsize,
+    request_timestamp_nanosec: u64,
 ) {
     for _ in 0..num_attempts.into() {
         let Some(nonce) = submit_respond_tx(
@@ -264,20 +265,26 @@ async fn ensure_respond_tx(
 
         // If the transaction is sent, wait the full timeout then check if it got included
         time::sleep(timeout).await;
-        if indexer_state.has_nonce(nonce) {
-            metrics::MPC_NUM_SIGN_RESPONSES_INDEXED.inc();
+        if let Some(response_timestamp_nanosec) = indexer_state.peek_nonce(nonce) {
+            // Record the request-to-response latency
+            let latency_sec = (response_timestamp_nanosec - request_timestamp_nanosec) as f64 / 1e9;
+            metrics::MPC_SIGN_REQUEST_TO_RESPONSE_LATENCY.observe(latency_sec);
             return;
         }
+
         metrics::MPC_NUM_SIGN_RESPONSES_TIMED_OUT.inc();
     }
+
+    // We gave up without observing our response on-chain
+    metrics::MPC_NUM_SIGN_RESPONSES_ABANDONED.inc();
 }
 
 pub(crate) async fn handle_sign_responses(
-    mut receiver: mpsc::Receiver<ChainRespondArgs>,
+    mut receiver: mpsc::Receiver<(ChainRespondArgs, u64)>,
     tx_signer: Option<Arc<TransactionSigner>>,
     indexer_state: Arc<IndexerState>,
 ) {
-    while let Some(respond_args) = receiver.recv().await {
+    while let Some((respond_args, request_timestamp_nanosec)) = receiver.recv().await {
         let Some(tx_signer) = tx_signer.clone() else {
             tracing::error!(target: "mpc", "Transaction signer unavailable; account secret key not provided");
             continue;
@@ -295,6 +302,7 @@ pub(crate) async fn handle_sign_responses(
                 response_ser,
                 Duration::from_secs(6), // TODO: maybe set the timeout and num_attempts in the config
                 NonZeroUsize::new(3).unwrap(),
+                request_timestamp_nanosec,
             )
             .await;
         });

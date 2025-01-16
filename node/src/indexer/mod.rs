@@ -20,9 +20,10 @@ pub(crate) struct IndexerState {
     client: actix::Addr<near_client::ClientActor>,
     /// AccountId for the mpc contract
     mpc_contract_id: AccountId,
-    /// Nonces observed in on-chain transactions signed with
-    /// the local mpc node's near account access key
-    pub my_nonces: Mutex<lru::LruCache<Nonce, ()>>,
+    /// Contains nonces observed on-chain from our access key,
+    /// along with the timestamp from the block header.
+    /// Used to detect successful responses.
+    pub my_nonces: Mutex<lru::LruCache<Nonce, u64>>,
 }
 
 impl IndexerState {
@@ -41,13 +42,13 @@ impl IndexerState {
         }
     }
 
-    pub fn insert_nonce(self: &Arc<Self>, nonce: Nonce) {
+    pub fn insert_nonce(self: &Arc<Self>, nonce: Nonce, timestamp_nanosec: u64) {
         let mut cache = self.my_nonces.lock().expect("poisoned lock");
-        cache.put(nonce, ());
+        cache.put(nonce, timestamp_nanosec);
     }
 
-    pub fn has_nonce(self: &Arc<Self>, nonce: Nonce) -> bool {
+    pub fn peek_nonce(self: &Arc<Self>, nonce: Nonce) -> Option<u64> {
         let cache = self.my_nonces.lock().expect("poisoned lock");
-        cache.contains(&nonce)
+        cache.peek(&nonce).copied()
     }
 }
