@@ -154,7 +154,7 @@ mod tests {
         let auth_contract_id = "0xf22Ef29d5Bb80256B569f4233a76EF09Cae996eC";
         let validation = EvmSingleVerifier::new(
             Arc::new(reqwest::Client::new()),
-            "http://localhost:8545".to_string(),
+            "https://base-rpc.publicnode.com".to_string(),
             evm_hot_verify_contract,
         );
         let actual = validation.verify(auth_contract_id, args).await.unwrap();
@@ -173,7 +173,7 @@ mod tests {
         let auth_contract_id = "0x42351e68420D16613BBE5A7d8cB337A9969980b4";
         let validation = EvmSingleVerifier::new(
             Arc::new(reqwest::Client::new()),
-            "http://localhost:8545".to_string(),
+            "https://base-rpc.publicnode.com".to_string(),
             evm_hot_verify_contract,
         );
         let actual = validation.verify(auth_contract_id, args).await.unwrap();
@@ -192,7 +192,7 @@ mod tests {
         let auth_contract_id = "0xf22Ef29d5Bb80256B569f4233a76EF09Cae996eC";
         let validation = EvmSingleVerifier::new(
             Arc::new(reqwest::Client::new()),
-            "http://localhost:8545".to_string(),
+            "https://base-rpc.publicnode.com".to_string(),
             evm_hot_verify_contract,
         );
         let actual = validation.verify(auth_contract_id, args).await.unwrap();
@@ -215,6 +215,7 @@ mod tests {
                 threshold: 1,
                 servers: vec![
                     "http://localhost:8545".to_string(),
+                    "https://base-rpc.publicnode.com".to_string(),
                     "http://localhost:8545".to_string(),
                 ],
             },
@@ -247,6 +248,7 @@ mod tests {
                     "http://localhost:1000".to_string(),
                     "http://localhost:8545".to_string(),
                     "http://localhost:1000".to_string(),
+                    "https://base-rpc.publicnode.com".to_string(),
                     "http://localhost:1000".to_string(),
                 ],
             },
