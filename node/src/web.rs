@@ -184,17 +184,14 @@ async fn validate(
     mpc_client: Arc<MpcClient>,
     user_signature_request: UserSignatureRequest,
 ) -> Result<(), AnyhowErrorWrapper> {
-    let validation = mpc_client.clone().get_validation();
-
-    let verification_result = validation.verify(
+    mpc_client
+        .clone()
+        .get_validation().verify(
         user_signature_request.uid,
         hex::encode(user_signature_request.message.to_bytes()),
         user_signature_request.proof,
-    ).await.context("Verification process failed during execution")?;
-    if !verification_result {
-        return Err(anyhow::anyhow!("Verification failed").into());
-    }
-
+    )
+        .await?;
     Ok(())
 }
 

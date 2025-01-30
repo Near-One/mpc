@@ -3,7 +3,7 @@ mod evm;
 
 use crate::validation::evm::EvmThresholdVerifier;
 use crate::validation::near::NearThresholdVerifier;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use futures_util::stream::FuturesUnordered;
@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::join;
 use tokio_stream::StreamExt;
+use tracing::log;
 use tracing::log::error;
 use web3::ethabi::Contract;
 
@@ -96,14 +97,14 @@ pub struct WalletAccessModel {
 
 #[async_trait]
 pub(crate) trait SingleVerifier {
-    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool>;
+    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<()>;
 }
 
 pub(crate) trait ThresholdVerifier {
     fn get_verifiers(&self) -> Vec<impl SingleVerifier>;
     fn get_threshold(&self) -> usize;
 
-    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool> {
+    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<()> {
         let verifiers = self.get_verifiers();
         let mut futures: FuturesUnordered<_> = verifiers
             .iter()
@@ -116,21 +117,19 @@ pub(crate) trait ThresholdVerifier {
         let threshold = self.get_threshold();
         while let Some(result) = futures.next().await {
             match result {
-                Ok(verdict) => {
-                    if verdict {
-                        count += 1
-                    }
-                }
-                Err(err) => {
-                    error!("{:?}", err);
-                }
+                Ok(_) => { count += 1 },
+                Err(e) => { log::warn!("{}", e) }
             }
             if count >= threshold {
                 break;
             }
         }
 
-        Ok(count >= threshold)
+        if count >= threshold {
+            Ok(())
+        } else {
+            bail!("Threshold is not met: count: {count}, threshold: {threshold}, total: {}", verifiers.len());
+        }
     }
 }
 
@@ -187,7 +186,7 @@ impl Validation {
         uid: String,
         message_hex: String,
         proof: ProofModel,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let wallet_id = uid_to_wallet_id(&uid)?;
         let wallet = self.near_validation.get_wallet_data(&wallet_id).await?;
         let mut futures = FuturesUnordered::new();
@@ -207,12 +206,10 @@ impl Validation {
         }
 
         while let Some(result) = futures.next().await {
-            if result? == false {
-                anyhow::bail!("Contract `verify()` call returned false!");
-            }
+            result?;
         }
 
-        Ok(true)
+        Ok(())
     }
 
     async fn verify_for_wallet_access(
@@ -221,9 +218,9 @@ impl Validation {
         wallet_access: WalletAccessModel,
         message_hex: String,
         user_payload: String,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         if let Some(chain) = Chain::from_usize(wallet_access.chain_id) {
-            let result = match chain {
+            match chain {
                 Chain::Near => {
                     let message_bs58 = hex::decode(&message_hex)
                         .map(|message_bytes| {
@@ -258,10 +255,9 @@ impl Validation {
                 }
             };
 
-            Ok(result)
+            Ok(())
         } else {
-            error!("Unexpected chain id: {}", wallet_access.chain_id);
-            Ok(false)
+            bail!("Unexpected chain id: {}", wallet_access.chain_id);
         }
     }
 }
@@ -312,8 +308,8 @@ mod tests {
                 ("keys.auth.hot.tg".to_string(), r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string())
             ]),
         };
-        let actual = validation.verify(uid, message, proof).await.unwrap();
-        assert!(actual)
+
+        validation.verify(uid, message, proof).await.unwrap();
     }
 
     #[tokio::test]
@@ -328,7 +324,7 @@ mod tests {
                 ("0x42351e68420D16613BBE5A7d8cB337A9969980b4".to_string(), "00000000000000000000000000000000000000000000005e095d2c286c4414050000000000000000000000000000000000000000000000000000000000000000".to_string())
             ]),
         };
-        let actual = validation.verify(uid, message, proof).await.unwrap();
-        assert!(actual)
+
+    validation.verify(uid, message, proof).await.unwrap();
     }
 }

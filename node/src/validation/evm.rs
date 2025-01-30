@@ -1,5 +1,5 @@
 use crate::validation::{SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, HOT_VERIFY_ABI, HOT_VERIFY_METHOD_NAME};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use k256::elliptic_curve::bigint::Zero;
 use k256::U256;
 use serde::{Deserialize, Serialize};
@@ -70,7 +70,7 @@ impl EvmSingleVerifier {
 
 #[async_trait]
 impl SingleVerifier for EvmSingleVerifier {
-    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool> {
+    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<()> {
         let data = self.contract
             .function(HOT_VERIFY_METHOD_NAME)
             .unwrap()
@@ -96,7 +96,11 @@ impl SingleVerifier for EvmSingleVerifier {
             .to_string();
         let verify_result = U256::from_le_hex(verify_result.as_str());
         let verify_result_is_zero = bool::from(verify_result.is_zero());
-        Ok(!verify_result_is_zero)
+        if !verify_result_is_zero {
+            Ok(())
+        } else {
+            bail!("Evm, {} -> {auth_contract_id} returned False on `verify()` call", self.server)
+        }
     }
 }
 
@@ -157,8 +161,8 @@ mod tests {
             "https://base-rpc.publicnode.com".to_string(),
             evm_hot_verify_contract,
         );
-        let actual = validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(actual);
+
+        validation.verify(auth_contract_id, args).await.unwrap();
     }
 
     #[tokio::test]
@@ -176,10 +180,11 @@ mod tests {
             "https://base-rpc.publicnode.com".to_string(),
             evm_hot_verify_contract,
         );
-        let actual = validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(actual);
+
+        validation.verify(auth_contract_id, args).await.unwrap();
     }
 
+    #[should_panic]
     #[tokio::test]
     async fn base_single_verifier_wrong_message() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
@@ -195,8 +200,8 @@ mod tests {
             "https://base-rpc.publicnode.com".to_string(),
             evm_hot_verify_contract,
         );
-        let actual = validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(!actual);
+
+        validation.verify(auth_contract_id, args).await.unwrap();
     }
 
     #[tokio::test]
@@ -223,8 +228,7 @@ mod tests {
             evm_hot_verify_contract,
         );
 
-        let actual = validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(actual);
+        validation.verify(auth_contract_id, args).await.unwrap();
     }
 
     #[tokio::test]
@@ -256,10 +260,11 @@ mod tests {
             evm_hot_verify_contract,
         );
 
-        let actual = validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(actual);
+
+        validation.verify(auth_contract_id, args).await.unwrap();
     }
 
+    #[should_panic]
     #[tokio::test]
     async fn base_threshold_verifier_all_rpcs_bad() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
@@ -287,7 +292,6 @@ mod tests {
             evm_hot_verify_contract,
         );
 
-        let actual = validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(!actual);
+        validation.verify(auth_contract_id, args).await.unwrap();
     }
 }

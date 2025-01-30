@@ -1,5 +1,5 @@
 use crate::validation::{GetWalletArgs, SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, WalletModel, HOT_VERIFY_METHOD_NAME, MPC_GET_WALLET_METHOD, MPC_HOT_WALLET_CONTRACT};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures_util::stream::FuturesUnordered;
 use near_sdk::base64::prelude::BASE64_STANDARD;
 use near_sdk::base64::Engine;
@@ -109,7 +109,7 @@ impl NearSingleVerifier {
 
 #[async_trait]
 impl SingleVerifier for NearSingleVerifier {
-    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<bool> {
+    async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<()> {
         let args_base64 = BASE64_STANDARD.encode(serde_json::to_vec(&args)?);
         let rpc_args = RpcRequest::build(
             auth_contract_id.to_string(),
@@ -118,7 +118,11 @@ impl SingleVerifier for NearSingleVerifier {
         );
         let verify_result = self.call_rpc(serde_json::to_value(&rpc_args)?).await?;
         let verify_result = serde_json::from_slice::<bool>(verify_result.as_slice())?;
-        Ok(verify_result)
+        if verify_result {
+            Ok(())
+        } else {
+            bail!("Near, {} -> {auth_contract_id} returned False on `verify()`", self.server)
+        }
     }
 }
 
@@ -204,8 +208,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = rpc_caller.verify(auth_contract_id, args).await.unwrap();
-        assert!(result)
+        rpc_caller.verify(auth_contract_id, args).await.unwrap();
     }
 
     #[tokio::test]
@@ -225,8 +228,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = rpc_caller.verify(auth_contract_id, args).await.unwrap();
-        assert!(result)
+        rpc_caller.verify(auth_contract_id, args).await.unwrap();
     }
 
     #[tokio::test]
@@ -246,8 +248,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = rpc_caller.verify(auth_contract_id, args).await.unwrap();
-        assert!(result)
+        rpc_caller.verify(auth_contract_id, args).await.unwrap();
     }
 
     #[tokio::test]
@@ -266,9 +267,8 @@ mod tests {
             user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
             metadata: None,
         };
+        rpc_caller.verify(auth_contract_id, args).await.unwrap();
 
-        let result = rpc_caller.verify(auth_contract_id, args).await.unwrap();
-        assert!(result)
     }
 
     #[tokio::test]
@@ -294,10 +294,11 @@ mod tests {
             metadata: None,
         };
 
-        let result = rpc_validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(result)
+
+        rpc_validation.verify(auth_contract_id, args).await.unwrap();
     }
 
+    #[should_panic]
     #[tokio::test]
     async fn near_threshold_verifier_all_rpcs_bad() {
         let rpc_validation = NearThresholdVerifier::new(
@@ -322,8 +323,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = rpc_validation.verify(auth_contract_id, args).await.unwrap();
-        assert!(!result)
+        rpc_validation.verify(auth_contract_id, args).await.unwrap();
     }
 
     #[tokio::test]
@@ -345,7 +345,6 @@ mod tests {
         };
 
         let actual = rpc_caller.get_wallet(wallet_id.to_string()).await.unwrap();
-
         assert_eq!(actual, expected)
     }
 
