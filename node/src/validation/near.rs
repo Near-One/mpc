@@ -3,7 +3,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures_util::stream::FuturesUnordered;
 use near_sdk::base64::prelude::BASE64_STANDARD;
 use near_sdk::base64::Engine;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -202,6 +201,7 @@ mod tests {
         let auth_contract_id: &str = "keys.auth.hot.tg";
 
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             msg_hash: "6vLRVXiHvroXw1LEU1BNhz7QSaG73U41WM45m87X55H3".to_string(),
             wallet_id: Some(wallet_id),
             user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
@@ -222,6 +222,7 @@ mod tests {
         let auth_contract_id: &str = "keys.auth.hot.tg";
 
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             msg_hash: "6vLRVXiHvroXw1LEU1BNhz7QSaG73U41WM45m87X55H3".to_string(),
             wallet_id: Some(wallet_id),
             user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
@@ -242,6 +243,7 @@ mod tests {
         let auth_contract_id: &str = "123123.auth.hot.tg";
 
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             msg_hash: "6vLRVXiHvroXw1LEU1BNhz7QSaG73U41WM45m87X55H3".to_string(),
             wallet_id: Some(wallet_id),
             user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
@@ -262,13 +264,13 @@ mod tests {
         let auth_contract_id: &str = "keys.auth.hot.tg";
 
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             msg_hash: "7vLRVXiHvroXw1LEU1BNhz7QSaG73U41WM45m87X55H3".to_string(),
             wallet_id: Some(wallet_id),
             user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
             metadata: None,
         };
         rpc_caller.verify(auth_contract_id, args).await.unwrap();
-
     }
 
     #[tokio::test]
@@ -288,6 +290,7 @@ mod tests {
         let wallet_id = "A8NpkSkn1HZPYjxJRCpD4iPhDHzP81bbduZTqPpHmEgn".to_string();
         let auth_contract_id: &str = "keys.auth.hot.tg";
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             msg_hash: "6vLRVXiHvroXw1LEU1BNhz7QSaG73U41WM45m87X55H3".to_string(),
             wallet_id: Some(wallet_id),
             user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),
@@ -317,6 +320,7 @@ mod tests {
         let wallet_id = "A8NpkSkn1HZPYjxJRCpD4iPhDHzP81bbduZTqPpHmEgn".to_string();
         let auth_contract_id: &str = "keys.auth.hot.tg";
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             msg_hash: "6vLRVXiHvroXw1LEU1BNhz7QSaG73U41WM45m87X55H3".to_string(),
             wallet_id: Some(wallet_id),
             user_payload: r#"{"auth_method":0,"signatures":["HZUhhJamfp8GJLL8gEa2F2qZ6TXPu4PYzzWkDqsTQsMcW9rQsG2Hof4eD2Vex6he2fVVy3UNhgi631CY8E9StAH"]}"#.to_string(),

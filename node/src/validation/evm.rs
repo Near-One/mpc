@@ -1,4 +1,4 @@
-use crate::validation::{SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, HOT_VERIFY_ABI, HOT_VERIFY_METHOD_NAME};
+use crate::validation::{SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, HOT_VERIFY_METHOD_NAME};
 use anyhow::{bail, Context, Result};
 use k256::elliptic_curve::bigint::Zero;
 use k256::U256;
@@ -150,6 +150,7 @@ mod tests {
     async fn base_single_verifier() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             wallet_id: None,
             msg_hash: "0000000000000000000000000000000000000000000000000000000000000000".into(),
             metadata: None,
@@ -169,6 +170,7 @@ mod tests {
     async fn base_single_verifier_non_trivial_message() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             wallet_id: None,
             msg_hash: "ef32edffb454d2a3172fd0af3fdb0e43fac5060a929f1b83b6de2b73754e3f45".into(),
             metadata: None,
@@ -189,6 +191,7 @@ mod tests {
     async fn base_single_verifier_wrong_message() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             wallet_id: None,
             msg_hash: "0000000000012300000000000000000000000000000000000000000000000000".into(),
             metadata: None,
@@ -208,6 +211,7 @@ mod tests {
     async fn base_threshold_verifier() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             wallet_id: None,
             msg_hash: "0000000000000000000000000000000000000000000000000000000000000000".into(),
             metadata: None,
@@ -235,6 +239,7 @@ mod tests {
     async fn base_threshold_verifier_with_bad_rpcs() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             wallet_id: None,
             msg_hash: "0000000000000000000000000000000000000000000000000000000000000000".into(),
             metadata: None,
@@ -269,6 +274,7 @@ mod tests {
     async fn base_threshold_verifier_all_rpcs_bad() {
         let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
         let args = VerifyArgs {
+            msg_body: "".to_string(),
             wallet_id: None,
             msg_hash: "0000000000000000000000000000000000000000000000000000000000000000".into(),
             metadata: None,
