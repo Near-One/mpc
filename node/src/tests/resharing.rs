@@ -7,6 +7,7 @@ use near_o11y::testonly::init_integration_logger;
 use near_time::{Clock, Duration};
 use serial_test::serial;
 use tokio::time::timeout;
+use crate::primitives::KeyType;
 
 // Test a simple resharing of one node joining a cluster of 4 nodes.
 #[tokio::test]
@@ -48,6 +49,7 @@ async fn test_key_resharing_simple() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user0",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60)
     )
     .await
@@ -74,6 +76,7 @@ async fn test_key_resharing_simple() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user1",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60)
     )
     .await
@@ -121,6 +124,7 @@ async fn test_key_resharing_multistage() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user0",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60)
     )
     .await
@@ -151,6 +155,7 @@ async fn test_key_resharing_multistage() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user1",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60)
     )
     .await
@@ -177,6 +182,7 @@ async fn test_key_resharing_multistage() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user2",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60)
     )
     .await
@@ -207,6 +213,7 @@ async fn test_key_resharing_multistage() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user1",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60)
     )
     .await
@@ -238,6 +245,7 @@ async fn test_key_resharing_multistage() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user1",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60)
     )
     .await
@@ -290,6 +298,7 @@ async fn test_key_resharing_signature_buffering() {
     let response_time = request_signature_and_await_response(
         &mut setup.indexer,
         "user0",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60),
     )
     .await
@@ -333,7 +342,9 @@ async fn test_key_resharing_signature_buffering() {
 
     // Send a request for signature. This should timeout.
     assert!(
-        request_signature_and_await_response(&mut setup.indexer, "user1", response_time * 2)
+        request_signature_and_await_response(&mut setup.indexer, "user1",
+                                             KeyType::SECP256K1,
+                                             response_time * 2)
             .await
             .is_none()
     );

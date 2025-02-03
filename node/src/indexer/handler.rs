@@ -13,6 +13,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use crate::primitives::KeyType;
 
 /// Arguments passed to a `sign` function call on-chain
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -42,6 +43,7 @@ pub struct ChainSignatureRequest {
     pub predecessor_id: AccountId,
     pub entropy: [u8; 32],
     pub timestamp_nanosec: u64,
+    pub key_type: KeyType
 }
 
 pub(crate) async fn listen_blocks(
@@ -99,6 +101,7 @@ async fn handle_message(
                     predecessor_id: receipt.predecessor_id.clone(),
                     entropy: streamer_message.block.header.random_value.into(),
                     timestamp_nanosec: streamer_message.block.header.timestamp_nanosec,
+                    key_type: KeyType::SECP256K1 // TODO: It should be read from chain too.
                 });
             }
         }

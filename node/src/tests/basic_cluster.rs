@@ -4,6 +4,7 @@ use crate::tracking::AutoAbortTask;
 use near_o11y::testonly::init_integration_logger;
 use near_time::{Clock, Duration};
 use serial_test::serial;
+use crate::primitives::KeyType;
 
 // Make a cluster of four nodes, test that we can generate keyshares
 // and then produce signatures.
@@ -40,8 +41,18 @@ async fn test_basic_cluster() {
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user0",
-        std::time::Duration::from_secs(60)
+        KeyType::SECP256K1,
+        std::time::Duration::from_secs(60),
     )
-    .await
-    .is_some());
+        .await
+        .is_some());
+
+    assert!(request_signature_and_await_response(
+        &mut setup.indexer,
+        "user0",
+        KeyType::ED25519,
+        std::time::Duration::from_secs(60),
+    )
+        .await
+        .is_some());
 }

@@ -1,6 +1,6 @@
 use crate::config::MpcConfig;
 use crate::db::{DBCol, SecretDB};
-use crate::primitives::ParticipantId;
+use crate::primitives::{KeyType, ParticipantId};
 
 use k256::sha2::{Digest, Sha256};
 use k256::Scalar;
@@ -17,6 +17,7 @@ pub struct SignatureRequest {
     pub tweak: Scalar,
     pub entropy: [u8; 32],
     pub timestamp_nanosec: u64,
+    pub key_type: KeyType
 }
 
 pub struct SignRequestStorage {

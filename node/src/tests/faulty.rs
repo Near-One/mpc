@@ -7,6 +7,7 @@ use near_sdk::AccountId;
 use near_time::{Clock, Duration};
 use rand::Rng;
 use serial_test::serial;
+use crate::primitives::KeyType;
 
 // Make a cluster of four nodes. Test the following:
 // 1. Shut down one node and confirms that signatures can still be generated.
@@ -54,6 +55,7 @@ async fn test_faulty_cluster() {
     let Some(signature_delay) = request_signature_and_await_response(
         &mut setup.indexer,
         "user0",
+        KeyType::SECP256K1,
         std::time::Duration::from_secs(60),
     )
     .await
@@ -67,7 +69,7 @@ async fn test_faulty_cluster() {
     tracing::info!("Bringing down one node #{}", to_drop);
     let disabled1 = setup.indexer.disable(accounts[to_drop].clone()).await;
     assert!(
-        request_signature_and_await_response(&mut setup.indexer, "user1", signature_delay * 2)
+        request_signature_and_await_response(&mut setup.indexer, "user1", KeyType::SECP256K1, signature_delay * 2)
             .await
             .is_some()
     );
@@ -86,7 +88,7 @@ async fn test_faulty_cluster() {
         .disable(accounts[another_to_drop].clone())
         .await;
     assert!(
-        request_signature_and_await_response(&mut setup.indexer, "user2", signature_delay * 2)
+        request_signature_and_await_response(&mut setup.indexer, "user2", KeyType::SECP256K1, signature_delay * 2)
             .await
             .is_none()
     );
@@ -95,7 +97,7 @@ async fn test_faulty_cluster() {
     // Third step: bring up the dropped node in step 2, and make sure signatures can be generated again
     disabled2.reenable_and_wait_till_running().await;
     assert!(
-        request_signature_and_await_response(&mut setup.indexer, "user3", signature_delay * 2)
+        request_signature_and_await_response(&mut setup.indexer, "user3", KeyType::SECP256K1, signature_delay * 2)
             .await
             .is_some()
     );

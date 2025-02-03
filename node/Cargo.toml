@@ -44,6 +44,8 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 url = "2"
 x509-parser = "0.16.0"
 
+frost-ed25519 = "2.1.0"
+
 # TODO(#82): temporary: rev 88ec6c83b10e687474316517279f5bab76698db5: includes indexer fixes for single shard tracking.
 # Move on to 2.5.0 when the release is cut.
 near-indexer = { git = "https://github.com/near/nearcore", rev = "88ec6c83b10e687474316517279f5bab76698db5" }

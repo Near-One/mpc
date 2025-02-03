@@ -3,7 +3,7 @@ use crate::indexer::handler::ChainSignatureRequest;
 use crate::indexer::response::{ChainRespondArgs, ChainSendTransactionRequest};
 use crate::metrics;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-use crate::primitives::{MpcTaskId, PresignOutputWithParticipants};
+use crate::primitives::{KeyType, MpcTaskId, PresignOutputWithParticipants, SignatureWithVerifyingKey};
 use crate::sign::{
     pre_sign_unowned, run_background_presignature_generation, sign, PresignatureStorage,
 };
@@ -156,7 +156,7 @@ impl MpcClient {
                                 }
                                 MpcTaskId::Signature {
                                     id,
-                                    presignature_id,
+                                    presignature_id
                                 } => {
                                     metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_RECEIVED.inc();
                                     // TODO(#69): decide a better timeout for this
@@ -164,6 +164,7 @@ impl MpcClient {
                                         msg_hash,
                                         tweak,
                                         entropy,
+                                        key_type,
                                         ..
                                     } = timeout(
                                         Duration::from_secs(config.signature.timeout_sec),
@@ -171,21 +172,26 @@ impl MpcClient {
                                     )
                                     .await??;
                                     metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_LOOKUP_SUCCEEDED.inc();
-
+                                    
                                     timeout(
                                         Duration::from_secs(config.signature.timeout_sec),
-                                        sign(
-                                            channel,
-                                            client.my_participant_id(),
-                                            root_keyshare.keygen_output(),
-                                            presignature_store
-                                                .take_unowned(presignature_id)
-                                                .await?
-                                                .presignature,
-                                            msg_hash,
-                                            tweak,
-                                            entropy,
-                                        ),
+                                        match key_type {
+                                            KeyType::ED25519 => todo!(),
+                                            KeyType::SECP256K1 => {
+                                                sign(
+                                                    channel,
+                                                    client.my_participant_id(),
+                                                    root_keyshare.keygen_output(),
+                                                    presignature_store
+                                                        .take_unowned(presignature_id)
+                                                        .await?
+                                                        .presignature,
+                                                    msg_hash,
+                                                    tweak,
+                                                    entropy,
+                                                )
+                                            }
+                                        }
                                     )
                                     .await??;
                                 }
@@ -217,6 +223,7 @@ impl MpcClient {
                         predecessor_id,
                         entropy,
                         timestamp_nanosec,
+                        key_type,
                     }) = sign_request_receiver.recv().await
                     else {
                         // If this branch hits, it means the channel is closed, meaning the
@@ -235,6 +242,7 @@ impl MpcClient {
                                 tweak: derive_tweak(&predecessor_id, &request.path),
                                 entropy,
                                 timestamp_nanosec,
+                                key_type
                             };
 
                             // Check if we've already seen this request
@@ -254,21 +262,25 @@ impl MpcClient {
                                     .with_label_values(&["total"])
                                     .inc();
 
-                                let (signature, public_key) = timeout(
+                                let signature_with_verifying_key = timeout(
                                     Duration::from_secs(config.signature.timeout_sec),
-                                    this.clone().make_signature(request.id),
+                                    this.clone().make_signature(request.id, key_type),
                                 )
-                                .await??;
+                                    .await??;
 
                                 metrics::MPC_NUM_SIGN_REQUESTS_LEADER
                                     .with_label_values(&["succeeded"])
                                     .inc();
 
-                                let response =
-                                    ChainRespondArgs::new(&request, &signature, &public_key)?;
-                                let _ = chain_tx_sender
-                                    .send(ChainSendTransactionRequest::Respond(response))
-                                    .await;
+                                if let SignatureWithVerifyingKey::SECP256K1 { signature, verifying_key } = signature_with_verifying_key {
+                                    let response =
+                                        ChainRespondArgs::new(&request, &signature, &verifying_key)?;
+                                    let _ = chain_tx_sender
+                                        .send(ChainSendTransactionRequest::Respond(response))
+                                        .await;
+                                } else {
+                                    todo!()
+                                }
                             }
 
                             anyhow::Ok(())
@@ -308,10 +320,10 @@ impl MpcClient {
         Ok(())
     }
 
-    pub async fn make_signature(
+    async fn make_signature_ecdsa(
         self: Arc<Self>,
         id: SignatureId,
-    ) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
+    ) -> anyhow::Result<SignatureWithVerifyingKey> {
         let (presignature_id, presignature) = self.presignature_store.take_owned().await;
         let sign_request = self.sign_request_store.get(id).await?;
         let (signature, public_key) = sign(
@@ -329,8 +341,30 @@ impl MpcClient {
             sign_request.tweak,
             sign_request.entropy,
         )
-        .await?;
+            .await?;
 
-        Ok((signature, public_key))
+        Ok(SignatureWithVerifyingKey::SECP256K1 {
+            signature,
+            verifying_key: public_key,
+        })
+    }
+
+    async fn make_signature_eddsa(
+        self: Arc<Self>,
+        _id: SignatureId,
+    ) -> anyhow::Result<SignatureWithVerifyingKey> {
+        todo!()
+    }
+
+    pub async fn make_signature(
+        self: Arc<Self>,
+        id: SignatureId,
+        key_type: KeyType,
+    ) -> anyhow::Result<SignatureWithVerifyingKey> {
+        match key_type {
+            KeyType::ED25519 => self.make_signature_eddsa(id).await,
+
+            KeyType::SECP256K1 => self.make_signature_ecdsa(id).await
+        }
     }
 }

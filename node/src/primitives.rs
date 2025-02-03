@@ -9,6 +9,37 @@ use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 
+// There's an exact enum in near-crypto, but it doesn't implement required traits (eq, hash, etc.)
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    BorshSerialize,
+    BorshDeserialize,
+    serde::Serialize,
+    serde::Deserialize,
+    Debug)]
+#[borsh(use_discriminant = true)]
+pub enum KeyType {
+    ED25519 = 0,
+    SECP256K1 = 1,
+}
+
+pub enum SignatureWithVerifyingKey {
+    ED25519 {
+        signature: frost_ed25519::Signature,
+        verifying_key: frost_ed25519::VerifyingKey
+    },
+    SECP256K1 {
+        signature: cait_sith::FullSignature<Secp256k1>,
+        verifying_key: k256::AffinePoint
+    },
+}
+
 #[derive(
     Clone,
     Copy,

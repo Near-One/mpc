@@ -25,6 +25,7 @@ use near_time::{Clock, Duration};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::timeout;
+use crate::primitives::KeyType;
 
 mod basic_cluster;
 mod benchmark;
@@ -300,6 +301,7 @@ impl IntegrationTestSetup {
 pub async fn request_signature_and_await_response(
     indexer: &mut FakeIndexerManager,
     user: &str,
+    key_type: KeyType,
     timeout_sec: std::time::Duration,
 ) -> Option<std::time::Duration> {
     let request = ChainSignatureRequest {
@@ -312,6 +314,7 @@ pub async fn request_signature_and_await_response(
             path: "m/44'/60'/0'/0/0".to_string(),
             payload: Scalar::random(&mut rand::thread_rng()),
         },
+        key_type,
     };
     tracing::info!(
         "Sending signature request from user {}, payload {:?}",
