@@ -87,6 +87,7 @@ pub struct UserSignatureRequest {
     pub uid: String,
     pub message: Scalar,
     pub proof: ProofModel,
+    pub curve_type: usize
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
