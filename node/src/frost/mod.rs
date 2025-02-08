@@ -63,7 +63,7 @@ pub fn sign_passive<RNG: CryptoRng + RngCore + 'static + Send>(
     )
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct KeygenOutput {
     pub key_package: frost_ed25519::keys::KeyPackage,
     pub public_key_package: frost_ed25519::keys::PublicKeyPackage,

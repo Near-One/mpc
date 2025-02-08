@@ -37,7 +37,7 @@ async fn test_basic_cluster() {
     let key_generation_runs = (0..NUM_PARTICIPANTS)
         .map(|i| {
             let home_dir = temp_dir.path().join(format!("{}", i));
-            let cli = Cli::GenerateKey {
+            let cli = Cli::GenerateKeyEcdsa {
                 home_dir: home_dir.to_str().unwrap().to_string(),
                 secret_store_key_hex: hex::encode(encryption_keys[i]),
                 p2p_private_key: std::fs::read_to_string(home_dir.join("p2p_key"))

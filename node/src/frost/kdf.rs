@@ -27,7 +27,6 @@ use std::collections::BTreeMap;
 use crate::frost;
 
 pub fn derive_keygen_output(keygen_output: &frost::KeygenOutput, tweak: [u8; 32]) -> frost::KeygenOutput {
-    let tweak = curve25519_dalek::Scalar::from_bytes_mod_order(tweak);
     frost::KeygenOutput {
         key_package: derive_key_package(&keygen_output.key_package, tweak),
         public_key_package: derive_public_key_package(&keygen_output.public_key_package, tweak),
@@ -36,8 +35,9 @@ pub fn derive_keygen_output(keygen_output: &frost::KeygenOutput, tweak: [u8; 32]
 
 fn derive_key_package(
     key_package: &frost_ed25519::keys::KeyPackage,
-    tweak: curve25519_dalek::Scalar,
+    tweak: [u8; 32],
 ) -> frost_ed25519::keys::KeyPackage {
+    let tweak = curve25519_dalek::Scalar::from_bytes_mod_order(tweak);
     frost_ed25519::keys::KeyPackage::new(
         *key_package.identifier(),
         derive_signing_share(*key_package.signing_share(), tweak),
@@ -47,10 +47,11 @@ fn derive_key_package(
     )
 }
 
-fn derive_public_key_package(
+pub fn derive_public_key_package(
     pubkey_package: &frost_ed25519::keys::PublicKeyPackage,
-    tweak: curve25519_dalek::Scalar,
+    tweak: [u8; 32],
 ) -> frost_ed25519::keys::PublicKeyPackage {
+    let tweak = curve25519_dalek::Scalar::from_bytes_mod_order(tweak);
     let verifying_shares: BTreeMap<frost_ed25519::Identifier, frost_ed25519::keys::VerifyingShare> =
         pubkey_package
             .verifying_shares()
@@ -116,7 +117,7 @@ mod tests {
 
         let mut tweak = [0u8; 32];
         rng.fill_bytes(&mut tweak);
-        let tweak = curve25519_dalek::Scalar::from_bytes_mod_order(tweak);
+        // let tweak = curve25519_dalek::Scalar::from_bytes_mod_order(tweak);
 
         let derived_pubkey_package =
             derive_public_key_package(&pubkey_package, tweak);

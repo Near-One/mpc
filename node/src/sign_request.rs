@@ -7,16 +7,18 @@ use k256::Scalar;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use crate::web::KeyType;
 
 pub type SignatureId = [u8; 32];
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignatureRequest {
     pub id: SignatureId,
-    pub msg_hash: Scalar,
-    pub tweak: Scalar,
+    pub msg_hash: [u8; 32],
+    pub tweak: [u8; 32],
     pub entropy: [u8; 32],
     pub timestamp_nanosec: u64,
+    pub key_type: KeyType
 }
 
 pub struct SignRequestStorage {

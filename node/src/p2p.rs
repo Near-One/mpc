@@ -765,7 +765,7 @@ mod tests {
                         participant1,
                         MpcMessage {
                             data: vec![vec![1, 2, 3]],
-                            task_id: crate::primitives::MpcTaskId::KeyGeneration,
+                            task_id: crate::primitives::MpcTaskId::KeyGenerationEcdsa,
                             participants: vec![],
                         },
                         1,
@@ -781,7 +781,7 @@ mod tests {
                         participant0,
                         MpcMessage {
                             data: vec![vec![4, 5, 6]],
-                            task_id: crate::primitives::MpcTaskId::KeyGeneration,
+                            task_id: crate::primitives::MpcTaskId::KeyGenerationEcdsa,
                             participants: vec![],
                         },
                         1,

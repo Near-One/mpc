@@ -28,7 +28,7 @@ struct UnvalidatedSignArgs {
 /// A validated version of the signature request
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct SignArgs {
-    pub payload: Scalar,
+    pub payload: [u8; 32],
     pub path: String,
     pub key_version: u32,
 }
@@ -170,9 +170,10 @@ fn maybe_get_sign_args(
         key_version = sign_args.request.key_version,
         "indexed new `sign` function call"
     );
-    Some(SignArgs {
-        payload,
-        path: sign_args.request.path,
-        key_version: sign_args.request.key_version,
-    })
+    todo!()
+    // Some(SignArgs {
+    //     payload,
+    //     path: sign_args.request.path,
+    //     key_version: sign_args.request.key_version,
+    // })
 }

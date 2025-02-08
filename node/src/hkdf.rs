@@ -91,7 +91,7 @@ pub fn derive_randomness(
 // and stored signatures could still be verified.
 const TWEAK_DERIVATION_PREFIX: &str = "near-mpc-recovery v0.1.0 epsilon derivation:";
 
-pub fn derive_tweak(predecessor_id: &AccountId, path: &str) -> Scalar {
+pub fn derive_tweak(predecessor_id: &AccountId, path: &str) -> [u8; 32] {
     // ',' is ACCOUNT_DATA_SEPARATOR from nearcore that indicate the end
     // of the accound id in the trie key. We reuse the same constant to
     // indicate the end of the account id in derivation path.
@@ -101,10 +101,7 @@ pub fn derive_tweak(predecessor_id: &AccountId, path: &str) -> Scalar {
     let mut hasher = Sha3_256::new();
     hasher.update(derivation_path);
     let hash: [u8; 32] = hasher.finalize().into();
-    Scalar::from_bytes(hash).expect(
-        "Expected hash of derived key to be in the
-        field of size 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1 ",
-    )
+    hash
 }
 
 /// Derives a public key from a tweak and a master public key by computing PK + [tweak] G

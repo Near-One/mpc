@@ -1,13 +1,13 @@
 use crate::assets::{ProtocolsStorage, UniqueId};
 use crate::background::InFlightGenerationTracker;
 use crate::config::PresignatureConfig;
-use crate::hkdf::{derive_public_key, derive_randomness};
+use crate::hkdf::{derive_public_key, derive_randomness, ScalarExt};
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::primitives::{participants_from_triples, ParticipantId, PresignOutputWithParticipants};
 use crate::protocol::run_protocol;
 use crate::tracking::AutoAbortTaskCollection;
 use crate::triple::TripleStorage;
-use crate::{metrics, tracking};
+use crate::{frost, metrics, tracking};
 use cait_sith::protocol::Participant;
 use cait_sith::triples::TripleGenerationOutput;
 use cait_sith::{FullSignature, KeygenOutput, PresignArguments, PresignOutput};
@@ -15,7 +15,9 @@ use k256::{AffinePoint, Scalar, Secp256k1};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use anyhow::Context;
 use k256::elliptic_curve::CurveArithmetic;
+use rand::rngs::OsRng;
 use tokio::time::timeout;
 
 /// Performs an MPC presignature operation. This is shared for the initiator
@@ -68,7 +70,8 @@ pub async fn pre_sign_unowned(
 
 type PublicKey = <Secp256k1 as CurveArithmetic>::AffinePoint;
 
-pub fn derive_key(public_key: PublicKey, tweak: Scalar) -> PublicKey {
+pub fn derive_ecdsa_key(public_key: PublicKey, tweak: [u8; 32]) -> PublicKey {
+    let tweak = k256::Scalar::from_bytes(tweak).expect("tweak bytes to k256 scalar conversion");
     (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * tweak + public_key).to_affine()
 }
 
@@ -76,15 +79,24 @@ pub fn derive_key(public_key: PublicKey, tweak: Scalar) -> PublicKey {
 /// and for passive participants.
 /// The entropy is used to rerandomize the presignature (inspired by [GS21])
 /// The tweak allows key derivation
-pub async fn sign(
+pub async fn sign_ecdsa(
     channel: NetworkTaskChannel,
     me: ParticipantId,
     keygen_out: KeygenOutput<Secp256k1>,
     presign_out: PresignOutput<Secp256k1>,
-    msg_hash: Scalar,
-    tweak: Scalar,
+    msg_hash: [u8; 32],
+    tweak: [u8; 32],
     entropy: [u8; 32],
 ) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
+    let msg_hash = k256::Scalar::from_bytes(msg_hash).expect(
+        "Expected message hash to be in the
+        field of size 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1"
+    );
+    let tweak = k256::Scalar::from_bytes(tweak).context(
+        "Expected hash of derived key to be in the
+        field of size 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1"
+    )?;
+    
     let cs_participants = channel
         .participants
         .iter()
@@ -123,9 +135,65 @@ pub async fn sign(
         msg_hash,
     )?;
     let signature = run_protocol("sign", channel, me, protocol).await?;
-    metrics::MPC_NUM_SIGNATURES_GENERATED.inc();
+    metrics::MPC_NUM_ECDSA_SIGNATURES_GENERATED.inc();
     Ok((signature, public_key))
 }
+
+pub async fn sign_eddsa_coordinator(
+    channel: NetworkTaskChannel,
+    me: ParticipantId,
+    keygen_output: frost::KeygenOutput,
+    msg_hash: [u8; 32],
+    tweak: [u8; 32],
+    entropy: [u8; 32],
+) -> anyhow::Result<(frost_ed25519::Signature, frost_ed25519::VerifyingKey)> {
+    let cs_participants = channel
+        .participants
+        .iter()
+        .copied()
+        .map(Participant::from)
+        .collect::<Vec<_>>();
+
+    let derived_keygen_output = frost::kdf::derive_keygen_output(&keygen_output, tweak);
+    let derived_verifying_key = derived_keygen_output
+        .public_key_package
+        .verifying_key()
+        .clone();
+
+    let protocol = frost::sign_coordinator(
+        OsRng,
+        cs_participants,
+        me.into(),
+        derived_keygen_output,
+        msg_hash.to_vec(),
+    )?;
+
+    let signature = run_protocol("sign_eddsa_coordinator", channel, me, protocol).await?;
+    metrics::MPC_NUM_EDDSA_SIGNATURES_GENERATED_COORDINATOR.inc();
+    Ok((signature, derived_verifying_key))
+}
+
+pub async fn sign_eddsa_participant(
+    channel: NetworkTaskChannel,
+    me: ParticipantId,
+    keygen_output: frost::KeygenOutput,
+    msg_hash: [u8; 32],
+    tweak: [u8; 32],
+    entropy: [u8; 32],
+) -> anyhow::Result<()> {
+    let derived_keygen_output = frost::kdf::derive_keygen_output(&keygen_output, tweak);
+
+    let protocol = frost::sign_passive(
+        OsRng,
+        derived_keygen_output,
+        msg_hash.to_vec(),
+    )?;
+
+    run_protocol("sign_eddsa_passive", channel, me, protocol).await?;
+    metrics::MPC_NUM_EDDSA_SIGNATURES_GENERATED_PASSIVE.inc();
+    Ok(())
+}
+
 
 pub type PresignatureStorage = ProtocolsStorage<PresignOutputWithParticipants>;
 

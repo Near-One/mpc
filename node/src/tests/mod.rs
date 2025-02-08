@@ -5,6 +5,7 @@ use k256::{AffinePoint, Scalar, Secp256k1};
 use std::collections::HashMap;
 
 use crate::config::ConfigFile;
+use crate::frost;
 
 mod basic_cluster;
 mod benchmark;
@@ -27,7 +28,7 @@ impl TestGenerators {
         }
     }
 
-    pub fn make_keygens(&self) -> HashMap<Participant, KeygenOutput<Secp256k1>> {
+    pub fn make_ecdsa_keygens(&self) -> HashMap<Participant, KeygenOutput<Secp256k1>> {
         let mut protocols: Vec<ParticipantAndProtocol<KeygenOutput<Secp256k1>>> = Vec::new();
         let participants = (0..self.num_participants)
             .map(|i| Participant::from(i as u32))
@@ -38,6 +39,27 @@ impl TestGenerators {
                 Box::new(
                     cait_sith::keygen::<Secp256k1>(&participants, participants[i], self.threshold)
                         .unwrap(),
+                ),
+            ));
+        }
+        run_protocol(protocols).unwrap().into_iter().collect()
+    }
+
+    pub fn make_eddsa_keygens(&self) -> HashMap<Participant, frost::KeygenOutput> {
+        let mut protocols: Vec<ParticipantAndProtocol<frost::KeygenOutput>> = Vec::new();
+        let participants = (0..self.num_participants)
+            .map(|i| Participant::from(i as u32))
+            .collect::<Vec<_>>();
+        for i in 0..self.num_participants {
+            protocols.push((
+                participants[i],
+                Box::new(
+                    frost::dkg(
+                        rand::rngs::OsRng,
+                        participants.clone(),
+                        participants[i],
+                        self.threshold as u16
+                    ).unwrap(),
                 ),
             ));
         }

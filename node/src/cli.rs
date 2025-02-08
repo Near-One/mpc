@@ -7,9 +7,7 @@ use crate::indexer::participants::read_participants_from_chain;
 use crate::indexer::response::handle_sign_responses;
 use crate::indexer::stats::{indexer_logger, IndexerStats};
 use crate::indexer::transaction::TransactionSigner;
-use crate::key_generation::{
-    affine_point_to_public_key, load_root_keyshare, run_key_generation_client,
-};
+use crate::key_generation::{affine_point_to_public_key, load_keyshare, run_key_generation_client_ecdsa, run_key_generation_client_eddsa, EcdsaKeyshareData, EddsaKeyshareData, RootKeyshareData};
 use crate::mpc_client::MpcClient;
 use crate::network::{run_network_client, MeshNetworkTransportSender};
 use crate::p2p::{generate_test_p2p_configs, new_tls_mesh_network};
@@ -26,6 +24,7 @@ use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use anyhow::Context;
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex, OnceCell};
 use crate::validation::{ChainValidationConfig, Validation};
@@ -62,7 +61,16 @@ pub enum Cli {
     /// of participants before generating.
     ///
     /// This command will fail if there is an existing root keyshare on disk.
-    GenerateKey {
+    GenerateKeyEcdsa {
+        #[arg(long, env("MPC_HOME_DIR"))]
+        home_dir: String,
+        #[arg(env("MPC_SECRET_STORE_KEY"))]
+        secret_store_key_hex: String,
+        /// p2p private key for TLS. It must be in the format of "ed25519:...".
+        #[arg(env("MPC_P2P_PRIVATE_KEY"))]
+        p2p_private_key: SecretKey,
+    },
+    GenerateKeyEddsa {
         #[arg(long, env("MPC_HOME_DIR"))]
         home_dir: String,
         #[arg(env("MPC_SECRET_STORE_KEY"))]
@@ -101,8 +109,13 @@ impl Cli {
                 let home_dir = PathBuf::from(home_dir);
                 let secrets = SecretsConfig::from_cli(&secret_store_key_hex, p2p_private_key)?;
                 let config = ConfigFile::from_file(&home_dir.join("config.yaml"))?;
-                let root_keyshare =
-                    load_root_keyshare(&home_dir, secrets.local_storage_aes_key, &root_keyshare)?;
+
+                let ecdsa_keyshare = load_keyshare::<EcdsaKeyshareData>(&home_dir, secrets.local_storage_aes_key, &root_keyshare).context("couldn't load ecdsa keyshare")?;
+                let eddsa_keyshare = load_keyshare::<EddsaKeyshareData>(&home_dir, secrets.local_storage_aes_key, &root_keyshare).context("couldn't load eddsa keyshare")?;
+                let root_keyshare = RootKeyshareData {
+                    ecdsa: ecdsa_keyshare,
+                    eddsa: eddsa_keyshare,
+                };
 
                 // let (chain_config_sender, mut chain_config_receiver) = mpsc::channel(10);
                 let (sign_request_sender, sign_request_receiver) = mpsc::channel(10000);
@@ -257,7 +270,7 @@ impl Cli {
 
                 Ok(())
             }
-            Cli::GenerateKey {
+            Cli::GenerateKeyEcdsa {
                 home_dir,
                 secret_store_key_hex,
                 p2p_private_key,
@@ -289,7 +302,51 @@ impl Cli {
                         .await?;
                     let (network_client, channel_receiver, _handle) =
                         run_network_client(Arc::new(sender), Box::new(receiver));
-                    run_key_generation_client(
+                    run_key_generation_client_ecdsa(
+                        PathBuf::from(home_dir),
+                        config.into(),
+                        network_client,
+                        channel_receiver,
+                    )
+                    .await?;
+                    anyhow::Ok(())
+                });
+                root_task.await?;
+                Ok(())
+            }
+            Cli::GenerateKeyEddsa {
+                home_dir,
+                secret_store_key_hex,
+                p2p_private_key,
+            } => {
+                let secrets = SecretsConfig::from_cli(&secret_store_key_hex, p2p_private_key)?;
+                let config = load_config_file(Path::new(&home_dir))?;
+                // TODO(#75): Support reading from smart contract state here as well.
+                let mpc_config = MpcConfig::from_participants_with_near_account_id(
+                    config
+                        .participants
+                        .clone()
+                        .expect("Static participants config required"),
+                    &config.my_near_account_id,
+                )?;
+                let config = config.into_full_config(mpc_config, secrets);
+
+                let (root_task, _) = tracking::start_root_task(async move {
+                    let root_task_handle = tracking::current_task();
+                    let _web_server_handle = tracking::spawn_checked(
+                        "web server",
+                        start_web_server(root_task_handle, config.web_ui.clone(), None).await?,
+                    );
+
+                    let (sender, receiver) =
+                        new_tls_mesh_network(&config.mpc, &config.secrets.p2p_private_key).await?;
+                    // Must wait for all participants to be ready before starting key generation.
+                    sender
+                        .wait_for_ready(config.mpc.participants.participants.len())
+                        .await?;
+                    let (network_client, channel_receiver, _handle) =
+                        run_network_client(Arc::new(sender), Box::new(receiver));
+                    run_key_generation_client_eddsa(
                         PathBuf::from(home_dir),
                         config.into(),
                         network_client,

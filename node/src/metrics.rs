@@ -37,9 +37,27 @@ lazy_static! {
 }
 
 lazy_static! {
-    pub static ref MPC_NUM_SIGNATURES_GENERATED: prometheus::IntCounter =
+    pub static ref MPC_NUM_ECDSA_SIGNATURES_GENERATED: prometheus::IntCounter =
         prometheus::register_int_counter!(
-            "mpc_num_signatures_generated",
+            "mpc_num_ecdsa_signatures_generated",
+            "Number of signatures generated (initiated by either us or someone else)"
+        )
+        .unwrap();
+}
+
+lazy_static! {
+    pub static ref MPC_NUM_EDDSA_SIGNATURES_GENERATED_COORDINATOR: prometheus::IntCounter =
+        prometheus::register_int_counter!(
+            "mpc_num_eddsa_signatures_generated_coordinator",
+            "Number of signatures generated (initiated by either us or someone else)"
+        )
+        .unwrap();
+}
+
+lazy_static! {
+    pub static ref MPC_NUM_EDDSA_SIGNATURES_GENERATED_PASSIVE: prometheus::IntCounter =
+        prometheus::register_int_counter!(
+            "mpc_num_eddsa_signatures_generated_passive",
             "Number of signatures generated (initiated by either us or someone else)"
         )
         .unwrap();

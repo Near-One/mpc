@@ -1,13 +1,11 @@
 use crate::config::Config;
-use crate::hkdf::derive_tweak;
+use crate::hkdf::{derive_tweak, ScalarExt};
 use crate::indexer::handler::ChainSignatureRequest;
 use crate::indexer::response::ChainRespondArgs;
 use crate::metrics;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-use crate::primitives::{MpcTaskId, PresignOutputWithParticipants};
-use crate::sign::{
-    pre_sign_unowned, run_background_presignature_generation, sign, PresignatureStorage,
-};
+use crate::primitives::{choose_random_participants, MpcTaskId, MpcTaskSignatureType, PresignOutputWithParticipants};
+use crate::sign::{pre_sign_unowned, run_background_presignature_generation, sign_ecdsa, sign_eddsa_coordinator, sign_eddsa_participant, PresignatureStorage};
 use crate::sign_request::{
     compute_leaders_for_signing, SignRequestStorage, SignatureId, SignatureRequest,
 };
@@ -17,14 +15,16 @@ use crate::triple::{
     SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
 };
 
-use crate::key_generation::RootKeyshareData;
 use cait_sith::FullSignature;
-use k256::{AffinePoint, Secp256k1};
+use k256::{Secp256k1};
 use std::sync::Arc;
 use std::time::Duration;
+use anyhow::Context;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
+use crate::key_generation::RootKeyshareData;
 use crate::validation::Validation;
+use crate::web::KeyType;
 
 #[derive(Clone)]
 pub struct MpcClient {
@@ -38,11 +38,28 @@ pub struct MpcClient {
     validation: Arc<Validation>,
 }
 
+pub struct EcdsaSignature {
+    pub signature: FullSignature<Secp256k1>,
+    pub public_key: k256::AffinePoint,
+}
+
+pub struct EddsaSignature {
+    pub signature: frost_ed25519::Signature,
+    pub public_key: frost_ed25519::VerifyingKey,
+}
+
+pub enum SignatureResult {
+    Ecdsa(EcdsaSignature),
+    Eddsa(EddsaSignature)
+}
+
 impl MpcClient {
     pub fn get_config(&self) -> Arc<Config> { self.config.clone() }
     pub fn get_web_client(&self) -> Arc<reqwest::Client> { self.web_client.clone() }
     pub fn get_validation(&self) -> Arc<Validation> { self.validation.clone() }
-    pub fn get_public_key(&self) -> AffinePoint { self.root_keyshare.public_key }
+    pub fn get_public_key(&self) -> (frost_ed25519::keys::PublicKeyPackage, k256::AffinePoint) {
+        (self.root_keyshare.eddsa.public_key.clone(), self.root_keyshare.ecdsa.public_key)
+    }
 
     pub fn new(
         config: Arc<Config>,
@@ -95,7 +112,8 @@ impl MpcClient {
                         &format!("passive task {:?}", channel.task_id),
                         async move {
                             match channel.task_id {
-                                MpcTaskId::KeyGeneration => {
+                                MpcTaskId::KeyGenerationEddsa |
+                                MpcTaskId::KeyGenerationEcdsa => {
                                     anyhow::bail!(
                                         "Key generation rejected in normal node operation"
                                     );
@@ -143,7 +161,7 @@ impl MpcClient {
                                             channel,
                                             client.my_participant_id(),
                                             config.mpc.participants.threshold as usize,
-                                            root_keyshare.keygen_output(),
+                                            root_keyshare.ecdsa.keygen_output(),
                                             triple_store.clone(),
                                             paired_triple_id,
                                         ),
@@ -156,7 +174,7 @@ impl MpcClient {
                                 }
                                 MpcTaskId::Signature {
                                     id,
-                                    presignature_id,
+                                    signature_type,
                                 } => {
                                     // TODO(#69): decide a better timeout for this
                                     let SignatureRequest {
@@ -170,22 +188,39 @@ impl MpcClient {
                                     )
                                     .await??;
 
-                                    timeout(
-                                        Duration::from_secs(config.signature.timeout_sec),
-                                        sign(
-                                            channel,
-                                            client.my_participant_id(),
-                                            root_keyshare.keygen_output(),
-                                            presignature_store
-                                                .take_unowned(presignature_id)
-                                                .await?
-                                                .presignature,
-                                            msg_hash,
-                                            tweak,
-                                            entropy,
-                                        ),
-                                    )
-                                    .await??;
+                                    match signature_type {
+                                        MpcTaskSignatureType::EDDSA => {
+                                            timeout(
+                                                Duration::from_secs(config.signature.timeout_sec),
+                                                sign_eddsa_participant(
+                                                    channel,
+                                                    client.my_participant_id(),
+                                                    root_keyshare.eddsa.clone().into(),
+                                                    msg_hash,
+                                                    tweak,
+                                                    entropy,
+                                                )
+                                            ).await??;
+                                        }
+                                        MpcTaskSignatureType::ECDSA { presignature_id } => {
+                                            timeout(
+                                                Duration::from_secs(config.signature.timeout_sec),
+                                                sign_ecdsa(
+                                                    channel,
+                                                    client.my_participant_id(),
+                                                    root_keyshare.ecdsa.keygen_output(),
+                                                    presignature_store
+                                                        .take_unowned(presignature_id)
+                                                        .await?
+                                                        .presignature,
+                                                    msg_hash,
+                                                    tweak,
+                                                    entropy,
+                                                ),
+                                            )
+                                                .await??;
+                                        }
+                                    }
                                 }
                             }
                             anyhow::Ok(())
@@ -195,77 +230,78 @@ impl MpcClient {
             })
         };
 
-        let monitor_chain = {
-            let this = Arc::new(self.clone());
-            let config = self.config.clone();
-            let network_client = self.client.clone();
-            tracking::spawn("monitor chain", async move {
-                let mut tasks = AutoAbortTaskCollection::new();
-                loop {
-                    let this = this.clone();
-                    let config = config.clone();
-                    let sign_request_store = self.sign_request_store.clone();
-                    let sign_response_sender = sign_response_sender.clone();
-
-                    let ChainSignatureRequest {
-                        request_id,
-                        request,
-                        predecessor_id,
-                        entropy,
-                        timestamp_nanosec,
-                    } = sign_request_receiver.recv().await.unwrap();
-
-                    let alive_participants = network_client.all_alive_participant_ids();
-
-                    tasks.spawn_checked(
-                        &format!("indexed sign request {:?}", request_id),
-                        async move {
-                            let request = SignatureRequest {
-                                id: request_id,
-                                msg_hash: request.payload,
-                                tweak: derive_tweak(&predecessor_id, &request.path),
-                                entropy,
-                                timestamp_nanosec,
-                            };
-
-                            // Check if we've already seen this request
-                            if !sign_request_store.add(&request) {
-                                return anyhow::Ok(());
-                            }
-
-                            let (primary_leader, secondary_leader) =
-                                compute_leaders_for_signing(&config.mpc, &request);
-                            // start the signing process if we are the primary leader or if we are the secondary leader
-                            // and the primary leader is not alive
-                            if config.mpc.my_participant_id == primary_leader
-                                || (config.mpc.my_participant_id == secondary_leader
-                                    && !alive_participants.contains(&primary_leader))
-                            {
-                                metrics::MPC_NUM_SIGN_REQUESTS_LEADER
-                                    .with_label_values(&["total"])
-                                    .inc();
-
-                                let (signature, public_key) = timeout(
-                                    Duration::from_secs(config.signature.timeout_sec),
-                                    this.clone().make_signature(request.id),
-                                )
-                                .await??;
-
-                                metrics::MPC_NUM_SIGN_REQUESTS_LEADER
-                                    .with_label_values(&["succeeded"])
-                                    .inc();
-
-                                let response =
-                                    ChainRespondArgs::new(&request, &signature, &public_key)?;
-                                let _ = sign_response_sender.send(response).await;
-                            }
-
-                            anyhow::Ok(())
-                        },
-                    );
-                }
-            })
-        };
+        // let monitor_chain = {
+        //     let this = Arc::new(self.clone());
+        //     let config = self.config.clone();
+        //     let network_client = self.client.clone();
+        //     tracking::spawn("monitor chain", async move {
+        //         let mut tasks = AutoAbortTaskCollection::new();
+        //         loop {
+        //             let this = this.clone();
+        //             let config = config.clone();
+        //             let sign_request_store = self.sign_request_store.clone();
+        //             let sign_response_sender = sign_response_sender.clone();
+        // 
+        //             let ChainSignatureRequest {
+        //                 request_id,
+        //                 request,
+        //                 predecessor_id,
+        //                 entropy,
+        //                 timestamp_nanosec,
+        //             } = sign_request_receiver.recv().await.unwrap();
+        // 
+        //             let alive_participants = network_client.all_alive_participant_ids();
+        // 
+        //             tasks.spawn_checked(
+        //                 &format!("indexed sign request {:?}", request_id),
+        //                 async move {
+        //                     let request = SignatureRequest {
+        //                         id: request_id,
+        //                         msg_hash: request.payload,
+        //                         tweak: derive_tweak(&predecessor_id, &request.path),
+        //                         entropy,
+        //                         timestamp_nanosec,
+        //                         key_type: (),
+        //                     };
+        // 
+        //                     // Check if we've already seen this request
+        //                     if !sign_request_store.add(&request) {
+        //                         return anyhow::Ok(());
+        //                     }
+        // 
+        //                     let (primary_leader, secondary_leader) =
+        //                         compute_leaders_for_signing(&config.mpc, &request);
+        //                     // start the signing process if we are the primary leader or if we are the secondary leader
+        //                     // and the primary leader is not alive
+        //                     if config.mpc.my_participant_id == primary_leader
+        //                         || (config.mpc.my_participant_id == secondary_leader
+        //                             && !alive_participants.contains(&primary_leader))
+        //                     {
+        //                         metrics::MPC_NUM_SIGN_REQUESTS_LEADER
+        //                             .with_label_values(&["total"])
+        //                             .inc();
+        // 
+        //                         let (signature, public_key) = timeout(
+        //                             Duration::from_secs(config.signature.timeout_sec),
+        //                             this.clone().make_signature(request.id),
+        //                         )
+        //                         .await??;
+        // 
+        //                         metrics::MPC_NUM_SIGN_REQUESTS_LEADER
+        //                             .with_label_values(&["succeeded"])
+        //                             .inc();
+        // 
+        //                         let response =
+        //                             ChainRespondArgs::new(&request, &signature, &public_key)?;
+        //                         let _ = sign_response_sender.send(response).await;
+        //                     }
+        // 
+        //                     anyhow::Ok(())
+        //                 },
+        //             );
+        //         }
+        //     })
+        // };
 
         let generate_triples = tracking::spawn(
             "generate triples",
@@ -285,12 +321,12 @@ impl MpcClient {
                 self.config.presignature.clone().into(),
                 self.triple_store.clone(),
                 self.presignature_store.clone(),
-                self.root_keyshare.keygen_output(),
+                self.root_keyshare.ecdsa.keygen_output(),
             ),
         );
 
         monitor_passive_channels.await?;
-        monitor_chain.await?;
+        // monitor_chain.await?;
         generate_triples.await??;
         generate_presignatures.await??;
 
@@ -305,29 +341,88 @@ impl MpcClient {
     pub async fn make_signature(
         self: Arc<Self>,
         id: SignatureId,
-    ) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
+    ) -> anyhow::Result<SignatureResult> {
+        let sign_request = self.sign_request_store.get(id).await?;
+        match sign_request.key_type {
+            KeyType::Ecdsa => self.make_ecdsa_signature(sign_request).await,
+            KeyType::Ed25519 => self.make_eddsa_signature(sign_request).await,
+        }
+    }
+
+    async fn make_ecdsa_signature(
+        self: Arc<Self>,
+        sign_request: SignatureRequest,
+    ) -> anyhow::Result<SignatureResult> {
         let (presignature_id, presignature) = self
             .presignature_store
             .take_owned(&self.client.all_alive_participant_ids())
             .await;
-        let sign_request = self.sign_request_store.get(id).await?;
-        let (signature, public_key) = sign(
+
+        let (signature, public_key) = sign_ecdsa(
             self.client.new_channel_for_task(
                 MpcTaskId::Signature {
-                    id,
-                    presignature_id,
+                    id: sign_request.id,
+                    signature_type: MpcTaskSignatureType::ECDSA { presignature_id },
                 },
                 presignature.participants,
             )?,
             self.client.my_participant_id(),
-            self.root_keyshare.keygen_output(),
+            self.root_keyshare.ecdsa.keygen_output(),
             presignature.presignature,
             sign_request.msg_hash,
             sign_request.tweak,
             sign_request.entropy,
         )
-        .await?;
+            .await?;
 
-        Ok((signature, public_key))
+        Ok(SignatureResult::Ecdsa(EcdsaSignature {
+            signature,
+            public_key,
+        }))
+    }
+
+    async fn make_eddsa_signature(
+        self: Arc<Self>,
+        sign_request: SignatureRequest,
+    ) -> anyhow::Result<SignatureResult> {
+        let task_id = MpcTaskId::Signature {
+            id: sign_request.id,
+            signature_type: MpcTaskSignatureType::EDDSA
+        };
+
+        //
+
+        let client = self.client.clone();
+        let threshold = self.config.mpc.participants.threshold as usize;
+
+        let current_active_participants_ids = client.all_alive_participant_ids();
+
+        if current_active_participants_ids.len() < threshold {
+            anyhow::bail!("Not enough participants to sign");
+        }
+
+        let participants = choose_random_participants(
+            current_active_participants_ids,
+            client.my_participant_id(),
+            threshold,
+        );
+
+        //
+
+        let channel = self.client.new_channel_for_task(task_id, participants)?;
+
+        let (signature, public_key) = sign_eddsa_coordinator(
+            channel,
+            self.config.mpc.my_participant_id,
+            self.root_keyshare.eddsa.clone().into(),
+            sign_request.msg_hash,
+            sign_request.tweak,
+            sign_request.entropy,
+        )
+            .await?;
+
+        Ok(SignatureResult::Eddsa(
+            EddsaSignature { signature, public_key }
+        ))
     }
 }
