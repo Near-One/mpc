@@ -1,0 +1,6 @@
+multichain-account-sk-mainnet-0=foo
+multichain-cipher-sk-mainnet-0=bar
+multichain-sign-sk-mainnet-0=baz
+multichain-sk-share-mainnet-0=qux
+multichain-mainnet-indexer-aws-access-key=fred
+multichain-mainnet-indexer-aws-secret-key=thud
