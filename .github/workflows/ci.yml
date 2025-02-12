@@ -55,6 +55,22 @@ jobs:
         id: download-neard
         continue-on-error: true
         run: |
+          os=$(uname)
+          arch=$(uname -m)
+          os_and_arch=${os}-${arch}
+          cd libs/nearcore
+
+          branch_name=master #$(git branch -r --contains HEAD | grep -o 'origin/[^ ]*' | sed 's|origin/||' | head -n 1 || echo "no-branch")
+          commit_hash=$(git rev-parse HEAD || echo "no-commit")
+
+          url="https://s3.us-west-1.amazonaws.com/build.nearprotocol.com/nearcore/${os_and_arch}/${branch_name}/${commit_hash}/neard"
+
+          status_code=$(curl -v -o target/release/neard -w "%{http_code}" "${url}")
+          if [ "$status_code" -ne 200 ]; then
+            echo "curl failed with URL: ${url}, Status Code: ${status_code}"
+            exit 1
+          fi
+          chmod +x target/release/neard
           mkdir -p libs/nearcore/target/debug
           curl -o libs/nearcore/target/debug/neard https://s3.us-west-1.amazonaws.com/build.nearprotocol.com/nearcore/Linux-x86_64/master/0194311ddd68647a6f6fe27e4ecb1d4256225f4c/neard
           chmod +x libs/nearcore/target/debug/neard
