@@ -1,8 +1,8 @@
 use borsh::{self, BorshDeserialize, BorshSerialize};
 
 use super::{
-    Config, ConfigV1, DynamicValue, InitConfigV1, PresignatureConfig, ProtocolConfig,
-    SignatureConfig, TripleConfig,
+    Config, ConfigV1, ConfigV2, DynamicValue, InitConfigV1, InitConfigV2, PresignatureConfig,
+    ProtocolConfig, SignatureConfig, TripleConfig,
 };
 
 /// This is maximum expected participants we aim to support right now. This can be different
@@ -16,8 +16,49 @@ const NETWORK_MULTIPLIER: u32 = 128;
 // Default delay of 200 blocks. After that, request is removed from the contract state
 const DEFAULT_REQUEST_TIMEOUT_BLOCKS: u64 = 200;
 
+// Default timeout of 800 blocks. After that, the reshare is consiedered failed and removed from the contract state
+const DEFAULT_RESHARE_TIMEOUT_BLOCKS: u64 = 800;
+
 // The maximum number of requests to remove during a call
 const MAX_NUM_REQUESTS_TO_REMOVE: u32 = 1;
+
+impl Default for ConfigV2 {
+    fn default() -> Self {
+        ConfigV2 {
+            max_num_requests_to_remove: MAX_NUM_REQUESTS_TO_REMOVE,
+            request_timeout_blocks: DEFAULT_REQUEST_TIMEOUT_BLOCKS,
+            reshare_timeout_blocks: DEFAULT_RESHARE_TIMEOUT_BLOCKS,
+        }
+    }
+}
+
+impl From<Option<InitConfigV2>> for ConfigV2 {
+    fn from(value: Option<InitConfigV2>) -> Self {
+        match value {
+            None => ConfigV2::default(),
+            Some(init_config) => ConfigV2 {
+                max_num_requests_to_remove: init_config
+                    .max_num_requests_to_remove
+                    .unwrap_or(MAX_NUM_REQUESTS_TO_REMOVE),
+                request_timeout_blocks: init_config
+                    .request_timeout_blocks
+                    .unwrap_or(DEFAULT_REQUEST_TIMEOUT_BLOCKS),
+                reshare_timeout_blocks: init_config
+                    .reshare_timeout_blocks
+                    .unwrap_or(DEFAULT_RESHARE_TIMEOUT_BLOCKS),
+            },
+        }
+    }
+}
+impl From<&ConfigV1> for ConfigV2 {
+    fn from(config: &ConfigV1) -> Self {
+        ConfigV2 {
+            max_num_requests_to_remove: config.max_num_requests_to_remove,
+            request_timeout_blocks: config.request_timeout_blocks,
+            reshare_timeout_blocks: DEFAULT_RESHARE_TIMEOUT_BLOCKS,
+        }
+    }
+}
 
 impl Default for ConfigV1 {
     fn default() -> Self {
@@ -27,6 +68,7 @@ impl Default for ConfigV1 {
         }
     }
 }
+
 impl From<Option<InitConfigV1>> for ConfigV1 {
     fn from(value: Option<InitConfigV1>) -> Self {
         match value {
@@ -42,6 +84,7 @@ impl From<Option<InitConfigV1>> for ConfigV1 {
         }
     }
 }
+/* todo: Remove everything below after V1 is deployed */
 impl Config {
     pub fn get(&self, key: &str) -> Option<serde_json::Value> {
         match key {

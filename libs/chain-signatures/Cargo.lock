@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "crypto-shared"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "borsh",
@@ -1747,7 +1747,7 @@ dependencies = [
 
 [[package]]
 name = "mpc-contract"
-version = "1.0.1"
+version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "borsh",

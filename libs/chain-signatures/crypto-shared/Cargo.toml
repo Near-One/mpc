@@ -1,10 +1,10 @@
 [package]
 name = "crypto-shared"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
-k256 = { version = "0.13.1", features = [
+k256 = { version = "0.13.4", features = [
     "sha256",
     "ecdsa",
     "serde",
@@ -16,7 +16,7 @@ serde = "1"
 borsh = "1.3.0"
 near-account-id = "1"
 serde_json = "1"
-near-sdk = { version = "5.2.1", features = ["unstable"] }
+near-sdk = { version = "5.2.1", features = ["unstable"] }# update?
 sha3 = "0.10.8"
 subtle = "2.6.1"
 
