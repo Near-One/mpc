@@ -10,7 +10,7 @@ anyhow = "1.0.92"
 async-trait = "0.1.83"
 axum = "0.7.9"
 borsh = { version = "1.5.1", features = ["derive"] }
-cait-sith = { git = "https://github.com/Near-One/cait-sith.git", features = ["k256"], rev = "1bb67e2a04f01cc7835ce4d8a611064229acc10c" }
+cait-sith = { git = "https://github.com/kuksag/cait-sith", rev = "59d032582196f3bf7aee402b924b36094bdc4c51", features = ["k256", "internals"] }
 clap = { version = "4.5.20", features = ["derive", "env"] }
 flume = "0.11.1"
 futures = "0.3.31"
@@ -55,6 +55,8 @@ near-o11y = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2
 near-time = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
 
 mpc-contract = { git = "https://github.com/near/mpc/", tag = "1.0.0-rc.5" }
+
+frost-ed25519 = "2.1.0"
 
 [dev-dependencies]
 serial_test = "3.2.0"
