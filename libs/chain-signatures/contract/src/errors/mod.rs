@@ -40,7 +40,26 @@ pub enum InitError {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
+pub enum ReshareError {
+    #[error("This function can only be called by participants of the resharing")]
+    SignerNotParticipant,
+    #[error("This function can only be called by the current leader")]
+    SignerNotLeader,
+    #[error("Key event Id mismatch")]
+    KeyEventIdMismatch,
+    #[error("Expected a different Leader")]
+    LeaderMismatch,
+    #[error("A resharing is currently ongoing")]
+    ReshareOngoing,
+    #[error("Epoch Id must be incremented by one.")]
+    EpochMismatch,
+    #[error("Expected ongoing reshare")]
+    NoOngoingReshare,
+}
+#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum VoteError {
+    #[error("Already voted for public key")]
+    VoteAlreadySubmitted,
     #[error("Voting account is not in the participant set.")]
     VoterNotParticipant,
     #[error("Account to be kicked is not in the participant set.")]
@@ -49,6 +68,8 @@ pub enum VoteError {
     JoinNotCandidate,
     #[error("Number of participants cannot go below threshold.")]
     ParticipantsBelowThreshold,
+    #[error("A vote for this participant is already registered.")]
+    ParticipantVoteAlreadyRegistered,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -63,22 +84,53 @@ pub enum InvalidParameters {
     RequestNotFound,
     #[error("Update not found.")]
     UpdateNotFound,
+    #[error("Mismatched epoch.")]
+    EpochMismatch,
+    #[error("Mismatched uid.")]
+    UidMismatch,
+    #[error("Timed out.")]
+    Timeout,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum InvalidState {
     #[error("The protocol is not Running.")]
     ProtocolStateNotRunning,
-    #[error("Protocol state is not running or resharing.")]
-    ProtocolStateNotRunningOrResharing,
+    #[error("Protocol state is not resharing.")]
+    ProtocolStateNotResharing,
+    #[error("Protocol state is not running, nor resharing.")]
+    ProtocolStateNotRunningNorResharing,
     #[error("Unexpected protocol state.")]
     UnexpectedProtocolState,
     #[error("Cannot load in contract due to missing state")]
     ContractStateIsMissing,
+    #[error("Vote state is invalid")]
+    VoteStateIsInvalid,
     #[error("Mismatched epoch.")]
     EpochMismatch,
+    #[error("Participant index out of range")]
+    ParticipantIndexOutOfRange,
+    #[error("Not a participant")]
+    NotParticipant,
 }
-
+#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
+pub enum InvalidThreshold {
+    #[error("Threshold does not meet the minimum absolute requirement")]
+    MinAbsRequirementFailed,
+    #[error("Threshold does not meet the minimum relative requirement")]
+    MinRelRequirementFailed,
+    #[error("Threshold must not exceed number of participants")]
+    MaxRequirementFailed,
+    #[error("Key event threshold must not be less than voting threshold")]
+    MinKeyEventFailed,
+    #[error("Key event threshold must not exceeed number of participants")]
+    MaxKeyEventFailed,
+}
+#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
+pub enum InvalidCandidateSet {
+    #[error("New candidates must contain at least threshold old participants.")]
+    InsufficientOldParticipants,
+}
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum ConversionError {
     #[error("Data conversion error.")]
@@ -116,6 +168,15 @@ pub enum ErrorKind {
     // Conversion errors
     #[error("{0}")]
     ConversionError(#[from] ConversionError),
+    // Invalid state errors
+    #[error("{0}")]
+    InvalidThreshold(#[from] InvalidThreshold),
+    // Invalid Candidate errors
+    #[error("{0}")]
+    InvalidCandidateSet(#[from] InvalidCandidateSet),
+    // Invalid Resharing
+    #[error("{0}")]
+    ReshareError(#[from] ReshareError),
 }
 
 #[derive(Debug, thiserror::Error)]

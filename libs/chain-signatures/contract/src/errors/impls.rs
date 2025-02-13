@@ -2,8 +2,9 @@ use std::borrow::Cow;
 use std::fmt;
 
 use super::{
-    ConversionError, Error, ErrorKind, ErrorRepr, InitError, InvalidParameters, InvalidState,
-    JoinError, PublicKeyError, RespondError, SignError, VoteError,
+    ConversionError, Error, ErrorKind, ErrorRepr, InitError, InvalidCandidateSet,
+    InvalidParameters, InvalidState, InvalidThreshold, JoinError, PublicKeyError, ReshareError,
+    RespondError, SignError, VoteError,
 };
 
 impl Error {
@@ -119,12 +120,52 @@ impl From<ConversionError> for Error {
         Self::simple(ErrorKind::ConversionError(code))
     }
 }
-
 impl ConversionError {
     pub(crate) fn message<T>(self, msg: T) -> Error
     where
         T: Into<Cow<'static, str>>,
     {
         Error::message(ErrorKind::ConversionError(self), msg)
+    }
+}
+
+impl From<ReshareError> for Error {
+    fn from(code: ReshareError) -> Self {
+        Self::simple(ErrorKind::ReshareError(code))
+    }
+}
+impl ReshareError {
+    pub(crate) fn message<T>(self, msg: T) -> Error
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        Error::message(ErrorKind::ReshareError(self), msg)
+    }
+}
+
+impl From<InvalidThreshold> for Error {
+    fn from(code: InvalidThreshold) -> Self {
+        Self::simple(ErrorKind::InvalidThreshold(code))
+    }
+}
+impl InvalidThreshold {
+    pub(crate) fn message<T>(self, msg: T) -> Error
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        Error::message(ErrorKind::InvalidThreshold(self), msg)
+    }
+}
+impl From<InvalidCandidateSet> for Error {
+    fn from(code: InvalidCandidateSet) -> Self {
+        Self::simple(ErrorKind::InvalidCandidateSet(code))
+    }
+}
+impl InvalidCandidateSet {
+    pub(crate) fn message<T>(self, msg: T) -> Error
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        Error::message(ErrorKind::InvalidCandidateSet(self), msg)
     }
 }

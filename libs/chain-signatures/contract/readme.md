@@ -16,6 +16,7 @@ The currently deployed version of the contract is `V0`, with `V1` expected to be
 | ------------- | ------------- | ------------- |
 | V0  | 8  |11.30479597562405|
 | V1  | 4  |6.131075775468398 |
+| V2  | tbd  | tbd |
 
 **Migration Considerations:** Migration from `V0` to `V1` will not affect how users interact with the contract.
 

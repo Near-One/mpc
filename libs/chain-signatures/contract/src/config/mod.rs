@@ -14,6 +14,19 @@ use near_sdk::serde::{Deserialize, Serialize};
 pub struct DynamicValue(serde_json::Value);
 
 #[derive(Clone, Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+pub struct ConfigV2 {
+    pub max_num_requests_to_remove: u32,
+    pub request_timeout_blocks: u64,
+    pub reshare_timeout_blocks: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+pub struct InitConfigV2 {
+    pub max_num_requests_to_remove: Option<u32>,
+    pub request_timeout_blocks: Option<u64>,
+    pub reshare_timeout_blocks: Option<u64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 pub struct ConfigV1 {
     pub max_num_requests_to_remove: u32,
     pub request_timeout_blocks: u64,
@@ -24,7 +37,7 @@ pub struct InitConfigV1 {
     pub max_num_requests_to_remove: Option<u32>,
     pub request_timeout_blocks: Option<u64>,
 }
-
+/* remove everything below after V1 is delpoyed */
 #[derive(
     Clone, Default, Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize, PartialEq, Eq,
 )]
