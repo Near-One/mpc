@@ -29,6 +29,7 @@ mod tracing;
 mod tracking;
 mod triple;
 mod web;
+mod frost_sign;
 
 fn main() -> anyhow::Result<()> {
     init_logging();
