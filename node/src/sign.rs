@@ -151,10 +151,15 @@ pub async fn run_background_presignature_generation(
     let mut tasks = AutoAbortTaskCollection::new();
     loop {
         progress_tracker.update_progress();
+        metrics::MPC_OWNED_NUM_PRESIGNATURES_ONLINE
+            .set(presignature_store.num_owned_ready() as i64);
+        metrics::MPC_OWNED_NUM_PRESIGNATURES_WITH_OFFLINE_PARTICIPANT
+            .set(presignature_store.num_owned_offline() as i64);
         let my_presignatures_count: usize = presignature_store.num_owned();
         metrics::MPC_OWNED_NUM_PRESIGNATURES_AVAILABLE.set(my_presignatures_count as i64);
-        if my_presignatures_count + in_flight_generations.num_in_flight()
-            < config.desired_presignatures_to_buffer
+        let should_generate = my_presignatures_count + in_flight_generations.num_in_flight()
+            < config.desired_presignatures_to_buffer;
+        if should_generate
             // There's no point to issue way too many in-flight computations, as they
             // will just be limited by the concurrency anyway.
             && in_flight_generations.num_in_flight()
@@ -201,9 +206,15 @@ pub async fn run_background_presignature_generation(
 
                 anyhow::Ok(())
             });
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue;
         }
+
+        if !should_generate {
+            // After the store is full, slowly discard presignatures which cannot be used right now
+            presignature_store.maybe_discard_owned(1).await;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 

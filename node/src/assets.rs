@@ -2,6 +2,7 @@ use crate::db::{DBCol, SecretDB};
 use crate::primitives::ParticipantId;
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
+use futures::FutureExt;
 use near_time::Clock;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -121,10 +122,30 @@ impl BorshDeserialize for UniqueId {
     }
 }
 
+/// The cold queue contains a collection of assets and a condition function.
+/// The queue is divided into three sections by two barriers:
+///
+/// 0                            cold_ready           cold_available              queue.len()
+///  -------------------------------- -------------------- -----------------------------
+/// │  Condition-satisfying assets   |   Unknown assets   │   Non-satisfying assets     |
+///  -----------------------------------------------------------------------------------
+///
+/// The queue may be modified in the following ways:
+///   1. When taking assets which satisfy the condition we poll the front
+///      of the queue, but not beyond the cold_available barrier.
+///   2. When discarding assets *not* satisfying the condition we poll the back
+///      of the queue, but not beyond the cold_ready barrier.
+///   3. The condition is always evaluated before adding elements to the queue.
+///      If the element *satisfies* the condition it is inserted at the front.
+///      If the element *doesn't satisfy* the condition it is inserted at the back.
+///   4. When the condition changes the barriers are reset, marking
+///      the entire queue as unknown.
+///
+/// NB: Assets may be reordered by these operations. No guarantees are made on the order in which
+/// assets are taken or discarded from the queue.
+///
 struct ColdQueue<T, CondVal: Default + Eq> {
-    /// Number of elements presented in the cold_queue since last update of set of participants.
-    /// It acts as a barrier in the queue so that if no element in the queue is eligible, we don't loop forever.
-    /// We only move the barrier forward if the condition has possibly changed.
+    cold_ready: usize,
     cold_available: usize,
     cold_queue: VecDeque<(UniqueId, T)>,
 
@@ -147,6 +168,7 @@ impl<T, CondVal: Default + Eq> ColdQueue<T, CondVal> {
         condition_value_fetcher: Arc<dyn Fn() -> CondVal + Send + Sync>,
     ) -> Self {
         Self {
+            cold_ready: 0,
             cold_available: 0,
             cold_queue: VecDeque::new(),
             last_condition_value: Default::default(),
@@ -158,13 +180,14 @@ impl<T, CondVal: Default + Eq> ColdQueue<T, CondVal> {
     }
 
     /// Unconditionally update the condition value;
-    /// If the condition value changed, move the barrier to the end of the queue.
+    /// If the condition value changed, reset the barriers.
     pub(self) fn update_condition_value(&mut self) {
         const CONDITION_REFRESH_INTERVAL: near_time::Duration = near_time::Duration::seconds(1);
         self.next_fetch_due = self.clock.now() + CONDITION_REFRESH_INTERVAL;
         let new_condition_value = (self.condition_value_fetcher)();
         if new_condition_value != self.last_condition_value {
             self.last_condition_value = new_condition_value;
+            self.cold_ready = 0;
             self.cold_available = self.cold_queue.len();
         }
     }
@@ -177,14 +200,18 @@ impl<T, CondVal: Default + Eq> ColdQueue<T, CondVal> {
     }
 
     /// Try to remove and return an element that satisfies the current condition.
-    /// If the element doesn't match, it will be moved to the end of the queue after the barrier.
+    /// If the element doesn't match, it will be moved to the end of the queue.
     pub(self) fn take(&mut self) -> ColdQueueTakeResult<T> {
         self.update_condition_value_if_due();
         if self.cold_available == 0 {
             return ColdQueueTakeResult::NotTakenAndNoneAvailable;
-        };
+        }
         let (id, value) = self.cold_queue.pop_front().unwrap(); // can't fail
         self.cold_available -= 1;
+        if self.cold_ready > 0 {
+            self.cold_ready -= 1;
+            return ColdQueueTakeResult::Taken((id, value));
+        }
         if (self.condition)(&self.last_condition_value, &value) {
             return ColdQueueTakeResult::Taken((id, value));
         }
@@ -192,16 +219,60 @@ impl<T, CondVal: Default + Eq> ColdQueue<T, CondVal> {
         ColdQueueTakeResult::NotTakenButSomeMayBeAvailable
     }
 
+    /// Try to remove and return an element that *doesn't* satisfy the current condition.
+    /// If the element does satisfy it, it will be moved to the front of the queue.
+    pub(self) fn discard(&mut self) -> ColdQueueDiscardResult<T> {
+        self.update_condition_value_if_due();
+        if self.cold_ready == self.cold_queue.len() {
+            return ColdQueueDiscardResult::NotDiscardedAndNoneAvailable;
+        }
+        let (id, value) = self.cold_queue.pop_back().unwrap(); // can't fail
+        let condition_satisfied = if self.cold_available > self.cold_queue.len() {
+            self.cold_available -= 1;
+            (self.condition)(&self.last_condition_value, &value)
+        } else {
+            false
+        };
+        if !condition_satisfied {
+            return ColdQueueDiscardResult::Discarded((id, value));
+        }
+        self.cold_queue.push_front((id, value));
+        self.cold_ready += 1;
+        self.cold_available += 1;
+        ColdQueueDiscardResult::NotDiscardedButSomeMayBeAvailable
+    }
+
+    /// Adds an element to the cold queue. If the condition is *not* satisfied,
+    /// instead of adding, it is returned. Otherwise, adds it to the front of the queue.
+    pub(self) fn add_if_condition_satisfied(
+        &mut self,
+        id: UniqueId,
+        value: T,
+    ) -> ColdQueueAddIfSatisfiedResult<T> {
+        self.update_condition_value_if_due();
+        if (self.condition)(&self.last_condition_value, &value) {
+            self.cold_queue.push_front((id, value));
+            self.cold_ready += 1;
+            self.cold_available += 1;
+            return ColdQueueAddIfSatisfiedResult::Enqueued;
+        }
+        ColdQueueAddIfSatisfiedResult::ConditionNotSatisfied(value)
+    }
+
     /// Adds an element to the cold queue. If the condition is satisfied,
     /// instead of adding, it is returned. Otherwise, adds it to the end of the cold
     /// queue after the barrier.
-    pub(self) fn maybe_add(&mut self, id: UniqueId, value: T) -> ColdQueueAddResult<T> {
+    pub(self) fn add_if_condition_not_satisfied(
+        &mut self,
+        id: UniqueId,
+        value: T,
+    ) -> ColdQueueAddIfNotSatisfiedResult<T> {
         self.update_condition_value_if_due();
         if (self.condition)(&self.last_condition_value, &value) {
-            return ColdQueueAddResult::ConditionSatisfied(value);
+            return ColdQueueAddIfNotSatisfiedResult::ConditionSatisfied(value);
         }
         self.cold_queue.push_back((id, value));
-        ColdQueueAddResult::Enqueued
+        ColdQueueAddIfNotSatisfiedResult::Enqueued
     }
 }
 
@@ -211,7 +282,18 @@ enum ColdQueueTakeResult<T> {
     NotTakenAndNoneAvailable,
 }
 
-enum ColdQueueAddResult<T> {
+enum ColdQueueDiscardResult<T> {
+    Discarded((UniqueId, T)),
+    NotDiscardedButSomeMayBeAvailable,
+    NotDiscardedAndNoneAvailable,
+}
+
+enum ColdQueueAddIfSatisfiedResult<T> {
+    ConditionNotSatisfied(T),
+    Enqueued,
+}
+
+enum ColdQueueAddIfNotSatisfiedResult<T> {
     ConditionSatisfied(T),
     Enqueued,
 }
@@ -282,11 +364,11 @@ where
                         received = self.hot_receiver.recv_async() => {
                             // can't fail, because self keeps a sender.
                             let (id, value) = received.unwrap();
-                            match self.cold_queue.lock().unwrap().maybe_add(id, value) {
-                                ColdQueueAddResult::ConditionSatisfied(value) => {
+                            match self.cold_queue.lock().unwrap().add_if_condition_not_satisfied(id, value) {
+                                ColdQueueAddIfNotSatisfiedResult::ConditionSatisfied(value) => {
                                     return (id, value);
                                 }
-                                ColdQueueAddResult::Enqueued => {
+                                ColdQueueAddIfNotSatisfiedResult::Enqueued => {
                                     continue;
                                 }
                             }
@@ -297,8 +379,51 @@ where
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub async fn maybe_discard_owned(&self, mut num_elements_to_process: usize) {
+        self.cold_queue.lock().unwrap().update_condition_value();
+
+        // First process elements in the cold queue
+        while num_elements_to_process > 0 {
+            let discarded = self.cold_queue.lock().unwrap().discard();
+            match discarded {
+                ColdQueueDiscardResult::Discarded(_)
+                | ColdQueueDiscardResult::NotDiscardedButSomeMayBeAvailable => {
+                    num_elements_to_process -= 1;
+                    continue;
+                }
+                ColdQueueDiscardResult::NotDiscardedAndNoneAvailable => {
+                    break;
+                }
+            }
+        }
+
+        // If the cold queue is exhausted, process elements buffered in the hot queue
+        while num_elements_to_process > 0 {
+            if let Some(Ok((id, value))) = self.hot_receiver.recv_async().now_or_never() {
+                num_elements_to_process -= 1;
+                let _ = self
+                    .cold_queue
+                    .lock()
+                    .unwrap()
+                    .add_if_condition_satisfied(id, value);
+            } else {
+                // Nothing waiting in the hot queue
+                break;
+            }
+        }
+    }
+
+    pub fn available(&self) -> usize {
         self.hot_receiver.len() + self.cold_queue.lock().unwrap().cold_available
+    }
+
+    pub fn ready(&self) -> usize {
+        self.cold_queue.lock().unwrap().cold_ready
+    }
+
+    pub fn offline(&self) -> usize {
+        let cold_queue = self.cold_queue.lock().unwrap();
+        cold_queue.cold_queue.len() - cold_queue.cold_available
     }
 }
 
@@ -307,8 +432,10 @@ where
 /// owning some of the assets. Each asset has exactly one owner.
 ///
 /// Only the owner of an asset may pick the asset for use in an MPC computation.
-/// As the owner, the `take_owned` method removes the oldest asset from the
-/// storage and returns it, waiting if there isn't one available yet.
+/// As the owner, the `take_owned` method removes a usable asset from the
+/// storage and returns it, waiting if there isn't one available yet. An asset is
+/// usable iff the set of participants associated with it are all alive.
+///
 /// As a passive participant of a computation, unowned assets are taken using
 /// `take_unowned`.
 pub struct DistributedAssetStorage<T>
@@ -391,8 +518,21 @@ where
     }
 
     /// Returns the current number of owned assets in the database.
+    /// Excludes assets which are known to have offline participants.
     pub fn num_owned(&self) -> usize {
-        self.owned_queue.len()
+        self.owned_queue.available()
+    }
+
+    /// Returns the current number of owned assets in the database which
+    /// are known to have all participants alive.
+    pub fn num_owned_ready(&self) -> usize {
+        self.owned_queue.ready()
+    }
+
+    /// Returns the current number of owned assets in the database which
+    /// are known to have some participant offline.
+    pub fn num_owned_offline(&self) -> usize {
+        self.owned_queue.offline()
     }
 
     pub async fn take_owned(&self) -> (UniqueId, T) {
@@ -416,6 +556,15 @@ where
             .expect("Unrecoverable error writing to database");
         // Can't fail, because we keep a receiver alive.
         self.owned_queue.add_owned(id, value);
+    }
+
+    /// Examines up to `num_assets_to_process` elements in the storage.
+    /// If any are found not to satisfy the current condition, they are discarded.
+    /// Otherwise, they are kept aside as ready for immediate use.
+    pub async fn maybe_discard_owned(&self, num_assets_to_process: usize) {
+        self.owned_queue
+            .maybe_discard_owned(num_assets_to_process)
+            .await;
     }
 
     /// For unowned assets, this should be called first before participating
@@ -509,13 +658,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{DoubleQueue, UniqueId};
+    use super::{ColdQueue, DoubleQueue, UniqueId};
     use crate::async_testing::{run_future_once, MaybeReady};
     use crate::primitives::{HasParticipants, ParticipantId};
     use borsh::BorshDeserialize;
     use futures::FutureExt;
     use near_time::FakeClock;
     use serde::{Deserialize, Serialize};
+    use std::cmp::Eq;
+    use std::default::Default;
     use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -528,8 +679,138 @@ mod tests {
         }
     }
 
+    fn verify_cold_queue_internal_consistency<T, CondVal: Default + Eq>(
+        queue: &ColdQueue<T, CondVal>,
+        expected_len: usize,
+    ) {
+        assert!(queue.cold_ready <= queue.cold_available);
+        assert!(queue.cold_available <= queue.cold_queue.len());
+        assert_eq!(expected_len, queue.cold_queue.len());
+        for (i, (_id, val)) in queue.cold_queue.iter().enumerate() {
+            let satisfies = (queue.condition)(&queue.last_condition_value, val);
+            if i < queue.cold_ready {
+                assert!(satisfies);
+            }
+            if queue.cold_available <= i {
+                assert!(!satisfies);
+            }
+        }
+    }
+
     #[test]
-    fn test_double_queue() {
+    fn test_cold_queue() {
+        let clock = FakeClock::default();
+        let cond_value = Arc::new(AtomicI32::new(0));
+        let mut queue = ColdQueue::new(clock.clock(), |cond, val| val % 2 == *cond, {
+            let cond_value = cond_value.clone();
+            Arc::new(move || cond_value.load(Ordering::Relaxed))
+        });
+
+        // Operations on empty
+        verify_cold_queue_internal_consistency(&queue, 0);
+        queue.discard();
+        verify_cold_queue_internal_consistency(&queue, 0);
+        queue.take();
+        verify_cold_queue_internal_consistency(&queue, 0);
+        cond_value.store(1, Ordering::Relaxed);
+        queue.update_condition_value();
+        verify_cold_queue_internal_consistency(&queue, 0);
+
+        let id1 = UniqueId::new(ParticipantId::from_raw(42), 1, 0);
+        let id2 = id1.add_to_counter(1).unwrap();
+
+        // Insert and remove
+        queue.add_if_condition_not_satisfied(id1, 1);
+        verify_cold_queue_internal_consistency(&queue, 0);
+        queue.add_if_condition_satisfied(id1, 1);
+        verify_cold_queue_internal_consistency(&queue, 1);
+        queue.discard();
+        verify_cold_queue_internal_consistency(&queue, 1);
+        queue.add_if_condition_not_satisfied(id2, 2);
+        verify_cold_queue_internal_consistency(&queue, 2);
+        queue.take();
+        verify_cold_queue_internal_consistency(&queue, 1);
+        queue.discard();
+        verify_cold_queue_internal_consistency(&queue, 0);
+
+        // Reset then discard
+        queue.add_if_condition_satisfied(id1, 1);
+        cond_value.store(0, Ordering::Relaxed);
+        queue.update_condition_value();
+        queue.take();
+        verify_cold_queue_internal_consistency(&queue, 1);
+        queue.discard();
+        verify_cold_queue_internal_consistency(&queue, 0);
+        // Reset then take
+        queue.add_if_condition_not_satisfied(id1, 1);
+        cond_value.store(1, Ordering::Relaxed);
+        queue.update_condition_value();
+        queue.discard();
+        verify_cold_queue_internal_consistency(&queue, 1);
+        queue.take();
+        verify_cold_queue_internal_consistency(&queue, 0);
+
+        // Take from known satisfying
+        queue.add_if_condition_satisfied(id1, 1);
+        verify_cold_queue_internal_consistency(&queue, 1);
+        queue.take();
+        verify_cold_queue_internal_consistency(&queue, 0);
+        // Discard from known non-satisfying
+        queue.add_if_condition_not_satisfied(id2, 2);
+        verify_cold_queue_internal_consistency(&queue, 1);
+        queue.discard();
+        verify_cold_queue_internal_consistency(&queue, 0);
+    }
+
+    #[test]
+    fn test_double_queue_discard() {
+        let clock = FakeClock::default();
+        let cond_value = Arc::new(AtomicI32::new(0));
+        let cond_value_query_count = Arc::new(AtomicUsize::new(0));
+        let queue = DoubleQueue::new(clock.clock(), |cond, val| val % 2 == *cond, {
+            let cond_value = cond_value.clone();
+            let cond_value_query_count = cond_value_query_count.clone();
+            Arc::new(move || {
+                cond_value_query_count.fetch_add(1, Ordering::Relaxed);
+                cond_value.load(Ordering::Relaxed)
+            })
+        });
+
+        // Discard should never block, even if the queue is completely empty
+        queue.maybe_discard_owned(3).now_or_never().unwrap();
+
+        // Add 3 elements, 2 of which don't match the condition
+        let id1 = UniqueId::new(ParticipantId::from_raw(42), 123, 456);
+        let id2 = id1.add_to_counter(1).unwrap();
+        let id3 = id1.add_to_counter(2).unwrap();
+        let id4 = id1.add_to_counter(3).unwrap();
+        queue.add_owned(id1, 1);
+        queue.add_owned(id2, 2);
+        queue.add_owned(id3, 3);
+        assert_eq!(queue.available(), 3);
+
+        queue.maybe_discard_owned(1).now_or_never().unwrap();
+        assert_eq!(queue.available(), 2);
+
+        assert_eq!(queue.take_owned().now_or_never().unwrap(), (id2, 2));
+        assert_eq!(queue.available(), 1);
+
+        queue.maybe_discard_owned(1).now_or_never().unwrap();
+        assert_eq!(queue.available(), 0);
+
+        queue.add_owned(id4, 4);
+        assert_eq!(queue.available(), 1);
+
+        queue.maybe_discard_owned(1).now_or_never().unwrap();
+        assert_eq!(queue.available(), 1);
+
+        assert_eq!(queue.take_owned().now_or_never().unwrap(), (id4, 4));
+        assert_eq!(queue.available(), 0);
+    }
+
+    // This test covers tricky cases around updates to the condition value
+    #[test]
+    fn test_double_queue_condition_value() {
         let clock = FakeClock::default();
         let cond_value = Arc::new(AtomicI32::new(0));
         let cond_value_query_count = Arc::new(AtomicUsize::new(0));
@@ -554,9 +835,7 @@ mod tests {
         assert_eq!(queue.take_owned().now_or_never().unwrap(), (id1, 1));
         assert_eq!(cond_value_query_count.load(Ordering::Relaxed), 1);
 
-        // Make condition "% 2 == 0". Start taking an element, but then, change the condition to
-        // "% 2 == 1". The task that has been waiting for an element does not immediately notice
-        // it, until a timer has passed.
+        // Make condition "% 2 == 0" and start taking an element.
         cond_value.store(0, Ordering::Relaxed);
         let fut = queue.take_owned();
         let MaybeReady::Future(fut) = run_future_once(fut) else {
@@ -564,22 +843,29 @@ mod tests {
         };
         assert_eq!(cond_value_query_count.load(Ordering::Relaxed), 2);
 
+        // Change the condition to "% 2 == 1". The task that has been waiting for an element
+        // does not immediately notice the condition change, until a timer has passed.
         cond_value.store(1, Ordering::Relaxed);
         let MaybeReady::Future(fut) = run_future_once(fut) else {
             panic!("should not be able to take value even when cond value changed");
         };
         assert_eq!(cond_value_query_count.load(Ordering::Relaxed), 2);
 
+        // Advance the clock so that the waiting task notices the condition change.
         clock.advance(near_time::Duration::seconds(1));
         assert_eq!(fut.now_or_never().unwrap(), (id2, 3));
         assert_eq!(cond_value_query_count.load(Ordering::Relaxed), 3);
 
+        // This time change the condition before starting to take an element.
+        // It will be observed immediately even though the clock has not been advanced.
         cond_value.store(0, Ordering::Relaxed);
         let fut = queue.take_owned();
         let MaybeReady::Future(fut) = run_future_once(fut) else {
             panic!("should not be able to take value when no element meets condition");
         };
         assert_eq!(cond_value_query_count.load(Ordering::Relaxed), 4);
+
+        // Change the condition without advancing the clock. The waiting task won't notice.
         cond_value.store(1, Ordering::Relaxed);
         let MaybeReady::Future(fut) = run_future_once(fut) else {
             panic!("should not be able to take value even when cond value changed");
@@ -591,6 +877,7 @@ mod tests {
         // races).
         assert_eq!(fut.now_or_never().unwrap(), (id4, 4));
         assert_eq!(cond_value_query_count.load(Ordering::Relaxed), 4);
+
         // However, if we take_owned() again, we'll use the correct condition.
         assert_eq!(queue.take_owned().now_or_never().unwrap(), (id3, 5));
         assert_eq!(cond_value_query_count.load(Ordering::Relaxed), 5);

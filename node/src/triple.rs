@@ -73,10 +73,15 @@ pub async fn run_background_triple_generation(
     let parallelism_limiter = Arc::new(tokio::sync::Semaphore::new(config.concurrency));
     let mut tasks = AutoAbortTaskCollection::new();
     loop {
+        metrics::MPC_OWNED_NUM_TRIPLES_ONLINE.set(triple_store.num_owned_ready() as i64);
+        metrics::MPC_OWNED_NUM_TRIPLES_WITH_OFFLINE_PARTICIPANT
+            .set(triple_store.num_owned_offline() as i64);
         let my_triples_count = triple_store.num_owned();
         metrics::MPC_OWNED_NUM_TRIPLES_AVAILABLE.set(my_triples_count as i64);
-        if my_triples_count + in_flight_generations.num_in_flight()
-            < config.desired_triples_to_buffer
+        let should_generate = my_triples_count + in_flight_generations.num_in_flight()
+            < config.desired_triples_to_buffer;
+
+        if should_generate
             // There's no point to issue way too many in-flight computations, as they
             // will just be limited by the concurrency anyway.
             && in_flight_generations.num_in_flight()
@@ -132,9 +137,15 @@ pub async fn run_background_triple_generation(
                 config.parallel_triple_generation_stagger_time_sec,
             ))
             .await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue;
         }
+
+        if !should_generate {
+            // After the store is full, slowly discard triples which cannot be used right now
+            triple_store.maybe_discard_owned(10).await;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
