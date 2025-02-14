@@ -1,22 +1,27 @@
-use crate::config::{
-    load_config_file, BlockArgs, KeygenConfig, PresignatureConfig, SecretsConfig, SignatureConfig,
-    SyncMode, TripleConfig, WebUIConfig,
+use crate::{
+    config::{
+        load_config_file, BlockArgs, ConfigFile, IndexerConfig, KeygenConfig, ParticipantsConfig,
+        PresignatureConfig, SecretsConfig, SignatureConfig, SyncMode, TripleConfig, WebUIConfig,
+    },
+    coordinator::Coordinator,
+    db::SecretDB,
+    indexer::{real::spawn_real_indexer, IndexerAPI},
+    keyshare::KeyshareStorageFactory,
+    p2p::testing::{generate_test_p2p_configs, PortSeed},
+    tracking::{self, start_root_task},
+    web::start_web_server,
 };
-use crate::config::{ConfigFile, IndexerConfig};
-use crate::coordinator::Coordinator;
-use crate::db::SecretDB;
-use crate::indexer::real::spawn_real_indexer;
-use crate::keyshare::KeyshareStorageFactory;
-use crate::p2p::testing::{generate_test_p2p_configs, PortSeed};
-use crate::tracking::{self, start_root_task};
-use crate::web::start_web_server;
 use clap::Parser;
 use near_crypto::SecretKey;
 use near_indexer_primitives::types::Finality;
 use near_sdk::AccountId;
 use near_time::Clock;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::{
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Parser, Debug)]
 pub enum Cli {
@@ -85,8 +90,9 @@ pub struct StartCmd {
 
 impl StartCmd {
     async fn run(self) -> anyhow::Result<()> {
-        let home_dir = PathBuf::from(self.home_dir);
-        let secrets = SecretsConfig::from_cli(&self.secret_store_key_hex, self.p2p_private_key)?;
+        let home_dir = PathBuf::from(self.home_dir.clone());
+        let secrets =
+            SecretsConfig::from_cli(&self.secret_store_key_hex, self.p2p_private_key.clone())?;
         let config = load_config_file(&home_dir)?;
 
         let (indexer_handle, indexer_api) = spawn_real_indexer(
@@ -96,17 +102,60 @@ impl StartCmd {
             self.account_secret_key.clone(),
         );
 
-        let root_future = async move {
+        let root_future = self.create_root_future(
+            home_dir.clone(),
+            config.clone(),
+            secrets.clone(),
+            indexer_api,
+        );
+
+        let root_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(1)
+            .build()?;
+
+        let root_task = root_runtime.spawn(start_root_task("root", root_future).0);
+        let indexer_handle = root_runtime.spawn_blocking(move || {
+            if let Err(e) = indexer_handle.join() {
+                anyhow::bail!("Indexer thread failed: {:?}", e);
+            }
+            anyhow::Ok(())
+        });
+
+        tokio::select! {
+            res = root_task => {
+                res??;
+            }
+            res = indexer_handle => {
+                res??;
+            }
+        }
+        Ok(())
+    }
+
+    fn create_root_future(
+        &self,
+        home_dir: PathBuf,
+        config: ConfigFile,
+        secrets: SecretsConfig,
+        indexer_api: IndexerAPI,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>> {
+        let gcp_keyshare_secret_id = self.gcp_keyshare_secret_id.clone();
+        let gcp_project_id = self.gcp_project_id.clone();
+
+        Box::pin(async move {
             let root_task_handle = tracking::current_task();
             let web_server = start_web_server(root_task_handle, config.web_ui.clone()).await?;
             let _web_server = tracking::spawn_checked("web server", web_server);
 
             let secret_db = SecretDB::new(&home_dir, secrets.local_storage_aes_key)?;
 
-            let keyshare_storage_factory = if let Some(secret_id) = self.gcp_keyshare_secret_id {
-                let Some(project_id) = self.gcp_project_id else {
-                    anyhow::bail!("GCP_PROJECT_ID must be specified to use GCP_KEYSHARE_SECRET_ID");
-                };
+            let keyshare_storage_factory = if let Some(secret_id) = gcp_keyshare_secret_id {
+                let project_id = gcp_project_id.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "GCP_PROJECT_ID must be specified to use GCP_KEYSHARE_SECRET_ID"
+                    )
+                })?;
                 KeyshareStorageFactory::Gcp {
                     project_id,
                     secret_id,
@@ -128,33 +177,7 @@ impl StartCmd {
                 currently_running_job_name: Arc::new(Mutex::new(String::new())),
             };
             coordinator.run().await
-        };
-
-        // Spawn a one-thread runtime to run the coordinator.
-        // TODO(#156): we shouldn't actually need to do this, but for now we
-        // do because there is also an std::thread we need to join.
-        let root_runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(1)
-            .build()?;
-
-        let root_task = root_runtime.spawn(start_root_task("root", root_future).0);
-        let indexer_handle = root_runtime.spawn_blocking(move || {
-            if let Err(e) = indexer_handle.join() {
-                anyhow::bail!("Indexer thread failed: {:?}", e);
-            }
-            anyhow::Ok(())
-        });
-        // If either fails, the whole program fails.
-        tokio::select! {
-            res = root_task => {
-                res??;
-            }
-            res = indexer_handle => {
-                res??;
-            }
-        }
-        Ok(())
+        })
     }
 }
 
@@ -182,60 +205,95 @@ impl Cli {
                 None,
             ),
             Cli::GenerateTestConfigs {
-                output_dir,
-                participants,
+                ref output_dir,
+                ref participants,
                 threshold,
             } => {
-                let configs =
-                    generate_test_p2p_configs(&participants, threshold, PortSeed::CLI_FOR_PYTEST)?;
-                let participants_config = configs[0].0.participants.clone();
-                for (i, (_, p2p_private_key)) in configs.into_iter().enumerate() {
-                    let subdir = format!("{}/{}", output_dir, i);
-                    std::fs::create_dir_all(&subdir)?;
-                    let file_config = ConfigFile {
-                        my_near_account_id: participants[i].clone(),
-                        web_ui: WebUIConfig {
-                            host: "127.0.0.1".to_owned(),
-                            port: 21000 + i as u16,
-                        },
-                        indexer: IndexerConfig {
-                            validate_genesis: true,
-                            sync_mode: SyncMode::Block(BlockArgs { height: 0 }),
-                            concurrency: 1.try_into().unwrap(),
-                            mpc_contract_id: "test0".parse().unwrap(),
-                            finality: Finality::None,
-                            port_override: None,
-                        },
-                        triple: TripleConfig {
-                            concurrency: 2,
-                            desired_triples_to_buffer: 65536,
-                            timeout_sec: 60,
-                            parallel_triple_generation_stagger_time_sec: 1,
-                        },
-                        presignature: PresignatureConfig {
-                            concurrency: 2,
-                            desired_presignatures_to_buffer: 8192,
-                            timeout_sec: 60,
-                        },
-                        signature: SignatureConfig { timeout_sec: 60 },
-                        keygen: KeygenConfig { timeout_sec: 60 },
-                        cores: Some(4),
-                    };
-                    std::fs::write(
-                        format!("{}/p2p_key", subdir),
-                        SecretKey::ED25519(p2p_private_key).to_string(),
-                    )?;
-                    std::fs::write(
-                        format!("{}/config.yaml", subdir),
-                        serde_yaml::to_string(&file_config)?,
-                    )?;
-                }
-                std::fs::write(
-                    format!("{}/participants.json", output_dir),
-                    serde_json::to_string(&participants_config)?,
-                )?;
-                Ok(())
+                self.run_generate_test_configs(output_dir, participants, threshold)
+                    .await
             }
         }
+    }
+
+    async fn run_generate_test_configs(
+        &self,
+        output_dir: &str,
+        participants: &[AccountId],
+        threshold: usize,
+    ) -> anyhow::Result<()> {
+        let configs = generate_test_p2p_configs(participants, threshold, PortSeed::CLI_FOR_PYTEST)?;
+        let participants_config = configs[0].0.participants.clone();
+        for (i, (_, p2p_private_key)) in configs.into_iter().enumerate() {
+            let subdir = format!("{}/{}", output_dir, i);
+            std::fs::create_dir_all(&subdir)?;
+            let file_config = self.create_file_config(&participants[i], i)?;
+            let secret_key = SecretKey::ED25519(p2p_private_key.clone());
+            self.write_config_files(&subdir, &file_config, &secret_key)?;
+        }
+        self.write_participants_config(output_dir, &participants_config)?;
+        Ok(())
+    }
+
+    fn create_file_config(
+        &self,
+        participant: &AccountId,
+        index: usize,
+    ) -> anyhow::Result<ConfigFile> {
+        Ok(ConfigFile {
+            my_near_account_id: participant.clone(),
+            web_ui: WebUIConfig {
+                host: "127.0.0.1".to_owned(),
+                port: 21000 + index as u16,
+            },
+            indexer: IndexerConfig {
+                validate_genesis: true,
+                sync_mode: SyncMode::Block(BlockArgs { height: 0 }),
+                concurrency: 1.try_into().unwrap(),
+                mpc_contract_id: "test0".parse().unwrap(),
+                finality: Finality::None,
+                port_override: None,
+            },
+            triple: TripleConfig {
+                concurrency: 2,
+                desired_triples_to_buffer: 65536,
+                timeout_sec: 60,
+                parallel_triple_generation_stagger_time_sec: 1,
+            },
+            presignature: PresignatureConfig {
+                concurrency: 2,
+                desired_presignatures_to_buffer: 8192,
+                timeout_sec: 60,
+            },
+            signature: SignatureConfig { timeout_sec: 60 },
+            keygen: KeygenConfig { timeout_sec: 60 },
+            cores: Some(4),
+        })
+    }
+
+    fn write_config_files(
+        &self,
+        subdir: &str,
+        file_config: &ConfigFile,
+        p2p_private_key: &SecretKey,
+    ) -> anyhow::Result<()> {
+        std::fs::write(format!("{}/p2p_key", subdir), p2p_private_key.to_string())?;
+        std::fs::write(
+            format!("{}/config.yaml", subdir),
+            serde_yaml::to_string(file_config)?,
+        )?;
+        Ok(())
+    }
+
+    fn write_participants_config(
+        &self,
+        output_dir: &str,
+        participants_config: &ParticipantsConfig,
+        // participants_config: &Vec<AccountId>,
+    ) -> anyhow::Result<()> {
+        std::fs::write(
+            format!("{}/participants.json", output_dir),
+            serde_json::to_string(participants_config)?,
+        )?;
+        Ok(())
     }
 }
