@@ -1,6 +1,8 @@
+use crate::config::{ConfigFile, MpcConfig};
 use crate::hkdf::derive_tweak;
 use crate::indexer::handler::ChainSignatureRequest;
 use crate::indexer::types::{ChainRespondArgs, ChainSendTransactionRequest};
+use crate::keyshare::RootKeyshareData;
 use crate::metrics;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::primitives::{MpcTaskId, PresignOutputWithParticipants};
@@ -15,9 +17,6 @@ use crate::triple::{
     run_background_triple_generation, run_many_triple_generation, TripleStorage,
     SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
 };
-
-use crate::config::{ConfigFile, MpcConfig};
-use crate::keyshare::RootKeyshareData;
 use cait_sith::FullSignature;
 use k256::{AffinePoint, Secp256k1};
 use std::sync::Arc;
@@ -61,152 +60,25 @@ impl MpcClient {
     /// multiparty computation.
     pub async fn run(
         self,
-        mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
+        channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
         mut sign_request_receiver: tokio::sync::OwnedMutexGuard<
             mpsc::UnboundedReceiver<ChainSignatureRequest>,
         >,
         chain_txn_sender: mpsc::Sender<ChainSendTransactionRequest>,
     ) -> anyhow::Result<()> {
+        let client = self.client.clone();
+        let metrics_emitter = tracking::spawn("periodically emits metrics", async move {
+            loop {
+                client.emit_metrics();
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+
         let monitor_passive_channels = {
-            let client = self.client.clone();
-            let config = self.config.clone();
-            let mpc_config = self.mpc_config.clone();
-            let triple_store = self.triple_store.clone();
-            let presignature_store = self.presignature_store.clone();
-            let sign_request_store = self.sign_request_store.clone();
-            let root_keyshare = self.root_keyshare.clone();
-
-            let client_metrics = client.clone();
-            let auto_abort = tracking::spawn("periodically emits metrics", async move {
-                loop {
-                    client_metrics.emit_metrics();
-
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                }
-            });
-
-            // Task for executing the main MPC loop
-            tracking::spawn("monitor passive channels", async move {
-                let _auto_abort_metrics = auto_abort;
-                let mut tasks = AutoAbortTaskCollection::new();
-                loop {
-                    let channel = channel_receiver.recv().await.unwrap();
-                    let client = client.clone();
-                    let config = config.clone();
-                    let mpc_config = mpc_config.clone();
-                    let triple_store = triple_store.clone();
-                    let presignature_store = presignature_store.clone();
-                    let sign_request_store = sign_request_store.clone();
-                    let root_keyshare = root_keyshare.clone();
-                    tasks.spawn_checked(
-                        &format!("passive task {:?}", channel.task_id),
-                        async move {
-                            match channel.task_id {
-                                MpcTaskId::KeyGeneration => {
-                                    anyhow::bail!(
-                                        "Key generation rejected in normal node operation"
-                                    );
-                                }
-                                MpcTaskId::KeyResharing { .. } => {
-                                    anyhow::bail!(
-                                        "Key resharing rejected in normal node operation"
-                                    );
-                                }
-                                MpcTaskId::ManyTriples { start, count } => {
-                                    if count as usize != SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE {
-                                        return Err(anyhow::anyhow!(
-                                            "Unsupported batch size for triple generation"
-                                        ));
-                                    }
-                                    let pending_paired_triples = (0..count / 2)
-                                        .map(|i| {
-                                            anyhow::Ok(
-                                                triple_store
-                                                    .prepare_unowned(start.add_to_counter(i)?),
-                                            )
-                                        })
-                                        .collect::<anyhow::Result<Vec<_>>>()?;
-                                    let triples = timeout(
-                                        Duration::from_secs(config.triple.timeout_sec),
-                                        run_many_triple_generation::<
-                                            SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
-                                        >(
-                                            channel,
-                                            client.my_participant_id(),
-                                            mpc_config.participants.threshold as usize,
-                                        ),
-                                    )
-                                    .await??;
-                                    for (pending_triple, paired_triple) in
-                                        pending_paired_triples.into_iter().zip(triples.into_iter())
-                                    {
-                                        pending_triple.commit(paired_triple);
-                                    }
-                                }
-                                MpcTaskId::Presignature {
-                                    id,
-                                    paired_triple_id,
-                                } => {
-                                    let pending_asset = presignature_store.prepare_unowned(id);
-                                    let participants = channel.participants.clone();
-                                    let presignature = timeout(
-                                        Duration::from_secs(config.presignature.timeout_sec),
-                                        pre_sign_unowned(
-                                            channel,
-                                            client.my_participant_id(),
-                                            mpc_config.participants.threshold as usize,
-                                            root_keyshare.keygen_output(),
-                                            triple_store.clone(),
-                                            paired_triple_id,
-                                        ),
-                                    )
-                                    .await??;
-                                    pending_asset.commit(PresignOutputWithParticipants {
-                                        presignature,
-                                        participants,
-                                    });
-                                }
-                                MpcTaskId::Signature {
-                                    id,
-                                    presignature_id,
-                                } => {
-                                    metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_RECEIVED.inc();
-                                    // TODO(#69): decide a better timeout for this
-                                    let SignatureRequest {
-                                        msg_hash,
-                                        tweak,
-                                        entropy,
-                                        ..
-                                    } = timeout(
-                                        Duration::from_secs(config.signature.timeout_sec),
-                                        sign_request_store.get(id),
-                                    )
-                                    .await??;
-                                    metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_LOOKUP_SUCCEEDED.inc();
-
-                                    timeout(
-                                        Duration::from_secs(config.signature.timeout_sec),
-                                        sign(
-                                            channel,
-                                            client.my_participant_id(),
-                                            root_keyshare.keygen_output(),
-                                            presignature_store
-                                                .take_unowned(presignature_id)
-                                                .await?
-                                                .presignature,
-                                            msg_hash,
-                                            tweak,
-                                            entropy,
-                                        ),
-                                    )
-                                    .await??;
-                                }
-                            }
-                            anyhow::Ok(())
-                        },
-                    );
-                }
-            })
+            tracking::spawn(
+                "monitor passive channels",
+                MpcClient::monitor_passive_channels_inner(channel_receiver, self.clone()),
+            )
         };
 
         let monitor_chain = {
@@ -312,10 +184,131 @@ impl MpcClient {
             ),
         );
 
-        monitor_passive_channels.await?;
+        let _ = monitor_passive_channels.await?;
+        metrics_emitter.await?;
         monitor_chain.await?;
         generate_triples.await??;
         generate_presignatures.await??;
+
+        Ok(())
+    }
+
+    async fn monitor_passive_channels_inner(
+        mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
+        mpc_client: MpcClient,
+    ) -> anyhow::Result<()> {
+        let mut tasks = AutoAbortTaskCollection::new();
+        loop {
+            let channel = channel_receiver.recv().await.unwrap();
+            let mpc_clone = mpc_client.clone();
+            tasks.spawn_checked(&format!("passive task {:?}", channel.task_id), async move {
+                MpcClient::process_channel_task(channel, mpc_clone).await
+            });
+        }
+    }
+
+    async fn process_channel_task(
+        channel: NetworkTaskChannel,
+        mpc_client: MpcClient,
+    ) -> anyhow::Result<()> {
+        let MpcClient {
+            config,
+            mpc_config,
+            client,
+            triple_store,
+            presignature_store,
+            root_keyshare,
+            sign_request_store,
+        } = mpc_client;
+        match channel.task_id {
+            MpcTaskId::KeyGeneration => {
+                anyhow::bail!("Key generation rejected in normal node operation");
+            }
+            MpcTaskId::KeyResharing { .. } => {
+                anyhow::bail!("Key resharing rejected in normal node operation");
+            }
+            MpcTaskId::ManyTriples { start, count } => {
+                if count as usize != SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE {
+                    return Err(anyhow::anyhow!(
+                        "Unsupported batch size for triple generation"
+                    ));
+                }
+                let pending_paired_triples = (0..count / 2)
+                    .map(|i| Ok(triple_store.prepare_unowned(start.add_to_counter(i)?)))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let triples = timeout(
+                    Duration::from_secs(config.triple.timeout_sec),
+                    run_many_triple_generation::<SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE>(
+                        channel,
+                        client.my_participant_id(),
+                        mpc_config.participants.threshold as usize,
+                    ),
+                )
+                .await??;
+                for (pending_triple, paired_triple) in
+                    pending_paired_triples.into_iter().zip(triples.into_iter())
+                {
+                    pending_triple.commit(paired_triple);
+                }
+            }
+            MpcTaskId::Presignature {
+                id,
+                paired_triple_id,
+            } => {
+                let pending_asset = presignature_store.prepare_unowned(id);
+                let participants = channel.participants.clone();
+                let presignature = timeout(
+                    Duration::from_secs(config.presignature.timeout_sec),
+                    pre_sign_unowned(
+                        channel,
+                        client.my_participant_id(),
+                        mpc_config.participants.threshold as usize,
+                        root_keyshare.keygen_output(),
+                        triple_store.clone(),
+                        paired_triple_id,
+                    ),
+                )
+                .await??;
+                pending_asset.commit(PresignOutputWithParticipants {
+                    presignature,
+                    participants,
+                });
+            }
+            MpcTaskId::Signature {
+                id,
+                presignature_id,
+            } => {
+                metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_RECEIVED.inc();
+                let SignatureRequest {
+                    msg_hash,
+                    tweak,
+                    entropy,
+                    ..
+                } = timeout(
+                    Duration::from_secs(config.signature.timeout_sec),
+                    sign_request_store.get(id),
+                )
+                .await??;
+                metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_LOOKUP_SUCCEEDED.inc();
+
+                timeout(
+                    Duration::from_secs(config.signature.timeout_sec),
+                    sign(
+                        channel,
+                        client.my_participant_id(),
+                        root_keyshare.keygen_output(),
+                        presignature_store
+                            .take_unowned(presignature_id)
+                            .await?
+                            .presignature,
+                        msg_hash,
+                        tweak,
+                        entropy,
+                    ),
+                )
+                .await??;
+            }
+        }
 
         Ok(())
     }
