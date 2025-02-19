@@ -1,9 +1,0 @@
-{
-        "cipher_public_key": "d4737c4779160b872743fee89edf5b0a183d785c694f29eab6daaf976f05eb10",
-        "cipher_private_key": "355deb5d4f9655d973798a7196790aeff7de8b85ae31a55edfda021b1f748b80",
-        "sign_public_key": "ed25519:8gRWUbt1DGN3oUH22mLaVHqdQo6RNpauTteJBgEGYSZq",
-        "sign_secret_key": "ed25519:b4t67JmJGqwwJPrvwoyZaC4QZr9HS8yAorxU5KbMg8tktcPfMj76eVyeCMBqv5SYt82qftoTSeKr9z2GLA5ktCT",
-        "near_account_public_key": "ed25519:HY9gFH4V8Hd7PU5od65LRXXrj3mBZ2im2MqAodWkJCtv",
-        "near_account_secret_key": "ed25519:3Zqbjejns6ZGR2X6VsHKA82Aoqtn1nw54C2RoUBQVLx8dnHrTMf6Rbj1NBRzsLtRGPYbtXMX1F95iRY7zgqLtyeW",
-        "url": "http://mpc-node-1.service.mpc.consul:3000"
-    }
