@@ -11,6 +11,7 @@ use crate::{metrics, tracking};
 use cait_sith::protocol::Participant;
 use cait_sith::triples::TripleGenerationOutput;
 use cait_sith::{FullSignature, KeygenOutput, PresignArguments, PresignOutput};
+use futures::FutureExt;
 use k256::{AffinePoint, Scalar, Secp256k1};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex};
@@ -20,19 +21,19 @@ use tokio::time::timeout;
 /// Performs an MPC presignature operation. This is shared for the initiator
 /// and for passive participants.
 pub async fn pre_sign(
-    channel: NetworkTaskChannel,
-    me: ParticipantId,
+    channel: &mut NetworkTaskChannel,
     threshold: usize,
     triple0: TripleGenerationOutput<Secp256k1>,
     triple1: TripleGenerationOutput<Secp256k1>,
     keygen_out: KeygenOutput<Secp256k1>,
 ) -> anyhow::Result<PresignOutput<Secp256k1>> {
     let cs_participants = channel
-        .participants
+        .participants()
         .iter()
         .copied()
         .map(Participant::from)
         .collect::<Vec<_>>();
+    let me = channel.my_participant_id();
     let protocol = cait_sith::presign::<Secp256k1>(
         &cs_participants,
         me.into(),
@@ -46,7 +47,7 @@ pub async fn pre_sign(
         },
     )?;
     let _timer = metrics::MPC_PRE_SIGNATURE_TIME_ELAPSED.start_timer();
-    let presignature = run_protocol("presign", channel, me, protocol).await?;
+    let presignature = run_protocol("presign", channel, protocol).await?;
     Ok(presignature)
 }
 
@@ -54,15 +55,14 @@ pub async fn pre_sign(
 /// code path that also includes awaiting for the triples to be available.
 #[allow(clippy::too_many_arguments)]
 pub async fn pre_sign_unowned(
-    channel: NetworkTaskChannel,
-    me: ParticipantId,
+    channel: &mut NetworkTaskChannel,
     threshold: usize,
     keygen_out: KeygenOutput<Secp256k1>,
     triple_store: Arc<TripleStorage>,
     paired_triple_id: UniqueId,
 ) -> anyhow::Result<PresignOutput<Secp256k1>> {
     let (triple0, triple1) = triple_store.take_unowned(paired_triple_id).await?;
-    pre_sign(channel, me, threshold, triple0, triple1, keygen_out).await
+    pre_sign(channel, threshold, triple0, triple1, keygen_out).await
 }
 
 /// Performs an MPC signature operation. This is the same for the initiator
@@ -70,8 +70,7 @@ pub async fn pre_sign_unowned(
 /// The entropy is used to rerandomize the presignature (inspired by [GS21])
 /// The tweak allows key derivation
 pub async fn sign(
-    channel: NetworkTaskChannel,
-    me: ParticipantId,
+    channel: &mut NetworkTaskChannel,
     keygen_out: KeygenOutput<Secp256k1>,
     presign_out: PresignOutput<Secp256k1>,
     msg_hash: Scalar,
@@ -79,11 +78,12 @@ pub async fn sign(
     entropy: [u8; 32],
 ) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
     let cs_participants = channel
-        .participants
+        .participants()
         .iter()
         .copied()
         .map(Participant::from)
         .collect::<Vec<_>>();
+    let me = channel.my_participant_id();
 
     let public_key = derive_public_key(keygen_out.public_key, tweak);
 
@@ -93,7 +93,7 @@ pub async fn sign(
         public_key,
         msg_hash,
         big_r,
-        channel.participants.clone(),
+        channel.participants().to_vec(),
         entropy,
     );
     // we use the default inversion: it is absolutely fine to use a
@@ -116,7 +116,7 @@ pub async fn sign(
         msg_hash,
     )?;
     let _timer = metrics::MPC_SIGNATURE_TIME_ELAPSED.start_timer();
-    let signature = run_protocol("sign", channel, me, protocol).await?;
+    let signature = run_protocol("sign", channel, protocol).await?;
     Ok((signature, public_key))
 }
 
@@ -176,7 +176,6 @@ pub async fn run_background_presignature_generation(
             };
             let channel = client.new_channel_for_task(task_id, participants.clone())?;
             let in_flight = in_flight_generations.in_flight(1);
-            let client = client.clone();
             let parallelism_limiter = parallelism_limiter.clone();
             let presignature_store = presignature_store.clone();
             let config_clone = config.clone();
@@ -186,14 +185,9 @@ pub async fn run_background_presignature_generation(
                 let _semaphore_guard = parallelism_limiter.acquire().await?;
                 let presignature = timeout(
                     Duration::from_secs(config_clone.timeout_sec),
-                    pre_sign(
-                        channel,
-                        client.my_participant_id(),
-                        threshold,
-                        triple0,
-                        triple1,
-                        keygen_out,
-                    ),
+                    channel.perform_leader_centric_computation(true, move |channel| {
+                        pre_sign(channel, threshold, triple0, triple1, keygen_out).boxed()
+                    }),
                 )
                 .await??;
                 presignature_store.add_owned(

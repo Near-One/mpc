@@ -14,4 +14,4 @@
 /// an incompatible protocol change, we are effectively creating a new network
 /// that is separate from the old network, thus requiring only threshold number
 /// of nodes to upgrade.
-pub const MPC_PROTOCOL_VERSION: u32 = 1;
+pub const MPC_PROTOCOL_VERSION: u32 = 2;

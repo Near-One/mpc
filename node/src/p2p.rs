@@ -1,22 +1,27 @@
 use crate::config::MpcConfig;
-use crate::metrics;
-use crate::network::conn::{AllNodeConnectivities, ConnectionVersion, NodeConnectivity};
+use crate::network::conn::{
+    AllNodeConnectivities, ConnectionVersion, NodeConnectivity, NodeConnectivityInterface,
+};
+use crate::network::constants::MAX_MESSAGE_LEN;
 use crate::network::handshake::p2p_handshake;
 use crate::network::{MeshNetworkTransportReceiver, MeshNetworkTransportSender};
-use crate::primitives::{MpcMessage, MpcPeerMessage, ParticipantId};
+use crate::primitives::{
+    IndexerHeightMessage, MpcMessage, MpcPeerMessage, ParticipantId, PeerIndexerHeightMessage,
+    PeerMessage,
+};
 use crate::tracking::{self, AutoAbortTask, AutoAbortTaskCollection};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::server::WebPkiClientVerifier;
 use rustls::{ClientConfig, CommonState, ServerConfig};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{self, Receiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use x509_parser::prelude::{FromDer, X509Certificate};
@@ -33,7 +38,7 @@ pub struct TlsMeshSender {
 
 /// Implements MeshNetworkTransportReceiver.
 pub struct TlsMeshReceiver {
-    receiver: Receiver<MpcPeerMessage>,
+    receiver: UnboundedReceiver<PeerMessage>,
     _incoming_connections_task: AutoAbortTask<()>,
 }
 
@@ -82,10 +87,11 @@ impl Drop for DropToCancel {
     }
 }
 
-/// Either a Ping or a data packet.
+#[derive(BorshSerialize, BorshDeserialize)]
 enum Packet {
     Ping,
-    Data(Vec<u8>),
+    MpcMessage(MpcMessage),
+    IndexerHeight(IndexerHeightMessage),
 }
 
 impl TlsConnection {
@@ -137,18 +143,12 @@ impl TlsConnection {
                             let Some(data) = data else {
                                 break;
                             };
-                            match data {
-                                Packet::Ping => {
-                                    tls_conn.write_u8(0).await?;
-                                    sent_bytes += 1;
-                                }
-                                Packet::Data(vec) => {
-                                    tls_conn.write_u8(1).await?;
-                                    tls_conn.write_u32(vec.len() as u32).await?;
-                                    tls_conn.write_all(&vec).await?;
-                                    sent_bytes += 5 + vec.len() as u64;
-                                }
-                            }
+                            let serialized = borsh::to_vec(&data)?;
+                            let len: u32 = serialized.len().try_into().context("Message too long")?;
+                            tls_conn.write_u32(len).await?;
+                            tls_conn.write_all(&serialized).await?;
+                            sent_bytes += 4 + len as u64;
+
                             tracking::set_progress(&format!("Sent {} bytes", sent_bytes));
                         }
                         _ = tls_conn.read_u8() => {
@@ -190,8 +190,13 @@ impl TlsConnection {
         self.closed.cancelled().await;
     }
 
-    fn send(&self, data: Vec<u8>) -> anyhow::Result<()> {
-        self.sender.send(Packet::Data(data))?;
+    fn send_mpc_message(&self, msg: MpcMessage) -> anyhow::Result<()> {
+        self.sender.send(Packet::MpcMessage(msg))?;
+        Ok(())
+    }
+
+    fn send_indexer_height(&self, msg: IndexerHeightMessage) -> anyhow::Result<()> {
+        self.sender.send(Packet::IndexerHeight(msg))?;
         Ok(())
     }
 }
@@ -200,18 +205,26 @@ impl PersistentConnection {
     const CONNECTION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
     /// Sends a message over the connection. If the connection was reset, fail.
-    async fn send_message(
+    fn send_mpc_message(
         &self,
         expected_version: ConnectionVersion,
-        msg: Vec<u8>,
+        msg: MpcMessage,
     ) -> anyhow::Result<()> {
         self.connectivity
-            .wait_for_outgoing_connection(expected_version)
-            .await
-            .with_context(|| format!("Cannot send message to {}", self.target_participant_id))?
-            .send(msg)
-            .with_context(|| format!("Cannot send message to {}", self.target_participant_id))?;
+            .outgoing_connection_asserting(expected_version)
+            .with_context(|| format!("Cannot send MPC message to {}", self.target_participant_id))?
+            .send_mpc_message(msg)
+            .with_context(|| {
+                format!("Cannot send MPC message to {}", self.target_participant_id)
+            })?;
         Ok(())
+    }
+
+    /// Sends a message over the connection. This is done on a best-effort basis.
+    fn send_indexer_height(&self, height: IndexerHeightMessage) {
+        if let Some(conn) = self.connectivity.any_outgoing_connection() {
+            let _ = conn.send_indexer_height(height);
+        }
     }
 
     pub fn new(
@@ -405,8 +418,7 @@ pub async fn new_tls_mesh_network(
 
     let tls_acceptor = TlsAcceptor::from(server_config);
 
-    // TODO: what should the channel size be? What's our flow control strategy in general?
-    let (message_sender, message_receiver) = mpsc::channel(1000000);
+    let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let tcp_listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::new(0, 0, 0, 0),
         my_port,
@@ -437,29 +449,36 @@ pub async fn new_tls_mesh_network(
                     .set_incoming_connection(&incoming_conn);
                 let mut received_bytes: u64 = 0;
                 loop {
-                    let tag = stream.read_u8().await?;
-                    match tag {
-                        0 => {
-                            // Ping
-                            received_bytes += 1;
+                    let len = stream.read_u32().await?;
+                    if len >= MAX_MESSAGE_LEN {
+                        anyhow::bail!("Message too long");
+                    }
+                    let mut buf = vec![0; len as usize];
+                    stream.read_exact(&mut buf).await?;
+                    received_bytes += 4 + len as u64;
+
+                    let packet =
+                        Packet::try_from_slice(&buf).context("Failed to deserialize packet")?;
+                    match packet {
+                        Packet::Ping => {
+                            // Do nothing. Pings are just for TCP keepalive.
                         }
-                        1 => {
-                            let mut len_buf = [0u8; 4];
-                            stream.read_exact(&mut len_buf).await?;
-                            let len = u32::from_be_bytes(len_buf) as usize;
-                            let mut buf = vec![0u8; len];
-                            stream.read_exact(&mut buf).await?;
-                            let message = MpcPeerMessage {
+                        Packet::MpcMessage(mpc_message) => {
+                            message_sender.send(PeerMessage::Mpc(MpcPeerMessage {
                                 from: peer_id,
-                                message: MpcMessage::try_from_slice(&buf)?,
-                            };
-                            message_sender.send(message).await?;
-                            received_bytes += 5 + len as u64;
+                                message: mpc_message,
+                            }))?;
                         }
-                        _ => {
-                            anyhow::bail!("Invalid tag");
+                        Packet::IndexerHeight(message) => {
+                            message_sender.send(PeerMessage::IndexerHeight(
+                                PeerIndexerHeightMessage {
+                                    from: peer_id,
+                                    message,
+                                },
+                            ))?;
                         }
                     }
+
                     tracking::set_progress(&format!(
                         "Received {} bytes from {}",
                         received_bytes, peer_id
@@ -527,7 +546,7 @@ fn verify_peer_identity(
     Ok(*peer_id)
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl MeshNetworkTransportSender for TlsMeshSender {
     fn my_participant_id(&self) -> ParticipantId {
         self.my_id
@@ -537,25 +556,11 @@ impl MeshNetworkTransportSender for TlsMeshSender {
         self.participants.clone()
     }
 
-    fn connection_version(&self, participant_id: ParticipantId) -> ConnectionVersion {
-        self.connectivities
-            .get(participant_id)
-            .map(|c| c.connection_version())
-            .unwrap_or_default()
+    fn connectivity(&self, participant_id: ParticipantId) -> Arc<dyn NodeConnectivityInterface> {
+        self.connectivities.get(participant_id).unwrap().clone()
     }
 
-    fn was_connection_interrupted(
-        &self,
-        participant_id: ParticipantId,
-        version: ConnectionVersion,
-    ) -> bool {
-        self.connectivities
-            .get(participant_id)
-            .map(|c| c.was_connection_interrupted(version))
-            .unwrap_or_default()
-    }
-
-    async fn send(
+    fn send(
         &self,
         recipient_id: ParticipantId,
         message: MpcMessage,
@@ -564,39 +569,26 @@ impl MeshNetworkTransportSender for TlsMeshSender {
         self.connections
             .get(&recipient_id)
             .ok_or_else(|| anyhow!("Recipient not found"))?
-            .send_message(connection_version, borsh::to_vec(&message)?)
-            .await?;
+            .send_mpc_message(connection_version, message)
+            .with_context(|| format!("Cannot send MPC message to recipient {}", recipient_id))?;
         Ok(())
+    }
+
+    fn send_indexer_height(&self, height: IndexerHeightMessage) {
+        for conn in self.connections.values() {
+            conn.send_indexer_height(height.clone());
+        }
     }
 
     async fn wait_for_ready(&self, threshold: usize) -> anyhow::Result<()> {
         self.connectivities.wait_for_ready(threshold).await;
         Ok(())
     }
-
-    fn all_alive_participant_ids(&self) -> Vec<ParticipantId> {
-        self.connectivities.all_alive_participant_ids()
-    }
-
-    fn emit_metrics(&self) {
-        let my_participant_id = self.my_participant_id();
-        let live_participants: HashSet<ParticipantId> =
-            self.all_alive_participant_ids().into_iter().collect();
-
-        metrics::NETWORK_LIVE_CONNECTIONS.reset();
-
-        for id in self.all_participant_ids() {
-            let is_live_participant = live_participants.contains(&id);
-            metrics::NETWORK_LIVE_CONNECTIONS
-                .with_label_values(&[&my_participant_id.to_string(), &id.to_string()])
-                .set(is_live_participant.into());
-        }
-    }
 }
 
 #[async_trait]
 impl MeshNetworkTransportReceiver for TlsMeshReceiver {
-    async fn receive(&mut self) -> anyhow::Result<MpcPeerMessage> {
+    async fn receive(&mut self) -> anyhow::Result<PeerMessage> {
         self.receiver
             .recv()
             .await
@@ -723,7 +715,7 @@ mod tests {
     use crate::p2p::testing::{
         generate_keypair, generate_test_p2p_configs, keypair_to_raw_ed25519_secret_key, PortSeed,
     };
-    use crate::primitives::{MpcMessage, ParticipantId};
+    use crate::primitives::{MpcMessage, ParticipantId, PeerMessage};
     use crate::tracing::init_logging;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use std::time::Duration;
@@ -762,42 +754,62 @@ mod tests {
             sender0.wait_for_ready(2).await.unwrap();
             sender1.wait_for_ready(2).await.unwrap();
 
-            for _ in 0..100 {
+            for i in 0..100 {
+                let msg0to1 = MpcMessage {
+                    task_id: crate::primitives::MpcTaskId::KeyResharing { new_epoch: i },
+                    kind: crate::primitives::MpcMessageKind::Success,
+                };
                 sender0
                     .send(
                         participant1,
-                        MpcMessage {
-                            data: vec![vec![1, 2, 3]],
-                            task_id: crate::primitives::MpcTaskId::KeyGeneration,
-                            participants: vec![],
-                        },
-                        sender0.connection_version(participant1),
+                        msg0to1.clone(),
+                        sender0.connectivity(participant1).connection_version(),
                     )
-                    .await
                     .unwrap();
-                let msg = receiver1.receive().await.unwrap();
+                let PeerMessage::Mpc(msg) = receiver1.receive().await.unwrap() else {
+                    panic!("Expected MPC message");
+                };
                 assert_eq!(msg.from, participant0);
-                assert_eq!(msg.message.data, vec![vec![1, 2, 3]]);
+                assert_eq!(msg.message, msg0to1);
 
+                let msg1to0 = MpcMessage {
+                    task_id: crate::primitives::MpcTaskId::KeyResharing { new_epoch: i },
+                    kind: crate::primitives::MpcMessageKind::Abort("test".to_owned()),
+                };
                 sender1
                     .send(
                         participant0,
-                        MpcMessage {
-                            data: vec![vec![4, 5, 6]],
-                            task_id: crate::primitives::MpcTaskId::KeyGeneration,
-                            participants: vec![],
-                        },
-                        sender1.connection_version(participant0),
+                        msg1to0.clone(),
+                        sender1.connectivity(participant0).connection_version(),
                     )
-                    .await
                     .unwrap();
 
-                let msg = receiver0.receive().await.unwrap();
+                let PeerMessage::Mpc(msg) = receiver0.receive().await.unwrap() else {
+                    panic!("Expected MPC message");
+                };
                 assert_eq!(msg.from, participant1);
-                assert_eq!(msg.message.data, vec![vec![4, 5, 6]]);
+                assert_eq!(msg.message, msg1to0);
             }
         })
         .await;
+    }
+
+    fn all_alive_participant_ids(sender: &impl MeshNetworkTransportSender) -> Vec<ParticipantId> {
+        let mut result = Vec::new();
+        for participant in sender.all_participant_ids() {
+            if participant == sender.my_participant_id() {
+                continue;
+            }
+            if sender
+                .connectivity(participant)
+                .is_bidirectionally_connected()
+            {
+                result.push(participant);
+            }
+        }
+        result.push(sender.my_participant_id());
+        result.sort();
+        result
     }
 
     #[tokio::test]
@@ -854,13 +866,13 @@ mod tests {
                 .map(|p| p.id)
                 .collect();
             assert_eq!(
-                sender0.all_alive_participant_ids(),
+                all_alive_participant_ids(&sender0),
                 sorted(&[ids[0], ids[1], ids[2]]),
             );
-            assert_eq!(sender1.all_alive_participant_ids(), sorted(&ids));
-            assert_eq!(sender2.all_alive_participant_ids(), sorted(&ids));
+            assert_eq!(all_alive_participant_ids(&sender1), sorted(&ids));
+            assert_eq!(all_alive_participant_ids(&sender2), sorted(&ids));
             assert_eq!(
-                sender3.all_alive_participant_ids(),
+                all_alive_participant_ids(&sender3),
                 sorted(&[ids[1], ids[2], ids[3]]),
             );
 
@@ -868,15 +880,15 @@ mod tests {
             drop((sender1, receiver1));
             tokio::time::sleep(Duration::from_secs(2)).await;
             assert_eq!(
-                sender0.all_alive_participant_ids(),
+                all_alive_participant_ids(&sender0),
                 sorted(&[ids[0], ids[2]])
             );
             assert_eq!(
-                sender2.all_alive_participant_ids(),
+                all_alive_participant_ids(&sender2),
                 sorted(&[ids[0], ids[2], ids[3]])
             );
             assert_eq!(
-                sender3.all_alive_participant_ids(),
+                all_alive_participant_ids(&sender3),
                 sorted(&[ids[2], ids[3]])
             );
 
@@ -889,13 +901,13 @@ mod tests {
             sender2.wait_for_ready(4).await.unwrap();
             sender3.wait_for_ready(3).await.unwrap();
             assert_eq!(
-                sender0.all_alive_participant_ids(),
+                all_alive_participant_ids(&sender0),
                 sorted(&[ids[0], ids[1], ids[2]]),
             );
-            assert_eq!(sender1.all_alive_participant_ids(), sorted(&ids));
-            assert_eq!(sender2.all_alive_participant_ids(), sorted(&ids));
+            assert_eq!(all_alive_participant_ids(&sender1), sorted(&ids));
+            assert_eq!(all_alive_participant_ids(&sender2), sorted(&ids));
             assert_eq!(
-                sender3.all_alive_participant_ids(),
+                all_alive_participant_ids(&sender3),
                 sorted(&[ids[1], ids[2], ids[3]]),
             );
         })

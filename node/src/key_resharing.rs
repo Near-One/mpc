@@ -1,11 +1,12 @@
 use crate::config::MpcConfig;
 use crate::indexer::participants::ContractResharingState;
 use crate::keyshare::{KeyshareStorage, RootKeyshareData};
-use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+use crate::network::{MeshNetworkClient, NetworkTaskChannel, NetworkTaskChannelWrapper};
 use crate::primitives::{MpcTaskId, ParticipantId};
 use crate::protocol::run_protocol;
 use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
+use futures::FutureExt;
 use k256::elliptic_curve::sec1::FromEncodedPoint;
 use k256::{AffinePoint, EncodedPoint, Scalar, Secp256k1};
 use std::sync::Arc;
@@ -20,7 +21,7 @@ use tokio::sync::mpsc;
 ///       the old threshold; or
 ///     - the threshold is larger than the number of participants.
 pub async fn run_key_resharing(
-    channel: NetworkTaskChannel,
+    channel: &mut NetworkTaskChannel,
     me: ParticipantId,
     threshold: usize,
     old_participants: &[ParticipantId],
@@ -29,7 +30,7 @@ pub async fn run_key_resharing(
     public_key: AffinePoint,
 ) -> anyhow::Result<Scalar> {
     let new_participants = channel
-        .participants
+        .participants()
         .iter()
         .copied()
         .map(Participant::from)
@@ -50,7 +51,7 @@ pub async fn run_key_resharing(
         my_share,
         public_key,
     )?;
-    run_protocol("key resharing", channel, me, protocol).await
+    run_protocol("key resharing", channel, protocol).await
 }
 
 /// Performs the key resharing protocol. Retrieves the current keyshare
@@ -63,7 +64,7 @@ pub async fn run_key_resharing_client(
     state: ContractResharingState,
     my_share: Option<Scalar>,
     keyshare_storage: Box<dyn KeyshareStorage>,
-    mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
+    mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannelWrapper>,
 ) -> anyhow::Result<()> {
     let my_participant_id = client.my_participant_id();
     let is_leader = my_participant_id
@@ -83,10 +84,10 @@ pub async fn run_key_resharing_client(
     } else {
         loop {
             let channel = channel_receiver.recv().await.unwrap();
-            if channel.task_id != task_id {
+            if channel.task_id() != task_id {
                 tracing::info!(
                     "Received task ID is not key resharing: {:?}; ignoring.",
-                    channel.task_id
+                    channel.task_id()
                 );
                 continue;
             }
@@ -94,21 +95,28 @@ pub async fn run_key_resharing_client(
         }
     };
     let public_key = public_key_to_affine_point(state.public_key)?;
-    let new_keyshare = run_key_resharing(
-        channel,
-        my_participant_id,
-        config.participants.threshold as usize,
-        &state
-            .old_participants
-            .participants
-            .iter()
-            .map(|p| p.id)
-            .collect::<Vec<_>>(),
-        state.old_participants.threshold as usize,
-        my_share,
-        public_key,
-    )
-    .await?;
+    let new_keyshare = channel
+        .perform_leader_centric_computation(false, move |channel| {
+            async move {
+                run_key_resharing(
+                    channel,
+                    my_participant_id,
+                    config.participants.threshold as usize,
+                    &state
+                        .old_participants
+                        .participants
+                        .iter()
+                        .map(|p| p.id)
+                        .collect::<Vec<_>>(),
+                    state.old_participants.threshold as usize,
+                    my_share,
+                    public_key,
+                )
+                .await
+            }
+            .boxed()
+        })
+        .await?;
     keyshare_storage
         .store(&RootKeyshareData::new(
             state.old_epoch + 1,
@@ -144,10 +152,11 @@ pub fn public_key_to_affine_point(key: near_crypto::PublicKey) -> anyhow::Result
 mod tests {
     use super::run_key_resharing;
     use crate::network::testing::run_test_clients;
-    use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+    use crate::network::{MeshNetworkClient, NetworkTaskChannelWrapper};
     use crate::primitives::{MpcTaskId, ParticipantId};
     use crate::tests::TestGenerators;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
+    use futures::FutureExt;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -162,42 +171,50 @@ mod tests {
         let mut new_participants = gen.participant_ids();
         new_participants.push(ParticipantId::from_raw(rand::random()));
 
-        let key_resharing_client_runner =
-            move |client: Arc<MeshNetworkClient>,
-                  mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>| {
-                let client = client.clone();
-                let participant_id = client.my_participant_id();
-                let all_participant_ids = client.all_participant_ids();
-                let keyshare = keygens.get(&participant_id.into()).map(|k| k.private_share);
-                let old_participants = old_participants.clone();
+        let key_resharing_client_runner = move |client: Arc<MeshNetworkClient>,
+                                                mut channel_receiver: mpsc::UnboundedReceiver<
+            NetworkTaskChannelWrapper,
+        >| {
+            let client = client.clone();
+            let participant_id = client.my_participant_id();
+            let all_participant_ids = client.all_participant_ids();
+            let keyshare = keygens.get(&participant_id.into()).map(|k| k.private_share);
+            let old_participants = old_participants.clone();
 
-                async move {
-                    // We'll have the first participant be the leader.
-                    let channel = if participant_id == all_participant_ids[0] {
-                        client.new_channel_for_task(
-                            MpcTaskId::KeyGeneration,
-                            client.all_participant_ids(),
-                        )?
-                    } else {
-                        channel_receiver
-                            .recv()
+            async move {
+                // We'll have the first participant be the leader.
+                let channel = if participant_id == all_participant_ids[0] {
+                    client.new_channel_for_task(
+                        MpcTaskId::KeyGeneration,
+                        client.all_participant_ids(),
+                    )?
+                } else {
+                    channel_receiver
+                        .recv()
+                        .await
+                        .ok_or_else(|| anyhow::anyhow!("No channel"))?
+                };
+                let key = channel
+                    .perform_leader_centric_computation(false, move |channel| {
+                        async move {
+                            run_key_resharing(
+                                channel,
+                                participant_id,
+                                THRESHOLD,
+                                &old_participants,
+                                THRESHOLD,
+                                keyshare,
+                                pubkey,
+                            )
                             .await
-                            .ok_or_else(|| anyhow::anyhow!("No channel"))?
-                    };
-                    let key = run_key_resharing(
-                        channel,
-                        participant_id,
-                        THRESHOLD,
-                        &old_participants,
-                        THRESHOLD,
-                        keyshare,
-                        pubkey,
-                    )
+                        }
+                        .boxed()
+                    })
                     .await?;
 
-                    anyhow::Ok(key)
-                }
-            };
+                anyhow::Ok(key)
+            }
+        };
 
         start_root_task_with_periodic_dump(async move {
             let results = run_test_clients(new_participants, key_resharing_client_runner)

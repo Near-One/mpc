@@ -1,11 +1,12 @@
 use crate::config::MpcConfig;
 use crate::keyshare::{KeyshareStorage, RootKeyshareData};
-use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+use crate::network::{MeshNetworkClient, NetworkTaskChannel, NetworkTaskChannelWrapper};
 use crate::primitives::{MpcTaskId, ParticipantId};
 use crate::protocol::run_protocol;
 use anyhow::Context;
 use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
+use futures::FutureExt;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{AffinePoint, Secp256k1};
 use std::sync::Arc;
@@ -14,18 +15,18 @@ use tokio::sync::mpsc;
 /// Runs the key generation protocol, returning the key generated.
 /// This protocol is identical for the leader and the followers.
 pub async fn run_key_generation(
-    channel: NetworkTaskChannel,
+    channel: &mut NetworkTaskChannel,
     me: ParticipantId,
     threshold: usize,
 ) -> anyhow::Result<KeygenOutput<Secp256k1>> {
     let cs_participants = channel
-        .participants
+        .participants()
         .iter()
         .copied()
         .map(Participant::from)
         .collect::<Vec<_>>();
     let protocol = cait_sith::keygen::<Secp256k1>(&cs_participants, me.into(), threshold)?;
-    run_protocol("key generation", channel, me, protocol).await
+    run_protocol("key generation", channel, protocol).await
 }
 
 /// Performs the key generation protocol, saving the keyshare to disk.
@@ -36,7 +37,7 @@ pub async fn run_key_generation_client(
     config: Arc<MpcConfig>,
     client: Arc<MeshNetworkClient>,
     keyshare_storage: Box<dyn KeyshareStorage>,
-    mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
+    mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannelWrapper>,
 ) -> anyhow::Result<()> {
     if keyshare_storage.load().await?.is_some() {
         anyhow::bail!("Keyshare already exists, refusing to run key generation");
@@ -56,22 +57,26 @@ pub async fn run_key_generation_client(
     } else {
         loop {
             let channel = channel_receiver.recv().await.unwrap();
-            if channel.task_id != MpcTaskId::KeyGeneration {
+            if channel.task_id() != MpcTaskId::KeyGeneration {
                 tracing::info!(
                     "Received task ID is not key generation: {:?}; ignoring.",
-                    channel.task_id
+                    channel.task_id()
                 );
                 continue;
             }
             break channel;
         }
     };
-    let key = run_key_generation(
-        channel,
-        my_participant_id,
-        config.participants.threshold as usize,
-    )
-    .await?;
+    let key = channel
+        .perform_leader_centric_computation(false, move |channel| {
+            run_key_generation(
+                channel,
+                my_participant_id,
+                config.participants.threshold as usize,
+            )
+            .boxed()
+        })
+        .await?;
     keyshare_storage
         .store(&RootKeyshareData::new(0, key.clone()))
         .await?;
@@ -91,11 +96,12 @@ pub fn affine_point_to_public_key(point: AffinePoint) -> anyhow::Result<near_cry
 mod tests {
     use super::run_key_generation;
     use crate::network::testing::run_test_clients;
-    use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+    use crate::network::{MeshNetworkClient, NetworkTaskChannelWrapper};
     use crate::primitives::MpcTaskId;
     use crate::tests::TestGenerators;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use cait_sith::KeygenOutput;
+    use futures::FutureExt;
     use k256::Secp256k1;
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -116,7 +122,7 @@ mod tests {
 
     async fn run_keygen_client(
         client: Arc<MeshNetworkClient>,
-        mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
+        mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannelWrapper>,
     ) -> anyhow::Result<KeygenOutput<Secp256k1>> {
         let participant_id = client.my_participant_id();
         let all_participant_ids = client.all_participant_ids();
@@ -130,7 +136,11 @@ mod tests {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("No channel"))?
         };
-        let key = run_key_generation(channel, participant_id, 3).await?;
+        let key = channel
+            .perform_leader_centric_computation(false, move |channel| {
+                run_key_generation(channel, participant_id, 3).boxed()
+            })
+            .await?;
 
         Ok(key)
     }

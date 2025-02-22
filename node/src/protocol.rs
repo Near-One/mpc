@@ -11,20 +11,19 @@ use tokio::sync::mpsc;
 /// describing how many messages are sent and received to each participant.
 pub async fn run_protocol<T>(
     name: &'static str,
-    mut channel: NetworkTaskChannel,
-    me: ParticipantId,
+    channel: &mut NetworkTaskChannel,
     mut protocol: impl Protocol<Output = T>,
 ) -> anyhow::Result<T> {
     let counters = Arc::new(MessageCounters::new(
         name.to_string(),
-        &channel.participants,
+        channel.participants(),
     ));
     let mut queue_senders: HashMap<ParticipantId, mpsc::UnboundedSender<BatchedMessages>> =
         HashMap::new();
     let mut queue_receivers: HashMap<ParticipantId, mpsc::UnboundedReceiver<BatchedMessages>> =
         HashMap::new();
 
-    for p in &channel.participants {
+    for p in channel.participants() {
         let (send, recv) = mpsc::unbounded_channel();
         queue_senders.insert(*p, send);
         queue_receivers.insert(*p, recv);
@@ -48,7 +47,6 @@ pub async fn run_protocol<T>(
     let sending_handle = {
         let counters = counters.clone();
         let sender = channel.sender();
-        let participants = channel.participants.clone();
         tracking::spawn_checked("send messages", async move {
             // One future for each recipient. For the same recipient it is OK to send messages
             // serially, but for multiple recipients we want them to not block each other.
@@ -58,11 +56,10 @@ pub async fn run_protocol<T>(
                 .map(move |(participant_id, mut receiver)| {
                     let sender = sender.clone();
                     let counters = counters.clone();
-                    let participants = participants.clone();
                     async move {
                         while let Some(messages) = receiver.recv().await {
                             let num_messages = messages.len();
-                            sender(participant_id, messages, participants.clone()).await?;
+                            sender.send(participant_id, messages)?;
                             counters.sent(participant_id, num_messages);
                         }
                         anyhow::Ok(())
@@ -74,7 +71,8 @@ pub async fn run_protocol<T>(
         .map_err(anyhow::Error::from)
     };
 
-    let participants = channel.participants.clone();
+    let participants = channel.participants().to_vec();
+    let my_participant_id = channel.my_participant_id();
     let computation_handle = async move {
         loop {
             let mut messages_to_send: HashMap<ParticipantId, _> = HashMap::new();
@@ -83,7 +81,7 @@ pub async fn run_protocol<T>(
                     Action::Wait => break None,
                     Action::SendMany(vec) => {
                         for participant in &participants {
-                            if participant == &me {
+                            if participant == &my_participant_id {
                                 continue;
                             }
                             messages_to_send
@@ -128,9 +126,9 @@ pub async fn run_protocol<T>(
             counters.set_receiving();
 
             let msg = channel.receive().await?;
-            counters.received(msg.from, msg.message.data.len());
+            counters.received(msg.from, msg.data.len());
 
-            for one_msg in msg.message.data {
+            for one_msg in msg.data {
                 protocol.message(msg.from.into(), one_msg);
             }
         }

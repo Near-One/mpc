@@ -142,26 +142,24 @@ impl<I: Send + Sync + 'static, O: Send + Sync + 'static> NodeConnectivity<I, O> 
         outgoing.version() != version.outgoing || incoming.version() != version.incoming
     }
 
-    /// Wait for the outgoing connection to be established, if it is not already
-    /// established. If the connection was no longer the expected version,
-    /// returns an error. Otherwise returns the connection object (which may
-    /// be used to send a message).
-    pub async fn wait_for_outgoing_connection(
+    /// Returns the current outgoing connection, without caring about what connection
+    /// version it has. Returns None if there is no current connection.
+    ///
+    /// This is used for sending best-effort update messages.
+    pub fn any_outgoing_connection(&self) -> Option<Arc<I>> {
+        let current = self.outgoing_receiver.borrow();
+        current.connection.upgrade()
+    }
+
+    /// Returns the outgoing connection, asserting that it is the expected version.
+    /// The difference between this and wait_for_outgoing_connection is that this
+    /// method assumes that the original connection (corresponding to the passed-in
+    /// version) was already established.
+    pub fn outgoing_connection_asserting(
         &self,
         expected: ConnectionVersion,
     ) -> anyhow::Result<Arc<I>> {
         let current = self.outgoing_receiver.borrow().clone();
-        let current = if current.version + 1 == expected.outgoing {
-            // If we're waiting for the next version, that means we want to wait for a
-            // new connection to be established.
-            self.outgoing_receiver
-                .clone()
-                .wait_for(|item| item.version >= expected.outgoing)
-                .await?
-                .clone()
-        } else {
-            current
-        };
         if current.version != expected.outgoing {
             anyhow::bail!(
                 "Connection was reset (expected version {} but got {})",
@@ -176,9 +174,65 @@ impl<I: Send + Sync + 'static, O: Send + Sync + 'static> NodeConnectivity<I, O> 
     }
 }
 
+#[async_trait::async_trait]
+pub trait NodeConnectivityInterface: Send + Sync + 'static {
+    fn connection_version(&self) -> ConnectionVersion;
+    fn was_connection_interrupted(&self, version: ConnectionVersion) -> bool;
+    async fn wait_for_connection(&self, version: ConnectionVersion) -> anyhow::Result<()>;
+    fn is_bidirectionally_connected(&self) -> bool;
+}
+
+#[async_trait::async_trait]
+impl<I, O> NodeConnectivityInterface for NodeConnectivity<I, O>
+where
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+{
+    fn connection_version(&self) -> ConnectionVersion {
+        NodeConnectivity::connection_version(self)
+    }
+
+    fn was_connection_interrupted(&self, version: ConnectionVersion) -> bool {
+        NodeConnectivity::was_connection_interrupted(self, version)
+    }
+
+    async fn wait_for_connection(&self, version: ConnectionVersion) -> anyhow::Result<()> {
+        let outgoing_receiver = {
+            let outgoing = self.outgoing_receiver.borrow();
+            if outgoing.version < version.outgoing {
+                Some(self.outgoing_receiver.clone())
+            } else {
+                None
+            }
+        };
+        let incoming_receiver = {
+            let incoming = self.incoming_receiver.borrow();
+            if incoming.version < version.incoming {
+                Some(self.incoming_receiver.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(mut receiver) = outgoing_receiver {
+            receiver
+                .wait_for(|item| item.version >= version.outgoing)
+                .await?;
+        }
+        if let Some(mut receiver) = incoming_receiver {
+            receiver
+                .wait_for(|item| item.version >= version.incoming)
+                .await?;
+        }
+        Ok(())
+    }
+
+    fn is_bidirectionally_connected(&self) -> bool {
+        NodeConnectivity::is_bidirectionally_connected(self)
+    }
+}
+
 /// Convenient collection of multiple NodeConnectivity objects.
 pub struct AllNodeConnectivities<I: Send + Sync + 'static, O: Send + Sync + 'static> {
-    my_participant_id: ParticipantId,
     connectivities: HashMap<ParticipantId, Arc<NodeConnectivity<I, O>>>,
 }
 
@@ -191,10 +245,7 @@ impl<I: Send + Sync + 'static, O: Send + Sync + 'static> AllNodeConnectivities<I
             }
             connectivities.insert(*p, Arc::new(NodeConnectivity::new()));
         }
-        Self {
-            my_participant_id,
-            connectivities,
-        }
+        Self { connectivities }
     }
 
     /// Waits for `threshold` number of connections (a freebie is included for the node itself)
@@ -229,20 +280,6 @@ impl<I: Send + Sync + 'static, O: Send + Sync + 'static> AllNodeConnectivities<I
                 .collect::<Vec<_>>();
             futures::future::select_all(update_futs).await;
         }
-    }
-
-    /// Returns a list of all participant IDs that are bidirectionally connected,
-    /// including the node itself, sorted in ascending order.
-    pub fn all_alive_participant_ids(&self) -> Vec<ParticipantId> {
-        let mut result = Vec::new();
-        for (p, connectivity) in &self.connectivities {
-            if connectivity.is_bidirectionally_connected() {
-                result.push(*p);
-            }
-        }
-        result.push(self.my_participant_id);
-        result.sort();
-        result
     }
 
     pub fn get(&self, p: ParticipantId) -> anyhow::Result<Arc<NodeConnectivity<I, O>>> {
@@ -333,7 +370,6 @@ mod tests {
         let id1 = ParticipantId::from_raw(2);
         let id2 = ParticipantId::from_raw(3);
         let connectivity = AllNodeConnectivities::<usize, usize>::new(id1, &[id0, id1, id2]);
-        assert_eq!(connectivity.all_alive_participant_ids(), vec![id1]);
 
         let conn10 = Arc::new(0);
         let conn01 = Arc::new(0);
@@ -348,7 +384,6 @@ mod tests {
             .set_incoming_connection(&conn01);
 
         assert_eq!(connectivity.wait_for_ready(2).now_or_never(), Some(()));
-        assert_eq!(connectivity.all_alive_participant_ids(), vec![id0, id1]);
 
         let fut = connectivity.wait_for_ready(3);
         let MaybeReady::Future(fut) = run_future_once(fut) else {
@@ -368,9 +403,5 @@ mod tests {
             .set_incoming_connection(&conn21);
 
         assert_eq!(fut.now_or_never(), Some(()));
-        assert_eq!(
-            connectivity.all_alive_participant_ids(),
-            vec![id0, id1, id2]
-        );
     }
 }

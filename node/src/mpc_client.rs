@@ -4,7 +4,7 @@ use crate::indexer::handler::ChainSignatureRequest;
 use crate::indexer::types::{ChainRespondArgs, ChainSendTransactionRequest};
 use crate::keyshare::RootKeyshareData;
 use crate::metrics;
-use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+use crate::network::{MeshNetworkClient, NetworkTaskChannelWrapper};
 use crate::primitives::{MpcTaskId, PresignOutputWithParticipants};
 use crate::sign::{
     pre_sign_unowned, run_background_presignature_generation, sign, PresignatureStorage,
@@ -18,6 +18,7 @@ use crate::triple::{
     SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
 };
 use cait_sith::FullSignature;
+use futures::FutureExt;
 use k256::{AffinePoint, Secp256k1};
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,7 +61,7 @@ impl MpcClient {
     /// multiparty computation.
     pub async fn run(
         self,
-        channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
+        channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannelWrapper>,
         mut sign_request_receiver: tokio::sync::OwnedMutexGuard<
             mpsc::UnboundedReceiver<ChainSignatureRequest>,
         >,
@@ -194,33 +195,34 @@ impl MpcClient {
     }
 
     async fn monitor_passive_channels_inner(
-        mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
+        mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannelWrapper>,
         mpc_client: MpcClient,
     ) -> anyhow::Result<()> {
         let mut tasks = AutoAbortTaskCollection::new();
         loop {
             let channel = channel_receiver.recv().await.unwrap();
             let mpc_clone = mpc_client.clone();
-            tasks.spawn_checked(&format!("passive task {:?}", channel.task_id), async move {
-                MpcClient::process_channel_task(channel, mpc_clone).await
-            });
+            tasks.spawn_checked(
+                &format!("passive task {:?}", channel.task_id()),
+                async move { MpcClient::process_channel_task(channel, mpc_clone).await },
+            );
         }
     }
 
     async fn process_channel_task(
-        channel: NetworkTaskChannel,
+        channel: NetworkTaskChannelWrapper,
         mpc_client: MpcClient,
     ) -> anyhow::Result<()> {
         let MpcClient {
             config,
             mpc_config,
-            client,
             triple_store,
             presignature_store,
             root_keyshare,
             sign_request_store,
+            ..
         } = mpc_client;
-        match channel.task_id {
+        match channel.task_id() {
             MpcTaskId::KeyGeneration => {
                 anyhow::bail!("Key generation rejected in normal node operation");
             }
@@ -238,11 +240,13 @@ impl MpcClient {
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 let triples = timeout(
                     Duration::from_secs(config.triple.timeout_sec),
-                    run_many_triple_generation::<SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE>(
-                        channel,
-                        client.my_participant_id(),
-                        mpc_config.participants.threshold as usize,
-                    ),
+                    channel.perform_leader_centric_computation(true, move |channel| {
+                        run_many_triple_generation::<SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE>(
+                            channel,
+                            mpc_config.participants.threshold as usize,
+                        )
+                        .boxed()
+                    }),
                 )
                 .await??;
                 for (pending_triple, paired_triple) in
@@ -256,17 +260,19 @@ impl MpcClient {
                 paired_triple_id,
             } => {
                 let pending_asset = presignature_store.prepare_unowned(id);
-                let participants = channel.participants.clone();
+                let participants = channel.participants().to_vec();
                 let presignature = timeout(
                     Duration::from_secs(config.presignature.timeout_sec),
-                    pre_sign_unowned(
-                        channel,
-                        client.my_participant_id(),
-                        mpc_config.participants.threshold as usize,
-                        root_keyshare.keygen_output(),
-                        triple_store.clone(),
-                        paired_triple_id,
-                    ),
+                    channel.perform_leader_centric_computation(true, move |channel| {
+                        pre_sign_unowned(
+                            channel,
+                            mpc_config.participants.threshold as usize,
+                            root_keyshare.keygen_output(),
+                            triple_store.clone(),
+                            paired_triple_id,
+                        )
+                        .boxed()
+                    }),
                 )
                 .await??;
                 pending_asset.commit(PresignOutputWithParticipants {
@@ -293,18 +299,24 @@ impl MpcClient {
 
                 timeout(
                     Duration::from_secs(config.signature.timeout_sec),
-                    sign(
-                        channel,
-                        client.my_participant_id(),
-                        root_keyshare.keygen_output(),
-                        presignature_store
-                            .take_unowned(presignature_id)
-                            .await?
-                            .presignature,
-                        msg_hash,
-                        tweak,
-                        entropy,
-                    ),
+                    channel.perform_leader_centric_computation(false, move |channel| {
+                        async move {
+                            let presignature = presignature_store
+                                .take_unowned(presignature_id)
+                                .await?
+                                .presignature;
+                            sign(
+                                channel,
+                                root_keyshare.keygen_output(),
+                                presignature,
+                                msg_hash,
+                                tweak,
+                                entropy,
+                            )
+                            .await
+                        }
+                        .boxed()
+                    }),
                 )
                 .await??;
             }
@@ -319,22 +331,27 @@ impl MpcClient {
     ) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
         let (presignature_id, presignature) = self.presignature_store.take_owned().await;
         let sign_request = self.sign_request_store.get(id).await?;
-        let (signature, public_key) = sign(
-            self.client.new_channel_for_task(
-                MpcTaskId::Signature {
-                    id,
-                    presignature_id,
-                },
-                presignature.participants,
-            )?,
-            self.client.my_participant_id(),
-            self.root_keyshare.keygen_output(),
-            presignature.presignature,
-            sign_request.msg_hash,
-            sign_request.tweak,
-            sign_request.entropy,
-        )
-        .await?;
+        let channel = self.client.new_channel_for_task(
+            MpcTaskId::Signature {
+                id,
+                presignature_id,
+            },
+            presignature.participants,
+        )?;
+        let keygen_output = self.root_keyshare.keygen_output();
+        let (signature, public_key) = channel
+            .perform_leader_centric_computation(false, move |channel| {
+                sign(
+                    channel,
+                    keygen_output,
+                    presignature.presignature,
+                    sign_request.msg_hash,
+                    sign_request.tweak,
+                    sign_request.entropy,
+                )
+                .boxed()
+            })
+            .await?;
 
         Ok((signature, public_key))
     }
