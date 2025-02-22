@@ -30,6 +30,7 @@ mod tracing;
 mod tracking;
 mod triple;
 mod web;
+mod frost;
 
 fn main() -> anyhow::Result<()> {
     init_logging();
