@@ -3,7 +3,6 @@ pub mod errors;
 pub mod primitives;
 pub mod state;
 pub mod update;
-
 use config::{ConfigV1, ConfigV2, InitConfigV1, InitConfigV2};
 use crypto_shared::{
     derive_epsilon, derive_key, kdf::check_ec_signature, near_public_key_to_affine_point,
@@ -11,34 +10,33 @@ use crypto_shared::{
 };
 use errors::{
     ConversionError, InitError, InvalidParameters, InvalidState, PublicKeyError, RespondError,
-    SignError,
+    SignError, VersionError,
 };
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::Scalar;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
-use near_sdk::json_types::U128;
 use near_sdk::store::Vector;
 use near_sdk::{
     env, log, near_bindgen, AccountId, CryptoHash, Gas, GasWeight, NearToken, Promise,
     PromiseError, PublicKey,
 };
-use primitives::{
-    CandidateInfo, Candidates, ContractSignatureRequest, KeyEventId, KeyState, KeyStateProposal,
-    Participants, PkVotes, SignRequest, SignaturePromiseError, SignatureRequest, SignatureResult,
-    StorageKey, Votes, YieldIndex,
-};
-use state::{
-    InitializingContractStateV2, KeyStateVotes, ProtocolContractStateV2, ResharingContractStateV2,
+use primitives::{StorageKey, YieldIndex};
+use state::key_state::{DKState, KeyEventId, KeyStateProposal};
+use state::participants::{CandidateInfo, Candidates, Participants};
+use state::protocol_state_v2::{
+    InitializingContractStateV2, ProtocolContractStateV2, ResharingContractStateV2,
     RunningContractStateV2,
 };
+use state::signature::{ContractSignatureRequest, SignRequest, SignatureRequest};
+use state::votes::{KeyStateVotes, PkVotes, Votes};
 use std::cmp;
 use std::collections::BTreeMap;
 
 use crate::config::Config;
 use crate::errors::Error;
 use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
-pub use state::{
+pub use state::protocol_state::{
     InitializingContractState, ProtocolContractState, ResharingContractState, RunningContractState,
 };
 const GAS_FOR_SIGN_CALL: Gas = Gas::from_tgas(10);
@@ -48,12 +46,6 @@ const DATA_ID_REGISTER: u64 = 0;
 
 // Prepaid gas for a `return_signature_and_clean_state_on_success` call
 const RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS: Gas = Gas::from_tgas(5);
-
-// **DEPRECATED** Prepaid gas for a `clear_state_on_finish` call
-const CLEAR_STATE_ON_FINISH_CALL_GAS: Gas = Gas::from_tgas(10);
-
-// **DEPRECATED** Prepaid gas for a `return_signature_on_finish` call
-const RETURN_SIGNATURE_ON_FINISH_CALL_GAS: Gas = Gas::from_tgas(5);
 
 // Prepaid gas for a `update_config` call
 const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
@@ -71,7 +63,9 @@ impl Default for VersionedMpcContract {
         env::panic_str("Calling default not allowed.");
     }
 }
-#[derive(BorshDeserialize, BorshSerialize, Debug)]
+use near_sdk::near;
+#[near(serializers=[borsh])]
+#[derive(Debug)]
 pub struct MpcContractV2 {
     protocol_state: ProtocolContractStateV2,
     pending_requests: LookupMap<SignatureRequest, YieldIndex>,
@@ -179,12 +173,12 @@ impl MpcContractV2 {
             match &self.protocol_state {
                 ProtocolContractStateV2::Initializing(state) => {
                     return Ok(Some(RunningContractStateV2 {
-                        key_state: KeyState::from((
+                        key_state: DKState::from((
                             &state.proposed_key_state,
                             &public_key,
                             &state.current_keygen_instance.as_ref().unwrap().key_event_id,
                         )),
-                        key_state_votes: KeyStateVotes::new(),
+                        key_state_votes: KeyStateVotes::default(),
                     }));
                 }
                 _ => {
@@ -235,12 +229,6 @@ impl MpcContractV1 {
             self.config.request_timeout_blocks,
         )
     }
-    fn add_request(&mut self, request: &SignatureRequest, data_id: CryptoHash) {
-        self.request_by_block_height
-            .push((env::block_height(), request.clone()));
-        self.pending_requests
-            .insert(request, &YieldIndex { data_id });
-    }
     fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
         self.pending_requests.get(request)
     }
@@ -280,23 +268,6 @@ pub struct MpcContract {
     config: Config,
 }
 impl MpcContract {
-    fn remove_request(&mut self, request: SignatureRequest) -> Result<(), Error> {
-        if self.pending_requests.remove(&request).is_some() {
-            self.request_counter -= 1;
-            Ok(())
-        } else {
-            Err(InvalidParameters::RequestNotFound.into())
-        }
-    }
-    fn add_request(&mut self, request: &SignatureRequest, data_id: CryptoHash) {
-        if self
-            .pending_requests
-            .insert(request, &YieldIndex { data_id })
-            .is_none()
-        {
-            self.request_counter += 1;
-        }
-    }
     fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
         self.pending_requests.get(request)
     }
@@ -319,6 +290,53 @@ impl MpcContract {
     }
 }
 
+fn valid_signature_request(
+    max_key_version: u32,
+    request: &SignRequest,
+) -> Result<SignatureRequest, Error> {
+    // It's important we fail here because the MPC nodes will fail in an identical way.
+    // This allows users to get the error message
+    let payload = match Scalar::from_bytes(request.payload) {
+        Some(payload) => payload,
+        None => {
+            return Err(InvalidParameters::MalformedPayload
+                .message("Payload hash cannot be convereted to Scalar"));
+        }
+    };
+
+    if request.key_version > max_key_version {
+        return Err(SignError::UnsupportedKeyVersion.into());
+    }
+
+    // Make sure sign call will not run out of gas doing yield/resume logic
+    if env::prepaid_gas() < GAS_FOR_SIGN_CALL {
+        return Err(InvalidParameters::InsufficientGas.message(format!(
+            "Provided: {}, required: {}",
+            env::prepaid_gas(),
+            GAS_FOR_SIGN_CALL
+        )));
+    }
+
+    let predecessor = env::predecessor_account_id();
+    // Check deposit and refund if required
+    let deposit = env::attached_deposit();
+    match deposit.checked_sub(NearToken::from_yoctonear(1)) {
+        None => {
+            return Err(InvalidParameters::InsufficientDeposit.message(format!(
+                "Require a deposit of 1 yoctonear, found: {}",
+                deposit.as_yoctonear(),
+            )));
+        }
+        Some(diff) => {
+            if diff > NearToken::from_yoctonear(0) {
+                log!("refund excess deposit {diff} to {predecessor}");
+                Promise::new(predecessor.clone()).transfer(diff);
+            }
+        }
+    }
+
+    Ok(SignatureRequest::new(payload, &predecessor, &request.path))
+}
 // User contract API
 #[near_bindgen]
 impl VersionedMpcContract {
@@ -340,136 +358,45 @@ impl VersionedMpcContract {
     #[handle_result]
     #[payable]
     pub fn sign(&mut self, request: SignRequest) {
-        let SignRequest {
-            payload,
-            path,
-            key_version,
-        } = request;
-        // First, clear the state.
-        match self {
-            Self::V0(_) => {}
-            Self::V1(mpc_contract) => {
-                mpc_contract
-                    .remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
-            }
-            Self::V2(mpc_contract) => {
-                mpc_contract
-                    .remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
-            }
-        }
-        // It's important we fail here because the MPC nodes will fail in an identical way.
-        // This allows users to get the error message
-        let payload = Scalar::from_bytes(payload).ok_or(
-            InvalidParameters::MalformedPayload
-                .message("Payload hash cannot be convereted to Scalar"),
+        log!(
+            "sign: predecessor={:?}, request={:?}",
+            env::predecessor_account_id(),
+            request
         );
-        if let Err(err) = payload {
-            env::panic_str(&err.to_string())
-        }
-        let payload = payload.unwrap();
-        if key_version > self.latest_key_version() {
-            env::panic_str(&SignError::UnsupportedKeyVersion.to_string());
-        }
-        // Check deposit
-        let deposit = env::attached_deposit();
-        let required_deposit: u128 = self.experimental_signature_deposit().into();
+        // ensure the signer sent a valid signature request
+        let request = match valid_signature_request(self.latest_key_version(), &request) {
+            Err(err) => env::panic_str(&err.to_string()),
+            Ok(request) => request,
+        };
 
-        if deposit.as_yoctonear() < required_deposit {
-            env::panic_str(
-                &InvalidParameters::InsufficientDeposit
-                    .message(format!(
-                        "Attached {}, Required {}",
-                        deposit.as_yoctonear(),
-                        required_deposit,
-                    ))
-                    .to_string(),
-            );
-        }
-        // Make sure sign call will not run out of gas doing yield/resume logic
-        if env::prepaid_gas() < GAS_FOR_SIGN_CALL {
-            env::panic_str(
-                &InvalidParameters::InsufficientGas
-                    .message(format!(
-                        "Provided: {}, required: {}",
-                        env::prepaid_gas(),
-                        GAS_FOR_SIGN_CALL
-                    ))
-                    .to_string(),
-            );
-        }
+        let Self::V2(mpc_contract) = self else {
+            env::panic_str(&VersionError::Deprecated.to_string());
+        };
+        // Remove timed out requests
+        mpc_contract.remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
 
-        match self {
-            Self::V0(mpc_contract) => {
-                if mpc_contract.request_counter > 16 {
-                    env::panic_str(&SignError::RequestLimitExceeded.to_string())
-                }
-            }
-            Self::V1(_) | Self::V2(_) => {}
-        }
-        let predecessor = env::predecessor_account_id();
-        let request = SignatureRequest::new(payload, &predecessor, &path);
-        if self.request_already_exists(&request) {
+        // Check if the request already exists.
+        if mpc_contract.pending_requests.contains_key(&request) {
             env::panic_str(&SignError::PayloadCollision.to_string());
         }
-        log!(
-                "sign: predecessor={predecessor}, payload={payload:?}, path={path:?}, key_version={key_version}",
-            );
+
         env::log_str(&serde_json::to_string(&near_sdk::env::random_seed_array()).unwrap());
 
-        let required_deposit = NearToken::from_yoctonear(required_deposit);
-        let contract_signature_request = ContractSignatureRequest {
-            request,
-            requester: predecessor,
-            deposit,
-            required_deposit,
-        };
-
-        let promise_index = match self {
-            Self::V0(_) => {
-                let yield_promise = env::promise_yield_create(
-                    "clear_state_on_finish",
-                    &serde_json::to_vec(&(&contract_signature_request,)).unwrap(),
-                    CLEAR_STATE_ON_FINISH_CALL_GAS,
-                    GasWeight(0),
-                    DATA_ID_REGISTER,
-                );
-                env::promise_then(
-                    yield_promise,
-                    env::current_account_id(),
-                    "return_signature_on_finish",
-                    &[],
-                    NearToken::from_near(0),
-                    RETURN_SIGNATURE_ON_FINISH_CALL_GAS,
-                )
-            }
-            Self::V1(_) | Self::V2(_) => env::promise_yield_create(
-                "return_signature_and_clean_state_on_success",
-                &serde_json::to_vec(&(&contract_signature_request,)).unwrap(),
-                RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS,
-                GasWeight(0),
-                DATA_ID_REGISTER,
-            ),
-        };
+        let promise_index = env::promise_yield_create(
+            "return_signature_and_clean_state_on_success_v2",
+            &serde_json::to_vec(&(&request,)).unwrap(),
+            RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS,
+            GasWeight(0),
+            DATA_ID_REGISTER,
+        );
 
         // Store the request in the contract's local state
         let return_sig_id: CryptoHash = env::read_register(DATA_ID_REGISTER)
             .expect("read_register failed")
             .try_into()
             .expect("conversion to CryptoHash failed");
+        mpc_contract.add_request(&request, return_sig_id);
 
-        match self {
-            Self::V0(mpc_contract) => {
-                mpc_contract.add_request(&contract_signature_request.request, return_sig_id);
-            }
-            Self::V1(mpc_contract) => {
-                mpc_contract.add_request(&contract_signature_request.request, return_sig_id);
-                Self::refund_on_success(&contract_signature_request);
-            }
-            Self::V2(mpc_contract) => {
-                mpc_contract.add_request(&contract_signature_request.request, return_sig_id);
-                Self::refund_on_success(&contract_signature_request);
-            }
-        }
         env::promise_return(promise_index);
     }
 
@@ -514,28 +441,6 @@ impl VersionedMpcContract {
     pub const fn latest_key_version(&self) -> u32 {
         0
     }
-
-    /// This experimental function calculates the fee for a signature request.
-    /// The fee is volatile and depends on the number of pending requests.
-    /// If used on a client side, it can give outdate results.
-    pub fn experimental_signature_deposit(&self) -> U128 {
-        match self {
-            Self::V0(mpc_contract) => {
-                const CHEAP_REQUESTS: u32 = 3;
-                let pending_requests = mpc_contract.request_counter;
-                match pending_requests {
-                    0..=CHEAP_REQUESTS => U128::from(1),
-                    _ => {
-                        let expensive_requests = (pending_requests - CHEAP_REQUESTS) as u128;
-                        let price =
-                            expensive_requests * NearToken::from_millinear(50).as_yoctonear();
-                        U128::from(price)
-                    }
-                }
-            }
-            Self::V1(_) | Self::V2(_) => U128::from(1),
-        }
-    }
 }
 
 // Node API
@@ -555,52 +460,47 @@ impl VersionedMpcContract {
             &response.big_r,
             &response.s
         );
-        let protocol_state = self.mutable_state();
+        let ProtocolContractStateV2::Running(_) = self.mutable_state() else {
+            return Err(InvalidState::ProtocolStateNotRunning.into());
+        };
+        // generate the expected public key
+        let pk = self.public_key()?;
+        let expected_public_key =
+            derive_key(near_public_key_to_affine_point(pk), request.epsilon.scalar);
 
-        if let ProtocolContractStateV2::Running(_) = protocol_state {
-            // generate the expected public key
-            let pk = self.public_key()?;
-            let expected_public_key =
-                derive_key(near_public_key_to_affine_point(pk), request.epsilon.scalar);
-
-            // Check the signature is correct
-            if check_ec_signature(
-                &expected_public_key,
-                &response.big_r.affine_point,
-                &response.s.scalar,
-                request.payload_hash.scalar,
-                response.recovery_id,
-            )
-            .is_err()
-            {
-                return Err(RespondError::InvalidSignature.into());
-            }
-            // First get the yield promise of the (potentially timed out) request.
-            if let Some(YieldIndex { data_id }) = self.get_pending_request(&request) {
-                // Only then clean up the state.
-                // This order of execution ensures that the state is cleaned of the current
-                // response, even if it belongs to an already timed out signature request.
-                match self {
-                    Self::V0(_) => {}
-                    Self::V1(mpc_contract) => {
-                        mpc_contract.remove_timed_out_requests(
-                            mpc_contract.config.max_num_requests_to_remove,
-                        );
-                    }
-                    Self::V2(mpc_contract) => {
-                        mpc_contract.remove_timed_out_requests(
-                            mpc_contract.config.max_num_requests_to_remove,
-                        );
-                    }
+        // Check the signature is correct
+        if check_ec_signature(
+            &expected_public_key,
+            &response.big_r.affine_point,
+            &response.s.scalar,
+            request.payload_hash.scalar,
+            response.recovery_id,
+        )
+        .is_err()
+        {
+            return Err(RespondError::InvalidSignature.into());
+        }
+        // First get the yield promise of the (potentially timed out) request.
+        if let Some(YieldIndex { data_id }) = self.get_pending_request(&request) {
+            // Only then clean up the state.
+            // This order of execution ensures that the state is cleaned of the current
+            // response, even if it belongs to an already timed out signature request.
+            match self {
+                Self::V0(_) => {}
+                Self::V1(mpc_contract) => {
+                    mpc_contract
+                        .remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
                 }
-                // Finally, resolve the promise. This will have no effect if the request already timed.
-                env::promise_yield_resume(&data_id, &serde_json::to_vec(&response).unwrap());
-                Ok(())
-            } else {
-                Err(InvalidParameters::RequestNotFound.into())
+                Self::V2(mpc_contract) => {
+                    mpc_contract
+                        .remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
+                }
             }
+            // Finally, resolve the promise. This will have no effect if the request already timed.
+            env::promise_yield_resume(&data_id, &serde_json::to_vec(&response).unwrap());
+            Ok(())
         } else {
-            Err(InvalidState::ProtocolStateNotRunning.into())
+            Err(InvalidParameters::RequestNotFound.into())
         }
     }
 
@@ -794,7 +694,7 @@ impl VersionedMpcContract {
         };
 
         // Not enough votes, wait for more.
-        if (votes.len() as u64) < threshold {
+        if (votes.len() as u64) < threshold.value() {
             return Ok(false);
         }
 
@@ -938,46 +838,8 @@ impl VersionedMpcContract {
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
-    /// **DEPRECATED**: Better use `return_signature_and_clean_state_on_success`
-    #[private]
-    #[handle_result]
-    pub fn return_signature_on_finish(
-        &mut self,
-        #[callback_unwrap] signature: SignatureResult<SignatureResponse, SignaturePromiseError>,
-    ) -> Result<SignatureResponse, Error> {
-        if let Self::V1(_) = self {
-            log!("This function is deprecated and shall only be called to handle signature requests submitted to legacy V0 contract");
-        }
-        match signature {
-            SignatureResult::Ok(signature) => {
-                log!("Signature is ready.");
-                Ok(signature)
-            }
-            SignatureResult::Err(_) => Err(SignError::Timeout.into()),
-        }
-    }
 
-    /// DEPRECATED this function can be removed after update to V1
-    fn refund_on_fail(request: &ContractSignatureRequest) {
-        let amount = request.deposit;
-        let to = request.requester.clone();
-        log!("refund {amount} to {to} due to fail");
-        Promise::new(to).transfer(amount);
-    }
-
-    fn refund_on_success(request: &ContractSignatureRequest) {
-        let deposit = request.deposit;
-        let required = request.required_deposit;
-        if let Some(diff) = deposit.checked_sub(required) {
-            if diff > NearToken::from_yoctonear(0) {
-                let to = request.requester.clone();
-                log!("refund more than required deposit {diff} to {to}");
-                Promise::new(to).transfer(diff);
-            }
-        }
-    }
-
-    /// Upon success, removes the signature from state and returns it.
+    /// **DEPRECATED after V2** Upon success, removes the signature from state and returns it.
     /// Returns an Error if the signature timed out.
     /// Note that timed out signatures will need to be cleaned up from the state by a different function.
     #[private]
@@ -988,7 +850,7 @@ impl VersionedMpcContract {
         #[callback_result] signature: Result<SignatureResponse, PromiseError>,
     ) -> Result<SignatureResponse, Error> {
         match self {
-            Self::V0(_) => {
+            Self::V0(_) | Self::V2(_) => {
                 panic!("not supposed to be called");
             }
             Self::V1(mpc_contract) => match signature {
@@ -1001,92 +863,44 @@ impl VersionedMpcContract {
                 }
                 Err(_) => Err(SignError::Timeout.into()),
             },
-            Self::V2(mpc_contract) => match signature {
-                Ok(signature) => {
-                    log!("Signature is ready.");
-                    mpc_contract
-                        .pending_requests
-                        .remove(&contract_signature_request.request);
-                    Ok(signature)
-                }
-                Err(_) => Err(SignError::Timeout.into()),
-            },
         }
     }
 
-    /// **DEPRECATED** use `return_signature_and_clean_state_on_success` instead
-    /// This function removes the signature request from the contract state and:
-    /// V0: executes any refunds and returns the Signature Result / an error
-    /// Todo: delete this function
+    /// Upon success, removes the signature from state and returns it.
+    /// Returns an Error if the signature timed out.
+    /// Note that timed out signatures will need to be cleaned up from the state by a different function.
     #[private]
-    #[handle_result]
-    pub fn clear_state_on_finish(
+    #[handle_result] // question: is this bad? should we remove this?
+    pub fn return_signature_and_clean_state_on_success_v2(
         &mut self,
-        contract_signature_request: ContractSignatureRequest,
+        request: SignatureRequest,
         #[callback_result] signature: Result<SignatureResponse, PromiseError>,
-    ) -> Result<SignatureResult<SignatureResponse, SignaturePromiseError>, Error> {
-        let result = match self {
-            Self::V0(mpc_contract) => {
-                mpc_contract.remove_request(contract_signature_request.request.clone())
-            }
-            Self::V1(mpc_contract) => {
-                log!("This function is deprecated and shall only be called to handle signature requests submitted to V0 contract");
-                match mpc_contract
-                    .pending_requests
-                    .remove(&contract_signature_request.request)
-                {
-                    Some(_) => Ok(()),
-                    None => Err(InvalidParameters::RequestNotFound.into()),
-                }
-            }
-            Self::V2(_) => env::panic_str("This function is deprecated."), // Todo: delete the
-                                                                           // function
+    ) -> Result<SignatureResponse, Error> {
+        let Self::V2(mpc_contract) = self else {
+            return Err(VersionError::VersionMismatch.into());
         };
-        if result.is_err() {
-            // refund must happen in clear_state_on_finish, because regardless of this success or fail
-            // the promise created by clear_state_on_finish is executed, because of callback_unwrap and
-            // promise_then. but if `return_signature_on_finish` fail (returns error), the promise created
-            // by it won't execute.
-            Self::refund_on_fail(&contract_signature_request);
-            result?;
-        }
-
         match signature {
             Ok(signature) => {
-                Self::refund_on_success(&contract_signature_request);
-                Ok(SignatureResult::Ok(signature))
+                log!("Signature is ready.");
+                mpc_contract.pending_requests.remove(&request);
+                Ok(signature)
             }
-            Err(_) => {
-                Self::refund_on_fail(&contract_signature_request);
-                Ok(SignatureResult::Err(SignaturePromiseError::Failed))
-            }
+            Err(_) => Err(SignError::Timeout.into()),
         }
     }
 
     #[private]
     pub fn update_config(&mut self, config: ConfigV2) {
-        match self {
-            Self::V0(_) | Self::V1(_) => {
-                panic!("not implemented");
-            }
-            Self::V2(mpc_contract) => {
-                mpc_contract.config = config;
-            }
-        }
+        let Self::V2(mpc_contract) = self else {
+            env::panic_str(&VersionError::VersionMismatch.to_string());
+        };
+        mpc_contract.config = config;
     }
 
     fn mutable_state(&mut self) -> &mut ProtocolContractStateV2 {
         match self {
             Self::V0(_) | Self::V1(_) => env::panic_str("deprecated"),
             Self::V2(ref mut mpc_contract) => &mut mpc_contract.protocol_state,
-        }
-    }
-
-    fn request_already_exists(&self, request: &SignatureRequest) -> bool {
-        match self {
-            Self::V0(mpc_contract) => mpc_contract.pending_requests.contains_key(request),
-            Self::V1(mpc_contract) => mpc_contract.pending_requests.contains_key(request),
-            Self::V2(mpc_contract) => mpc_contract.pending_requests.contains_key(request),
         }
     }
 

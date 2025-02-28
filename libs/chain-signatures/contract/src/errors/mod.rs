@@ -1,6 +1,12 @@
 use std::borrow::Cow;
 mod impls;
-
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum VersionError {
+    #[error("This functionality is deprecated, please use the newest contract version.")]
+    Deprecated,
+    #[error("This functionality requires another contract version")]
+    VersionMismatch,
+}
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SignError {
     #[error("Signature request has timed out.")]
@@ -177,6 +183,9 @@ pub enum ErrorKind {
     // Invalid Resharing
     #[error("{0}")]
     ReshareError(#[from] ReshareError),
+    // Invalid Resharing
+    #[error("{0}")]
+    VersionError(#[from] VersionError),
 }
 
 #[derive(Debug, thiserror::Error)]
