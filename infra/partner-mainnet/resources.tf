@@ -1,7 +1,7 @@
 terraform {
   backend "gcs" {
-    bucket = "multichain-terraform-{your_entity_name}"
-    prefix = "state/mainnet"
+    bucket = "nearone-terraform"
+    prefix = "state/infra/multichain/mainnet"
   }
 
   required_providers {
