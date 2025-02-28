@@ -4,7 +4,7 @@ use std::fmt;
 use super::{
     ConversionError, Error, ErrorKind, ErrorRepr, InitError, InvalidCandidateSet,
     InvalidParameters, InvalidState, InvalidThreshold, JoinError, PublicKeyError, ReshareError,
-    RespondError, SignError, VoteError,
+    RespondError, SignError, VersionError, VoteError,
 };
 
 impl Error {
@@ -148,24 +148,29 @@ impl From<InvalidThreshold> for Error {
         Self::simple(ErrorKind::InvalidThreshold(code))
     }
 }
-impl InvalidThreshold {
-    pub(crate) fn message<T>(self, msg: T) -> Error
-    where
-        T: Into<Cow<'static, str>>,
-    {
-        Error::message(ErrorKind::InvalidThreshold(self), msg)
-    }
-}
+//impl InvalidThreshold {
+//    pub(crate) fn message<T>(self, msg: T) -> Error
+//    where
+//        T: Into<Cow<'static, str>>,
+//    {
+//        Error::message(ErrorKind::InvalidThreshold(self), msg)
+//    }
+//}
 impl From<InvalidCandidateSet> for Error {
     fn from(code: InvalidCandidateSet) -> Self {
         Self::simple(ErrorKind::InvalidCandidateSet(code))
     }
 }
-impl InvalidCandidateSet {
-    pub(crate) fn message<T>(self, msg: T) -> Error
-    where
-        T: Into<Cow<'static, str>>,
-    {
-        Error::message(ErrorKind::InvalidCandidateSet(self), msg)
+//impl InvalidCandidateSet {
+//    pub(crate) fn message<T>(self, msg: T) -> Error
+//    where
+//        T: Into<Cow<'static, str>>,
+//    {
+//        Error::message(ErrorKind::InvalidCandidateSet(self), msg)
+//    }
+//}
+impl From<VersionError> for Error {
+    fn from(code: VersionError) -> Self {
+        Self::simple(ErrorKind::VersionError(code))
     }
 }

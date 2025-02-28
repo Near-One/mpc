@@ -1,16 +1,79 @@
-use borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, log, AccountId, PublicKey};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use near_sdk::{env, log, near, AccountId, PublicKey};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::errors::{Error, InvalidCandidateSet, ReshareError};
 use crate::errors::{InvalidState, VoteError};
-use crate::primitives::{
-    Candidates, KeyEventId, KeyState, KeyStateProposal, KeygenInstance, ParticipantInfoV2,
-    Participants, PkVotes, ReshareInstance, Votes,
+use crate::{
+    InitializingContractState, ProtocolContractState, ResharingContractState, RunningContractState,
 };
 
-#[derive(BorshDeserialize, BorshSerialize, Debug, Serialize, Deserialize)]
+use super::key_state::{DKState, KeyEventId, KeyStateProposal};
+use super::votes::{KeyStateVotes, PkVotes};
+
+#[near(serializers=[borsh, json])]
+#[derive(Debug)]
+pub struct KeygenInstance {
+    pub key_event_id: KeyEventId,
+    pub participants_completed: BTreeMap<AccountId, PublicKey>,
+    pub pk_votes: PkVotes,
+    pub active: bool,
+}
+impl KeygenInstance {
+    pub fn active(&self, timeout_in_blocks: u64) -> bool {
+        self.active && !self.key_event_id.timed_out(timeout_in_blocks)
+    }
+    pub fn new(key_event_id: KeyEventId) -> Self {
+        KeygenInstance {
+            key_event_id,
+            participants_completed: BTreeMap::new(),
+            pk_votes: PkVotes::new(),
+            active: true,
+        }
+    }
+    /// Adds `account_id` to the current set of votes and returns the number of votes collected.
+    pub fn vote_completed(
+        &mut self,
+        account_id: AccountId,
+        public_key: PublicKey,
+    ) -> Result<u64, Error> {
+        if self
+            .participants_completed
+            .insert(account_id.clone(), public_key.clone())
+            .is_some()
+        {
+            return Err(VoteError::VoteAlreadySubmitted.into()); // todo: should we just remove?
+        }
+        self.pk_votes.entry(public_key.clone()).insert(account_id);
+        Ok(self.pk_votes.entry(public_key).len() as u64)
+    }
+}
+#[near(serializers=[borsh, json])]
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReshareInstance {
+    pub key_event_id: KeyEventId,
+    pub participants_completed: BTreeSet<AccountId>,
+    pub active: bool,
+}
+
+impl ReshareInstance {
+    pub fn active(&self, timeout_in_blocks: u64) -> bool {
+        self.active && !self.key_event_id.timed_out(timeout_in_blocks)
+    }
+    pub fn new(key_event_id: KeyEventId) -> Self {
+        ReshareInstance {
+            key_event_id,
+            participants_completed: BTreeSet::new(),
+            active: true,
+        }
+    }
+    /// Adds `account_id` to the current set of votes and returns the number of votes collected.
+    pub fn vote_completed(&mut self, account_id: AccountId) -> u64 {
+        self.participants_completed.insert(account_id);
+        self.participants_completed.len() as u64
+    }
+}
+#[near(serializers=[borsh, json])]
+#[derive(Debug)]
 pub struct InitializingContractStateV2 {
     pub proposed_key_state: KeyStateProposal,
     pub current_keygen_instance: Option<KeygenInstance>,
@@ -38,7 +101,7 @@ impl InitializingContractStateV2 {
         }
         // Finally, vote for the reshare instance
         let n_votes = current.vote_completed(signer, public_key)?;
-        if self.proposed_key_state.key_event_threshold <= n_votes {
+        if self.proposed_key_state.key_event_threshold().value() <= n_votes {
             return Ok(true);
         }
         Ok(false)
@@ -52,7 +115,7 @@ impl InitializingContractStateV2 {
     }
     fn last_uid(&self) -> u64 {
         if let Some(current_keygen) = &self.current_keygen_instance {
-            current_keygen.key_event_id.random_uid
+            current_keygen.key_event_id.uid()
         } else {
             0
         }
@@ -106,69 +169,17 @@ impl From<&InitializingContractState> for InitializingContractStateV2 {
     }
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Debug, Serialize, Deserialize)]
-pub struct KeyStateVotes {
-    pub votes_by_proposal: BTreeMap<KeyStateProposal, HashSet<AccountId>>,
-    pub proposal_by_account: BTreeMap<AccountId, KeyStateProposal>,
-}
-
-impl KeyStateVotes {
-    /// removes the vote submitted by `account_id` from the state.
-    /// returns true if the vote was removed and false else.
-    pub fn remove_vote(&mut self, account_id: &AccountId) -> bool {
-        if let Some(proposal) = self.proposal_by_account.remove(account_id) {
-            self.votes_by_proposal
-                .get_mut(&proposal)
-                .map_or(false, |vote_set| vote_set.remove(account_id));
-        }
-        false
-    }
-    /// Registers a vote by `account_id` for `proposal`, inserts `proposal` if necessary.
-    /// Returns an Error if `account_id` already registered a vote.
-    /// Returns the number of votes for the current proposal.
-    pub fn vote(
-        &mut self,
-        proposal: &KeyStateProposal,
-        account_id: &AccountId,
-    ) -> Result<u64, Error> {
-        if self
-            .proposal_by_account
-            .insert(account_id.clone(), proposal.clone())
-            .is_some()
-        {
-            return Err(VoteError::ParticipantVoteAlreadyRegistered.into());
-        }
-        Ok(self
-            .votes_by_proposal
-            .entry(proposal.clone())
-            .and_modify(|votes| {
-                votes.insert(account_id.clone());
-            })
-            .or_insert({
-                let mut x = HashSet::new();
-                x.insert(account_id.clone());
-                x
-            })
-            .len() as u64)
-    }
-    pub fn new() -> Self {
-        KeyStateVotes {
-            votes_by_proposal: BTreeMap::new(),
-            proposal_by_account: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(BorshDeserialize, BorshSerialize, Debug, Serialize, Deserialize)]
+#[near(serializers=[borsh, json])]
+#[derive(Debug)]
 pub struct RunningContractStateV2 {
-    pub key_state: KeyState,
+    pub key_state: DKState,
     pub key_state_votes: KeyStateVotes,
 }
 impl From<&RunningContractState> for RunningContractStateV2 {
     fn from(state: &RunningContractState) -> Self {
         RunningContractStateV2 {
             key_state: state.into(),
-            key_state_votes: KeyStateVotes::new(),
+            key_state_votes: KeyStateVotes::default(),
         }
     }
 }
@@ -176,12 +187,12 @@ impl From<&RunningContractState> for RunningContractStateV2 {
 impl From<&ResharingContractStateV2> for RunningContractStateV2 {
     fn from(state: &ResharingContractStateV2) -> Self {
         RunningContractStateV2 {
-            key_state: KeyState::from((
+            key_state: DKState::from((
                 &state.proposed_key_state,
                 &state.current_state.key_state.public_key,
                 &state.current_reshare.as_ref().unwrap().key_event_id,
             )),
-            key_state_votes: KeyStateVotes::new(),
+            key_state_votes: KeyStateVotes::default(),
         }
     }
 }
@@ -198,7 +209,7 @@ impl RunningContractStateV2 {
     }
     /// returns true if `account_id` is in the participant set
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
-        return self.key_state.is_participant(account_id);
+        self.key_state.is_participant(account_id)
     }
 
     /// returns true if threshold has been reached
@@ -209,22 +220,18 @@ impl RunningContractStateV2 {
             return Err(VoteError::VoterNotParticipant.into());
         }
         // ensure the proposed threshold is valid:
-        proposal.threshold_is_valid();
+        proposal.threshold_is_valid()?;
 
         // ensure there are enough old participant in the new participant set:
         //
-        let new_participant_set: BTreeSet<AccountId> = proposal
-            .proposed_threshold_parameters
-            .participants
-            .keys()
-            .cloned()
-            .collect();
+        let new_participant_set: BTreeSet<AccountId> =
+            proposal.candidates().keys().cloned().collect();
         let old_participant_set: BTreeSet<AccountId> =
             self.key_state.participants().keys().cloned().collect();
         let n_old = new_participant_set
             .intersection(&old_participant_set)
             .count() as u64;
-        if n_old < self.key_state.threshold() {
+        if n_old < self.key_state.threshold().value() {
             return Err(InvalidCandidateSet::InsufficientOldParticipants.into());
         }
 
@@ -235,14 +242,14 @@ impl RunningContractStateV2 {
 
         // finally, vote. Propagate any errors
         let n_votes = self.key_state_votes.vote(proposal, &signer)?;
-        if self.key_state.threshold() <= n_votes {
+        if self.key_state.threshold().value() <= n_votes {
             return Ok(true);
         }
-        return Ok(false);
+        Ok(false)
     }
 }
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
+#[near(serializers=[borsh, json])]
+#[derive(Debug)]
 pub struct ResharingContractStateV2 {
     pub current_state: RunningContractStateV2,
     pub proposed_key_state: KeyStateProposal,
@@ -256,7 +263,7 @@ impl From<&ResharingContractState> for ResharingContractStateV2 {
             // update while a reshare has been initiated
             current_state: RunningContractStateV2 {
                 key_state: state.into(),
-                key_state_votes: KeyStateVotes::new(),
+                key_state_votes: KeyStateVotes::default(),
             },
             proposed_key_state: state.into(),
             current_reshare: None,
@@ -268,7 +275,7 @@ impl From<(&RunningContractStateV2, &KeyStateProposal)> for ResharingContractSta
         ResharingContractStateV2 {
             current_state: RunningContractStateV2 {
                 key_state: current.key_state.clone(),
-                key_state_votes: KeyStateVotes::new(),
+                key_state_votes: KeyStateVotes::default(),
             },
             proposed_key_state: proposal.clone(),
             current_reshare: None,
@@ -280,7 +287,7 @@ impl From<(&ResharingContractStateV2, &KeyStateProposal)> for ResharingContractS
         ResharingContractStateV2 {
             current_state: RunningContractStateV2 {
                 key_state: current.current_state.key_state.clone(),
-                key_state_votes: KeyStateVotes::new(),
+                key_state_votes: KeyStateVotes::default(),
             },
             proposed_key_state: proposal.clone(),
             current_reshare: None,
@@ -304,10 +311,10 @@ impl ResharingContractStateV2 {
     pub fn n_proposed_participants(&self) -> u64 {
         self.proposed_key_state.n_proposed_participants()
     }
-    /// set of proposed participants for the next epoch
-    pub fn proposed_participants(&self) -> &BTreeMap<AccountId, ParticipantInfoV2> {
-        self.proposed_key_state.proposed_participants()
-    }
+    ///// set of proposed participants for the next epoch
+    //pub fn proposed_participants(&self) -> &BTreeMap<AccountId, ParticipantInfoV2> {
+    //    self.proposed_key_state.proposed_participants()
+    //}
     // returns true if account_id is a participant in the next epoch
     pub fn is_new_participant(&self, account_id: &AccountId) -> bool {
         self.proposed_key_state.is_proposed(account_id)
@@ -334,7 +341,7 @@ impl ResharingContractStateV2 {
     /// returns the uid of the last key event
     fn last_uid(&self) -> u64 {
         if let Some(current_resharing) = &self.current_reshare {
-            current_resharing.key_event_id.random_uid
+            current_resharing.key_event_id.uid()
         } else {
             self.current_state.last_uid()
         }
@@ -349,21 +356,21 @@ impl ResharingContractStateV2 {
 
 // Leader API. Below functions shall only be called by a leader account
 impl ResharingContractStateV2 {
-    /// Aborts the current reshare. Returns an error if there is no active reshare
-    fn abort_reshare(&mut self) -> Result<(), Error> {
-        // ensure this function is called by the leader
-        if env::signer_account_id() != self.reshare_leader() {
-            return Err(ReshareError::SignerNotLeader.into());
-        }
-        self.current_reshare.as_mut().map_or(
-            Err(ReshareError::NoOngoingReshare.into()),
-            |current| {
-                current.active = false;
-                Ok(())
-            },
-        )
-    }
-
+    //    /// Aborts the current reshare. Returns an error if there is no active reshare
+    //    fn abort_reshare(&mut self) -> Result<(), Error> {
+    //        // ensure this function is called by the leader
+    //        if env::signer_account_id() != self.reshare_leader() {
+    //            return Err(ReshareError::SignerNotLeader.into());
+    //        }
+    //        self.current_reshare.as_mut().map_or(
+    //            Err(ReshareError::NoOngoingReshare.into()),
+    //            |current| {
+    //                current.active = false;
+    //                Ok(())
+    //            },
+    //        )
+    //    }
+    //
     // starts a new reshare instance if there is no active reshare instance
     pub fn start_reshare_instance(
         &mut self,
@@ -422,14 +429,15 @@ impl ResharingContractStateV2 {
         }
         // Finally, vote for the reshare instance
         let n_votes = current.vote_completed(signer);
-        if self.proposed_key_state.key_event_threshold <= n_votes {
+        if self.proposed_key_state.key_event_threshold().value() <= n_votes {
             return Ok(true);
         }
         Ok(false)
     }
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
+#[near(serializers=[borsh, json])]
+#[derive(Debug)]
 pub enum ProtocolContractStateV2 {
     NotInitialized,
     Initializing(InitializingContractStateV2),
@@ -484,85 +492,5 @@ impl ProtocolContractStateV2 {
             }
         }
         Ok(voter)
-    }
-}
-
-/** Deprecated V0 and V1 contract state. Can be removed eventually. **/
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
-pub struct InitializingContractState {
-    pub candidates: Candidates,
-    pub threshold: usize,
-    pub pk_votes: PkVotes,
-}
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
-pub struct RunningContractState {
-    pub epoch: u64,
-    pub participants: Participants,
-    pub threshold: usize,
-    pub public_key: PublicKey,
-    pub candidates: Candidates,
-    pub join_votes: Votes,
-    pub leave_votes: Votes,
-}
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
-pub struct ResharingContractState {
-    pub old_epoch: u64,
-    pub old_participants: Participants,
-    pub new_participants: Participants,
-    pub threshold: usize,
-    pub public_key: PublicKey,
-    pub finished_votes: HashSet<AccountId>,
-}
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
-pub enum ProtocolContractState {
-    NotInitialized,
-    Initializing(InitializingContractState),
-    Running(RunningContractState),
-    Resharing(ResharingContractState),
-}
-
-impl ProtocolContractState {
-    pub fn name(&self) -> &'static str {
-        match self {
-            ProtocolContractState::NotInitialized => "NotInitialized",
-            ProtocolContractState::Initializing(_) => "Initializing",
-            ProtocolContractState::Running(_) => "Running",
-            ProtocolContractState::Resharing(_) => "Resharing",
-        }
-    }
-    pub fn is_participant(&self, voter: AccountId) -> Result<AccountId, Error> {
-        match &self {
-            ProtocolContractState::Initializing(state) => {
-                if !state.candidates.contains_key(&voter) {
-                    return Err(VoteError::VoterNotParticipant.into());
-                }
-            }
-            ProtocolContractState::Running(state) => {
-                if !state.participants.contains_key(&voter) {
-                    return Err(VoteError::VoterNotParticipant.into());
-                }
-            }
-            ProtocolContractState::Resharing(state) => {
-                if !state.old_participants.contains_key(&voter) {
-                    return Err(VoteError::VoterNotParticipant.into());
-                }
-            }
-            ProtocolContractState::NotInitialized => {
-                return Err(InvalidState::UnexpectedProtocolState.message(self.name()));
-            }
-        }
-        Ok(voter)
-    }
-    pub fn threshold(&self) -> Result<usize, Error> {
-        match self {
-            ProtocolContractState::Initializing(state) => Ok(state.threshold),
-            ProtocolContractState::Running(state) => Ok(state.threshold),
-            ProtocolContractState::Resharing(state) => Ok(state.threshold),
-            ProtocolContractState::NotInitialized => {
-                Err(InvalidState::UnexpectedProtocolState.message(self.name()))
-            }
-        }
     }
 }
