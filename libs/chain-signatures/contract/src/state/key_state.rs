@@ -1,6 +1,5 @@
-use super::participants::{Candidates, ParticipantInfoV2, Participants};
+use super::participants::ParticipantInfoV2;
 use crate::errors::{Error, InvalidState, InvalidThreshold};
-use crate::{InitializingContractState, ResharingContractState, RunningContractState};
 use near_sdk::{env, near, AccountId, PublicKey};
 use std::collections::BTreeMap;
 
@@ -86,7 +85,19 @@ pub struct ThresholdParameters {
     participants: BTreeMap<AccountId, ParticipantInfoV2>,
     threshold: Threshold,
 }
-
+pub fn validate_threshold(n_shares: u64, k: Threshold) -> Result<(), Error> {
+    if k.value() > n_shares {
+        return Err(InvalidThreshold::MaxRequirementFailed.into());
+    }
+    if k.value() < MIN_THRESHOLD_ABSOLUTE {
+        return Err(InvalidThreshold::MinAbsRequirementFailed.into());
+    }
+    let percentage_bound = (3 * n_shares + 4) / 5; // minimum 60%
+    if k.value() < percentage_bound {
+        return Err(InvalidThreshold::MinRelRequirementFailed.into());
+    }
+    Ok(())
+}
 impl ThresholdParameters {
     /// Constructs Threshold parameters from `participants` and `threshold` ensures that the
     /// threshold is sensible meets the validation criteria (c.f. [`ThresholdParameters::is_valid`]).
@@ -110,19 +121,7 @@ impl ThresholdParameters {
     /// - threshold can not exceed the number of participants.
     /// - threshold must be at least 60% of the number of participants (rounded upwards).
     pub fn is_valid(&self) -> Result<(), Error> {
-        let n = self.participants.len() as u64;
-        let k = self.threshold.value();
-        if k > n {
-            return Err(InvalidThreshold::MaxRequirementFailed.into());
-        }
-        if k < MIN_THRESHOLD_ABSOLUTE {
-            return Err(InvalidThreshold::MinAbsRequirementFailed.into());
-        }
-        let percentage_bound = (3 * n + 4) / 5; // minimum 60%
-        if k < percentage_bound {
-            return Err(InvalidThreshold::MinRelRequirementFailed.into());
-        }
-        Ok(())
+        validate_threshold(self.n_participants() as u64, self.threshold())
     }
     /// Returns true if `account_id` holds a key share.
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
@@ -157,8 +156,10 @@ impl ThresholdParameters {
     }
 }
 /* Migration helpers */
-impl From<(Threshold, &Candidates)> for ThresholdParameters {
-    fn from((threshold, candidates): (Threshold, &Candidates)) -> ThresholdParameters {
+impl From<(Threshold, &legacy_contract::primitives::Candidates)> for ThresholdParameters {
+    fn from(
+        (threshold, candidates): (Threshold, &legacy_contract::primitives::Candidates),
+    ) -> ThresholdParameters {
         let mut participants = BTreeMap::<AccountId, ParticipantInfoV2>::new();
         candidates.candidates.iter().for_each(|(account, info)| {
             participants.insert(account.clone(), info.into());
@@ -169,8 +170,10 @@ impl From<(Threshold, &Candidates)> for ThresholdParameters {
         }
     }
 }
-impl From<(Threshold, &Participants)> for ThresholdParameters {
-    fn from((threshold, participants): (Threshold, &Participants)) -> ThresholdParameters {
+impl From<(Threshold, &legacy_contract::primitives::Participants)> for ThresholdParameters {
+    fn from(
+        (threshold, participants): (Threshold, &legacy_contract::primitives::Participants),
+    ) -> ThresholdParameters {
         let mut migrated_participants = BTreeMap::<AccountId, ParticipantInfoV2>::new();
         participants
             .participants
@@ -225,6 +228,9 @@ impl DKState {
     pub fn participants(&self) -> &BTreeMap<AccountId, ParticipantInfoV2> {
         self.threshold_parameters.participants()
     }
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_threshold(self.n_participants(), self.threshold())
+    }
 }
 
 impl From<(&KeyStateProposal, &PublicKey, &KeyEventId)> for DKState {
@@ -274,7 +280,7 @@ impl KeyStateProposal {
             proposed_threshold_parameters,
             key_event_threshold,
         };
-        match res.threshold_is_valid() {
+        match res.validate() {
             Ok(_) => Ok(res),
             Err(err) => Err(err),
         }
@@ -298,28 +304,30 @@ impl KeyStateProposal {
     pub fn key_event_threshold(&self) -> DKGThreshold {
         self.key_event_threshold.clone()
     }
-    pub fn threshold_is_valid(&self) -> Result<(), Error> {
-        let n = self.proposed_threshold_parameters.n_participants();
-        let k = self.proposed_threshold_parameters.threshold().value();
-        match self.proposed_threshold_parameters.is_valid() {
-            Ok(_) => {
-                let k_event = self.key_event_threshold.value();
-                if k_event < k {
-                    return Err(InvalidThreshold::MinKeyEventFailed.into());
-                }
-                if k_event > n {
-                    return Err(InvalidThreshold::MaxKeyEventFailed.into());
-                }
-                Ok(())
-            }
-            Err(err) => Err(err),
-        }
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_thresholds(
+            self.n_proposed_participants(),
+            self.proposed_threshold(),
+            self.key_event_threshold(),
+        )
     }
 }
-
+pub fn validate_thresholds(
+    n_shares: u64,
+    k: Threshold,
+    dkg_threshold: DKGThreshold,
+) -> Result<(), Error> {
+    if dkg_threshold.value() > n_shares {
+        return Err(InvalidThreshold::MaxDKGThresholdFailed.into());
+    }
+    if dkg_threshold.value() < k.value() {
+        return Err(InvalidThreshold::MinDKGThresholdFailed.into());
+    }
+    validate_threshold(n_shares, k)
+}
 /* Migration helpers. Test it. Or delete it and ensure migrate() is never called while in resharing */
-impl From<&ResharingContractState> for DKState {
-    fn from(state: &ResharingContractState) -> Self {
+impl From<&legacy_contract::ResharingContractState> for DKState {
+    fn from(state: &legacy_contract::ResharingContractState) -> Self {
         DKState {
             public_key: state.public_key.clone(),
             key_event_id: KeyEventId::migrated_key(state.old_epoch),
@@ -330,8 +338,8 @@ impl From<&ResharingContractState> for DKState {
         }
     }
 }
-impl From<&RunningContractState> for DKState {
-    fn from(state: &RunningContractState) -> Self {
+impl From<&legacy_contract::RunningContractState> for DKState {
+    fn from(state: &legacy_contract::RunningContractState) -> Self {
         DKState {
             public_key: state.public_key.clone(),
             key_event_id: KeyEventId::migrated_key(state.epoch),
@@ -342,8 +350,8 @@ impl From<&RunningContractState> for DKState {
         }
     }
 }
-impl From<&ResharingContractState> for KeyStateProposal {
-    fn from(state: &ResharingContractState) -> Self {
+impl From<&legacy_contract::ResharingContractState> for KeyStateProposal {
+    fn from(state: &legacy_contract::ResharingContractState) -> Self {
         KeyStateProposal {
             proposed_threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),
@@ -353,8 +361,8 @@ impl From<&ResharingContractState> for KeyStateProposal {
         }
     }
 }
-impl From<&InitializingContractState> for KeyStateProposal {
-    fn from(state: &InitializingContractState) -> KeyStateProposal {
+impl From<&legacy_contract::InitializingContractState> for KeyStateProposal {
+    fn from(state: &legacy_contract::InitializingContractState) -> KeyStateProposal {
         KeyStateProposal {
             proposed_threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),

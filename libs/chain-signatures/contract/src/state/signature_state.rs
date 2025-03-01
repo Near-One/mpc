@@ -1,14 +1,8 @@
+use super::signature::{SignatureRequest, YieldIndex};
+use near_sdk::store::{key::Identity, IterableMap, LookupMap};
+use near_sdk::{near, BlockHeight};
 use std::collections::BTreeSet;
 
-use near_sdk::{
-    near,
-    store::{key::Identity, IterableMap, LookupMap},
-    BlockHeight,
-};
-
-use crate::primitives::YieldIndex;
-
-use super::signature::SignatureRequest;
 type SignatureId = u64;
 // in V1, there is a risk that one might not be able to submit a signature request, because a
 // previous resquest is still in the store (but is timed out).

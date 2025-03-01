@@ -1,13 +1,6 @@
 use std::borrow::Cow;
 mod impls;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum VersionError {
-    #[error("This functionality is deprecated, please use the newest contract version.")]
-    Deprecated,
-    #[error("This functionality requires another contract version")]
-    VersionMismatch,
-}
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SignError {
     #[error("Signature request has timed out.")]
     Timeout,
@@ -17,8 +10,6 @@ pub enum SignError {
         "This key version is not supported. Call latest_key_version() to get the latest supported version."
     )]
     UnsupportedKeyVersion,
-    #[error("Too many pending requests. Please try again later.")]
-    RequestLimitExceeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -28,54 +19,32 @@ pub enum RespondError {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
-pub enum JoinError {
-    #[error("Account to join is already in the participant set.")]
-    JoinAlreadyParticipant,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum PublicKeyError {
     #[error("Derived key conversion failed.")]
     DerivedKeyConversionFailed,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
-pub enum InitError {
-    #[error("Threshold cannot be greater than the number of candidates")]
-    ThresholdTooHigh,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
-pub enum ReshareError {
-    #[error("This function can only be called by participants of the resharing")]
-    SignerNotParticipant,
-    #[error("This function can only be called by the current leader")]
-    SignerNotLeader,
-    #[error("Key event Id mismatch")]
-    KeyEventIdMismatch,
-    #[error("Expected a different Leader")]
-    LeaderMismatch,
-    #[error("A resharing is currently ongoing")]
-    ReshareOngoing,
+pub enum KeyEventError {
     #[error("Epoch Id must be incremented by one.")]
     EpochMismatch,
+    #[error("Key event Id mismatch")]
+    KeyEventIdMismatch,
+    #[error("Can not start a new reshare or keygen instance while the current instance is still active.")]
+    ActiveKeyEvent,
     #[error("Expected ongoing reshare")]
-    NoOngoingReshare,
+    NoActiveKeyEvent,
 }
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum VoteError {
-    #[error("Already voted for public key")]
-    VoteAlreadySubmitted,
-    #[error("Voting account is not in the participant set.")]
+    #[error("Voting account is not a participant.")]
     VoterNotParticipant,
-    #[error("Account to be kicked is not in the participant set.")]
-    KickNotParticipant,
-    #[error("Account to join is not in the candidate set.")]
-    JoinNotCandidate,
-    #[error("Number of participants cannot go below threshold.")]
-    ParticipantsBelowThreshold,
-    #[error("A vote for this participant is already registered.")]
+    #[error("Voting account is neither a participant, nor a proposed participant.")]
+    VoterNotParticipantNorProposedParticipant,
+    #[error("This participant already registered a vote.")]
     ParticipantVoteAlreadyRegistered,
+    #[error("Voting account is not the leader of the current reshare or keygen instance.")]
+    VoterNotLeader,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -90,12 +59,6 @@ pub enum InvalidParameters {
     RequestNotFound,
     #[error("Update not found.")]
     UpdateNotFound,
-    #[error("Mismatched epoch.")]
-    EpochMismatch,
-    #[error("Mismatched uid.")]
-    UidMismatch,
-    #[error("Timed out.")]
-    Timeout,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -110,10 +73,6 @@ pub enum InvalidState {
     UnexpectedProtocolState,
     #[error("Cannot load in contract due to missing state")]
     ContractStateIsMissing,
-    #[error("Vote state is invalid")]
-    VoteStateIsInvalid,
-    #[error("Mismatched epoch.")]
-    EpochMismatch,
     #[error("Participant index out of range")]
     ParticipantIndexOutOfRange,
     #[error("Not a participant")]
@@ -128,13 +87,13 @@ pub enum InvalidThreshold {
     #[error("Threshold must not exceed number of participants")]
     MaxRequirementFailed,
     #[error("Key event threshold must not be less than voting threshold")]
-    MinKeyEventFailed,
+    MinDKGThresholdFailed,
     #[error("Key event threshold must not exceeed number of participants")]
-    MaxKeyEventFailed,
+    MaxDKGThresholdFailed,
 }
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum InvalidCandidateSet {
-    #[error("New candidates must contain at least threshold old participants.")]
+    #[error("Set of proposed participants must contain at least `threshold` old participants.")]
     InsufficientOldParticipants,
 }
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -153,15 +112,9 @@ pub enum ErrorKind {
     /// An error occurred while node is performing respond call.
     #[error("{0}")]
     Respond(#[from] RespondError),
-    /// An error occurred while node is performing join call.
-    #[error("{0}")]
-    Join(#[from] JoinError),
     /// An error occurred while user is performing public_key_* call.
     #[error("{0}")]
     PublicKey(#[from] PublicKeyError),
-    /// An error occurred while developer is performing init_* call.
-    #[error("{0}")]
-    Init(#[from] InitError),
     /// An error occurred while node is performing vote_* call.
     #[error("{0}")]
     Vote(#[from] VoteError),
@@ -180,12 +133,9 @@ pub enum ErrorKind {
     // Invalid Candidate errors
     #[error("{0}")]
     InvalidCandidateSet(#[from] InvalidCandidateSet),
-    // Invalid Resharing
+    // Key event errors
     #[error("{0}")]
-    ReshareError(#[from] ReshareError),
-    // Invalid Resharing
-    #[error("{0}")]
-    VersionError(#[from] VersionError),
+    KeyEventError(#[from] KeyEventError),
 }
 
 #[derive(Debug, thiserror::Error)]
