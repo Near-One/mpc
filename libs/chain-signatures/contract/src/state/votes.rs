@@ -1,10 +1,7 @@
-use std::collections::{BTreeMap, HashSet};
-
-use near_sdk::{near, AccountId, PublicKey};
-
-use crate::errors::{Error, VoteError};
-
 use super::key_state::KeyStateProposal;
+use crate::errors::{Error, VoteError};
+use near_sdk::{near, AccountId, PublicKey};
+use std::collections::{BTreeMap, HashSet};
 
 #[near(serializers=[borsh])]
 #[derive(Debug)]

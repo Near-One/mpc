@@ -2,9 +2,9 @@ use std::borrow::Cow;
 use std::fmt;
 
 use super::{
-    ConversionError, Error, ErrorKind, ErrorRepr, InitError, InvalidCandidateSet,
-    InvalidParameters, InvalidState, InvalidThreshold, JoinError, PublicKeyError, ReshareError,
-    RespondError, SignError, VersionError, VoteError,
+    ConversionError, Error, ErrorKind, ErrorRepr, InvalidCandidateSet, InvalidParameters,
+    InvalidState, InvalidThreshold, KeyEventError, PublicKeyError, RespondError, SignError,
+    VoteError,
 };
 
 impl Error {
@@ -61,21 +61,9 @@ impl From<RespondError> for Error {
     }
 }
 
-impl From<JoinError> for Error {
-    fn from(code: JoinError) -> Self {
-        Self::simple(ErrorKind::Join(code))
-    }
-}
-
 impl From<PublicKeyError> for Error {
     fn from(code: PublicKeyError) -> Self {
         Self::simple(ErrorKind::PublicKey(code))
-    }
-}
-
-impl From<InitError> for Error {
-    fn from(code: InitError) -> Self {
-        Self::simple(ErrorKind::Init(code))
     }
 }
 
@@ -129,17 +117,17 @@ impl ConversionError {
     }
 }
 
-impl From<ReshareError> for Error {
-    fn from(code: ReshareError) -> Self {
-        Self::simple(ErrorKind::ReshareError(code))
+impl From<KeyEventError> for Error {
+    fn from(code: KeyEventError) -> Self {
+        Self::simple(ErrorKind::KeyEventError(code))
     }
 }
-impl ReshareError {
+impl KeyEventError {
     pub(crate) fn message<T>(self, msg: T) -> Error
     where
         T: Into<Cow<'static, str>>,
     {
-        Error::message(ErrorKind::ReshareError(self), msg)
+        Error::message(ErrorKind::KeyEventError(self), msg)
     }
 }
 
@@ -148,29 +136,8 @@ impl From<InvalidThreshold> for Error {
         Self::simple(ErrorKind::InvalidThreshold(code))
     }
 }
-//impl InvalidThreshold {
-//    pub(crate) fn message<T>(self, msg: T) -> Error
-//    where
-//        T: Into<Cow<'static, str>>,
-//    {
-//        Error::message(ErrorKind::InvalidThreshold(self), msg)
-//    }
-//}
 impl From<InvalidCandidateSet> for Error {
     fn from(code: InvalidCandidateSet) -> Self {
         Self::simple(ErrorKind::InvalidCandidateSet(code))
-    }
-}
-//impl InvalidCandidateSet {
-//    pub(crate) fn message<T>(self, msg: T) -> Error
-//    where
-//        T: Into<Cow<'static, str>>,
-//    {
-//        Error::message(ErrorKind::InvalidCandidateSet(self), msg)
-//    }
-//}
-impl From<VersionError> for Error {
-    fn from(code: VersionError) -> Self {
-        Self::simple(ErrorKind::VersionError(code))
     }
 }

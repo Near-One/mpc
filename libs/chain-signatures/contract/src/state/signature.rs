@@ -1,21 +1,19 @@
 use crypto_shared::{derive_epsilon, SerializableScalar};
 use k256::Scalar;
-use near_sdk::{near, AccountId, NearToken};
+use near_sdk::{near, AccountId, CryptoHash};
 
+/// The index into calling the YieldResume feature of NEAR. This will allow to resume
+/// a yield call after the contract has been called back via this index.
+#[derive(Debug, Clone)]
+#[near(serializers=[borsh, json])]
+pub struct YieldIndex {
+    pub data_id: CryptoHash,
+}
 #[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 #[near(serializers=[borsh, json])]
 pub struct SignatureRequest {
     pub epsilon: SerializableScalar,
     pub payload_hash: SerializableScalar,
-}
-
-#[derive(Debug, Clone)]
-#[near(serializers=[borsh, json])]
-pub struct ContractSignatureRequest {
-    pub request: SignatureRequest,
-    pub requester: AccountId,
-    pub deposit: NearToken,
-    pub required_deposit: NearToken,
 }
 
 impl SignatureRequest {

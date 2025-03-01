@@ -1,16 +1,15 @@
 pub mod config;
 pub mod errors;
-pub mod primitives;
 pub mod state;
+pub mod storage_keys;
 pub mod update;
-use config::{ConfigV1, ConfigV2, InitConfigV1, InitConfigV2};
+use config::{Config, InitConfig};
 use crypto_shared::{
     derive_epsilon, derive_key, kdf::check_ec_signature, near_public_key_to_affine_point,
     types::SignatureResponse, ScalarExt as _,
 };
 use errors::{
-    ConversionError, InitError, InvalidParameters, InvalidState, PublicKeyError, RespondError,
-    SignError, VersionError,
+    ConversionError, InvalidParameters, InvalidState, PublicKeyError, RespondError, SignError,
 };
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::Scalar;
@@ -21,24 +20,17 @@ use near_sdk::{
     env, log, near_bindgen, AccountId, CryptoHash, Gas, GasWeight, NearToken, Promise,
     PromiseError, PublicKey,
 };
-use primitives::{StorageKey, YieldIndex};
 use state::key_state::{DKState, KeyEventId, KeyStateProposal};
-use state::participants::{CandidateInfo, Candidates, Participants};
-use state::protocol_state_v2::{
-    InitializingContractStateV2, ProtocolContractStateV2, ResharingContractStateV2,
-    RunningContractStateV2,
-};
-use state::signature::{ContractSignatureRequest, SignRequest, SignatureRequest};
-use state::votes::{KeyStateVotes, PkVotes, Votes};
-use std::cmp;
-use std::collections::BTreeMap;
-
-use crate::config::Config;
-use crate::errors::Error;
-use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
-pub use state::protocol_state::{
+use state::protocol_state::{
     InitializingContractState, ProtocolContractState, ResharingContractState, RunningContractState,
 };
+use state::signature::{SignRequest, SignatureRequest, YieldIndex};
+use state::votes::KeyStateVotes;
+use std::cmp;
+use storage_keys::StorageKey;
+
+use crate::errors::Error;
+use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
 const GAS_FOR_SIGN_CALL: Gas = Gas::from_tgas(10);
 
 // Register used to receive data id from `promise_await_data`.
@@ -54,8 +46,6 @@ const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
 pub enum VersionedMpcContract {
     V0(MpcContract),
-    V1(MpcContractV1),
-    V2(MpcContractV2),
 }
 
 impl Default for VersionedMpcContract {
@@ -66,22 +56,29 @@ impl Default for VersionedMpcContract {
 use near_sdk::near;
 #[near(serializers=[borsh])]
 #[derive(Debug)]
-pub struct MpcContractV2 {
-    protocol_state: ProtocolContractStateV2,
+pub struct MpcContract {
+    protocol_state: ProtocolContractState,
     pending_requests: LookupMap<SignatureRequest, YieldIndex>,
     request_by_block_height: Vector<(u64, SignatureRequest)>,
     proposed_updates: ProposedUpdates,
-    config: ConfigV2,
+    config: Config,
 }
 
-impl MpcContractV2 {
+impl MpcContract {
     fn remove_timed_out_requests(&mut self, max_num_to_remove: u32) -> u32 {
-        _remove_timed_out_requests(
-            &mut self.pending_requests,
-            &mut self.request_by_block_height,
-            max_num_to_remove,
-            self.config.request_timeout_blocks,
-        )
+        let min_pending_request_height =
+            cmp::max(env::block_height(), self.config.request_timeout_blocks)
+                - self.config.request_timeout_blocks;
+        let mut i = 0;
+        for x in self.request_by_block_height.iter() {
+            if (min_pending_request_height <= x.0) || (i > max_num_to_remove) {
+                break;
+            }
+            self.pending_requests.remove(&x.1);
+            i += 1;
+        }
+        self.request_by_block_height.drain(..i);
+        cmp::max(i, 1) - 1
     }
     fn add_request(&mut self, request: &SignatureRequest, data_id: CryptoHash) {
         self.request_by_block_height
@@ -96,16 +93,17 @@ impl MpcContractV2 {
         self.pending_requests.get(request)
     }
 
-    pub fn init(proposed_key_state: KeyStateProposal, init_config: Option<InitConfigV2>) -> Self {
+    pub fn init(proposed_key_state: KeyStateProposal, init_config: Option<InitConfig>) -> Self {
         log!(
             "init: proposed_key_state={:?}, init_config={:?}",
             proposed_key_state,
             init_config,
         );
+        proposed_key_state.validate().unwrap();
 
-        MpcContractV2 {
-            config: ConfigV2::from(init_config),
-            protocol_state: ProtocolContractStateV2::Initializing(InitializingContractStateV2 {
+        MpcContract {
+            config: Config::from(init_config),
+            protocol_state: ProtocolContractState::Initializing(InitializingContractState {
                 proposed_key_state,
                 current_keygen_instance: None,
             }),
@@ -116,7 +114,7 @@ impl MpcContractV2 {
     }
     pub fn start_keygen_instance(&mut self) -> Result<(), Error> {
         match &mut self.protocol_state {
-            ProtocolContractStateV2::Initializing(initializing) => {
+            ProtocolContractState::Initializing(initializing) => {
                 initializing.start_keygen_instance(self.config.reshare_timeout_blocks)
             }
             _ => Err(InvalidState::ProtocolStateNotResharing.into()),
@@ -124,7 +122,7 @@ impl MpcContractV2 {
     }
     pub fn start_reshare_instance(&mut self, new_epoch_id: u64) -> Result<(), Error> {
         match &mut self.protocol_state {
-            ProtocolContractStateV2::Resharing(resharing) => {
+            ProtocolContractState::Resharing(resharing) => {
                 resharing.start_reshare_instance(new_epoch_id, self.config.reshare_timeout_blocks)
             }
             _ => Err(InvalidState::ProtocolStateNotResharing.into()),
@@ -133,9 +131,9 @@ impl MpcContractV2 {
     pub fn conclude_reshare_instance(
         &mut self,
         key_event_id: KeyEventId,
-    ) -> Result<Option<RunningContractStateV2>, Error> {
+    ) -> Result<Option<RunningContractState>, Error> {
         let running = match &mut self.protocol_state {
-            ProtocolContractStateV2::Resharing(resharing) => {
+            ProtocolContractState::Resharing(resharing) => {
                 resharing.vote_reshared(key_event_id, self.config.reshare_timeout_blocks)?
             }
             _ => {
@@ -144,8 +142,8 @@ impl MpcContractV2 {
         };
         if running {
             match &self.protocol_state {
-                ProtocolContractStateV2::Resharing(resharing) => {
-                    return Ok(Some(RunningContractStateV2::from(resharing)));
+                ProtocolContractState::Resharing(resharing) => {
+                    return Ok(Some(RunningContractState::from(resharing)));
                 }
                 _ => {
                     return Err(InvalidState::ProtocolStateNotResharing.into());
@@ -158,9 +156,9 @@ impl MpcContractV2 {
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
-    ) -> Result<Option<RunningContractStateV2>, Error> {
+    ) -> Result<Option<RunningContractState>, Error> {
         let running = match &mut self.protocol_state {
-            ProtocolContractStateV2::Initializing(initializing) => initializing.vote_keygen(
+            ProtocolContractState::Initializing(initializing) => initializing.vote_keygen(
                 key_event_id,
                 public_key.clone(),
                 self.config.reshare_timeout_blocks,
@@ -171,8 +169,8 @@ impl MpcContractV2 {
         };
         if running {
             match &self.protocol_state {
-                ProtocolContractStateV2::Initializing(state) => {
-                    return Ok(Some(RunningContractStateV2 {
+                ProtocolContractState::Initializing(state) => {
+                    return Ok(Some(RunningContractState {
                         key_state: DKState::from((
                             &state.proposed_key_state,
                             &public_key,
@@ -187,106 +185,6 @@ impl MpcContractV2 {
             }
         }
         Ok(None)
-    }
-}
-
-/* Deprecated V1 Code */
-#[derive(BorshDeserialize, BorshSerialize, Debug)]
-pub struct MpcContractV1 {
-    protocol_state: ProtocolContractState,
-    pending_requests: LookupMap<SignatureRequest, YieldIndex>,
-    request_by_block_height: Vector<(u64, SignatureRequest)>,
-    proposed_updates: ProposedUpdates,
-    config: ConfigV1,
-}
-
-fn _remove_timed_out_requests(
-    pending_requests: &mut LookupMap<SignatureRequest, YieldIndex>,
-    request_by_block_height: &mut Vector<(u64, SignatureRequest)>,
-    max_num_to_remove: u32,
-    request_timeout_blocks: u64,
-) -> u32 {
-    let min_pending_request_height =
-        cmp::max(env::block_height(), request_timeout_blocks) - request_timeout_blocks;
-    let mut i = 0;
-    for x in request_by_block_height.iter() {
-        if (min_pending_request_height <= x.0) || (i > max_num_to_remove) {
-            break;
-        }
-        pending_requests.remove(&x.1);
-        i += 1;
-    }
-    request_by_block_height.drain(..i);
-    cmp::max(i, 1) - 1
-}
-
-impl MpcContractV1 {
-    fn remove_timed_out_requests(&mut self, max_num_to_remove: u32) -> u32 {
-        _remove_timed_out_requests(
-            &mut self.pending_requests,
-            &mut self.request_by_block_height,
-            max_num_to_remove,
-            self.config.request_timeout_blocks,
-        )
-    }
-    fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
-        self.pending_requests.get(request)
-    }
-    pub fn init(
-        threshold: usize,
-        candidates: BTreeMap<AccountId, CandidateInfo>,
-        init_config: Option<InitConfigV1>,
-    ) -> Self {
-        log!(
-            "init: threshold={}, candidates={:?}, init_config={:?}",
-            threshold,
-            candidates,
-            init_config,
-        );
-
-        MpcContractV1 {
-            config: ConfigV1::from(init_config),
-            protocol_state: ProtocolContractState::Initializing(InitializingContractState {
-                candidates: Candidates { candidates },
-                threshold,
-                pk_votes: PkVotes::new(),
-            }),
-            pending_requests: LookupMap::new(StorageKey::PendingRequests),
-            request_by_block_height: Vector::new(StorageKey::RequestsByTimestamp),
-            proposed_updates: ProposedUpdates::default(),
-        }
-    }
-}
-
-/* Deprecated V0 */
-#[derive(BorshDeserialize, BorshSerialize, Debug)]
-pub struct MpcContract {
-    protocol_state: ProtocolContractState,
-    pending_requests: LookupMap<SignatureRequest, YieldIndex>,
-    request_counter: u32,
-    proposed_updates: ProposedUpdates,
-    config: Config,
-}
-impl MpcContract {
-    fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
-        self.pending_requests.get(request)
-    }
-    pub fn init(
-        threshold: usize,
-        candidates: BTreeMap<AccountId, CandidateInfo>,
-        config: Option<Config>,
-    ) -> Self {
-        MpcContract {
-            protocol_state: ProtocolContractState::Initializing(InitializingContractState {
-                candidates: Candidates { candidates },
-                threshold,
-                pk_votes: PkVotes::new(),
-            }),
-            pending_requests: LookupMap::new(StorageKey::PendingRequests),
-            request_counter: 0,
-            proposed_updates: ProposedUpdates::default(),
-            config: config.unwrap_or_default(),
-        }
     }
 }
 
@@ -342,11 +240,7 @@ fn valid_signature_request(
 impl VersionedMpcContract {
     pub fn remove_timed_out_requests(&mut self, max_num_to_remove: Option<u32>) -> u32 {
         match self {
-            Self::V0(_) => 0,
-            Self::V1(mpc_contract) => mpc_contract.remove_timed_out_requests(
-                max_num_to_remove.unwrap_or(mpc_contract.config.max_num_requests_to_remove),
-            ),
-            Self::V2(mpc_contract) => mpc_contract.remove_timed_out_requests(
+            Self::V0(mpc_contract) => mpc_contract.remove_timed_out_requests(
                 max_num_to_remove.unwrap_or(mpc_contract.config.max_num_requests_to_remove),
             ),
         }
@@ -369,9 +263,7 @@ impl VersionedMpcContract {
             Ok(request) => request,
         };
 
-        let Self::V2(mpc_contract) = self else {
-            env::panic_str(&VersionError::Deprecated.to_string());
-        };
+        let Self::V0(mpc_contract) = self;
         // Remove timed out requests
         mpc_contract.remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
 
@@ -383,7 +275,7 @@ impl VersionedMpcContract {
         env::log_str(&serde_json::to_string(&near_sdk::env::random_seed_array()).unwrap());
 
         let promise_index = env::promise_yield_create(
-            "return_signature_and_clean_state_on_success_v2",
+            "return_signature_and_clean_state_on_success",
             &serde_json::to_vec(&(&request,)).unwrap(),
             RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS,
             GasWeight(0),
@@ -404,10 +296,9 @@ impl VersionedMpcContract {
     #[handle_result]
     pub fn public_key(&self) -> Result<PublicKey, Error> {
         match self {
-            Self::V0(_) | Self::V1(_) => env::panic_str("deprecated"),
-            Self::V2(mpc_contract) => match &mpc_contract.protocol_state {
-                ProtocolContractStateV2::Running(state) => Ok(state.key_state.public_key.clone()),
-                ProtocolContractStateV2::Resharing(state) => {
+            Self::V0(mpc_contract) => match &mpc_contract.protocol_state {
+                ProtocolContractState::Running(state) => Ok(state.key_state.public_key.clone()),
+                ProtocolContractState::Resharing(state) => {
                     Ok(state.current_state.key_state.public_key.clone())
                 }
                 _ => Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
@@ -460,7 +351,7 @@ impl VersionedMpcContract {
             &response.big_r,
             &response.s
         );
-        let ProtocolContractStateV2::Running(_) = self.mutable_state() else {
+        let ProtocolContractState::Running(_) = self.mutable_state() else {
             return Err(InvalidState::ProtocolStateNotRunning.into());
         };
         // generate the expected public key
@@ -486,12 +377,7 @@ impl VersionedMpcContract {
             // This order of execution ensures that the state is cleaned of the current
             // response, even if it belongs to an already timed out signature request.
             match self {
-                Self::V0(_) => {}
-                Self::V1(mpc_contract) => {
-                    mpc_contract
-                        .remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
-                }
-                Self::V2(mpc_contract) => {
+                Self::V0(mpc_contract) => {
                     mpc_contract
                         .remove_timed_out_requests(mpc_contract.config.max_num_requests_to_remove);
                 }
@@ -515,15 +401,12 @@ impl VersionedMpcContract {
             proposed_key_state,
         );
         match self {
-            Self::V0(_) | Self::V1(_) => {
-                env::panic_str("deprecated");
-            }
-            Self::V2(mpc_contract) => {
+            Self::V0(mpc_contract) => {
                 let enter = match &mut mpc_contract.protocol_state {
-                    ProtocolContractStateV2::Running(state) => {
+                    ProtocolContractState::Running(state) => {
                         state.vote_key_state_proposal(&proposed_key_state)?
                     }
-                    ProtocolContractStateV2::Resharing(state) => {
+                    ProtocolContractState::Resharing(state) => {
                         state.vote_key_state_proposal(&proposed_key_state)?
                     }
                     _ => {
@@ -532,18 +415,18 @@ impl VersionedMpcContract {
                 };
                 if enter {
                     let next_state = match &mpc_contract.protocol_state {
-                        ProtocolContractStateV2::Running(state) => {
-                            ResharingContractStateV2::from((state, &proposed_key_state))
+                        ProtocolContractState::Running(state) => {
+                            ResharingContractState::from((state, &proposed_key_state))
                         }
-                        ProtocolContractStateV2::Resharing(state) => {
-                            ResharingContractStateV2::from((state, &proposed_key_state))
+                        ProtocolContractState::Resharing(state) => {
+                            ResharingContractState::from((state, &proposed_key_state))
                         }
                         _ => {
                             env::panic_str("unexpected");
                         }
                     };
                     // todo add log messages
-                    mpc_contract.protocol_state = ProtocolContractStateV2::Resharing(next_state);
+                    mpc_contract.protocol_state = ProtocolContractState::Resharing(next_state);
                     return Ok(true);
                 }
             }
@@ -555,10 +438,7 @@ impl VersionedMpcContract {
     pub fn start_keygen_instance(&mut self) -> Result<(), Error> {
         log!("start_keygen_instance: signer={}", env::signer_account_id(),);
         match self {
-            Self::V0(_) | Self::V1(_) => {
-                Err(InvalidState::UnexpectedProtocolState.message("expected V2"))
-            }
-            Self::V2(contract_state) => contract_state.start_keygen_instance(),
+            Self::V0(contract_state) => contract_state.start_keygen_instance(),
         }
     }
     #[handle_result]
@@ -573,14 +453,11 @@ impl VersionedMpcContract {
             key_event_id,
         );
         match self {
-            Self::V0(_) | Self::V1(_) => {
-                Err(InvalidState::UnexpectedProtocolState.message("expected V2"))
-            }
-            Self::V2(contract_state) => {
+            Self::V0(contract_state) => {
                 if let Some(running) =
                     contract_state.conclude_keygen_instance(key_event_id, public_key)?
                 {
-                    contract_state.protocol_state = ProtocolContractStateV2::Running(running);
+                    contract_state.protocol_state = ProtocolContractState::Running(running);
                 }
                 Ok(false)
             }
@@ -594,10 +471,7 @@ impl VersionedMpcContract {
             new_epoch_id,
         );
         match self {
-            Self::V0(_) | Self::V1(_) => {
-                Err(InvalidState::UnexpectedProtocolState.message("expected V2"))
-            }
-            Self::V2(contract_state) => contract_state.start_reshare_instance(new_epoch_id),
+            Self::V0(contract_state) => contract_state.start_reshare_instance(new_epoch_id),
         }
     }
 
@@ -609,12 +483,9 @@ impl VersionedMpcContract {
             key_event_id,
         );
         match self {
-            Self::V0(_) | Self::V1(_) => {
-                Err(InvalidState::UnexpectedProtocolState.message("expected V2"))
-            }
-            Self::V2(contract_state) => {
+            Self::V0(contract_state) => {
                 if let Some(running) = contract_state.conclude_reshare_instance(key_event_id)? {
-                    contract_state.protocol_state = ProtocolContractStateV2::Running(running);
+                    contract_state.protocol_state = ProtocolContractState::Running(running);
                 }
                 Ok(false)
             }
@@ -675,16 +546,15 @@ impl VersionedMpcContract {
         );
         let voter = self.voter_or_panic();
         let threshold = match &self {
-            Self::V0(_) | Self::V1(_) => env::panic_str("deprecated"),
-            Self::V2(mpc_contract) => match &mpc_contract.protocol_state {
-                ProtocolContractStateV2::Initializing(state) => {
+            Self::V0(mpc_contract) => match &mpc_contract.protocol_state {
+                ProtocolContractState::Initializing(state) => {
                     state.proposed_key_state.proposed_threshold()
                 }
-                ProtocolContractStateV2::Running(state) => state.key_state.threshold(),
-                ProtocolContractStateV2::Resharing(state) => {
+                ProtocolContractState::Running(state) => state.key_state.threshold(),
+                ProtocolContractState::Resharing(state) => {
                     state.current_state.key_state.threshold()
                 }
-                ProtocolContractStateV2::NotInitialized => {
+                ProtocolContractState::NotInitialized => {
                     return Err(InvalidState::UnexpectedProtocolState.into());
                 }
             },
@@ -712,64 +582,42 @@ impl VersionedMpcContract {
     #[handle_result]
     #[init]
     pub fn init(
-        threshold: usize,
-        candidates: BTreeMap<AccountId, CandidateInfo>,
-        init_config: Option<InitConfigV1>,
+        key_state_proposal: KeyStateProposal,
+        init_config: Option<InitConfig>,
     ) -> Result<Self, Error> {
         log!(
-            "init: signer={}, threshold={}, candidates={}, init_config={:?}",
+            "init: signer={}, key_state_proposal={:?}, init_config={:?}",
             env::signer_account_id(),
-            threshold,
-            serde_json::to_string(&candidates).unwrap(),
+            key_state_proposal,
             init_config,
         );
+        key_state_proposal.validate()?;
 
-        if threshold > candidates.len() {
-            return Err(InitError::ThresholdTooHigh.into());
-        }
-
-        Ok(Self::V1(MpcContractV1::init(
-            threshold,
-            candidates,
-            init_config,
-        )))
+        Ok(Self::V0(MpcContract::init(key_state_proposal, init_config)))
     }
 
     // This function can be used to transfer the MPC network to a new contract.
+    // Q: but why? Is it safe to remove this??
     #[private]
     #[init]
     #[handle_result]
     pub fn init_running(
-        epoch: u64,
-        participants: Participants,
-        threshold: usize,
-        public_key: PublicKey,
-        init_config: Option<InitConfigV1>,
+        key_state: DKState,
+        init_config: Option<InitConfig>,
     ) -> Result<Self, Error> {
         log!(
-            "init_running: signer={}, epoch={}, participants={}, threshold={}, public_key={:?}, init_config={:?}",
+            "init_running: signer={}, key_state={:?}, init_config={:?}",
             env::signer_account_id(),
-            epoch,
-            serde_json::to_string(&participants).unwrap(),
-            threshold,
-            public_key,
+            key_state,
             init_config,
         );
+        key_state.validate()?;
 
-        if threshold > participants.len() {
-            return Err(InitError::ThresholdTooHigh.into());
-        }
-
-        Ok(Self::V1(MpcContractV1 {
-            config: ConfigV1::from(init_config),
+        Ok(Self::V0(MpcContract {
+            config: Config::from(init_config),
             protocol_state: ProtocolContractState::Running(RunningContractState {
-                epoch,
-                participants,
-                threshold,
-                public_key,
-                candidates: Candidates::new(),
-                join_votes: Votes::new(),
-                leave_votes: Votes::new(),
+                key_state,
+                key_state_votes: KeyStateVotes::default(),
             }),
             request_by_block_height: Vector::new(StorageKey::RequestsByTimestamp),
             pending_requests: LookupMap::new(StorageKey::PendingRequests),
@@ -787,50 +635,37 @@ impl VersionedMpcContract {
     #[init(ignore_state)]
     #[handle_result]
     pub fn migrate() -> Result<Self, Error> {
-        let old: VersionedMpcContract =
-            env::state_read().ok_or(InvalidState::ContractStateIsMissing)?;
-        match old {
-            VersionedMpcContract::V0(mpc_contract_v0) => {
-                Ok(VersionedMpcContract::V2(MpcContractV2 {
-                    config: ConfigV2::default(), //todo
-                    protocol_state: (&mpc_contract_v0.protocol_state).into(),
-                    pending_requests: mpc_contract_v0.pending_requests,
-                    request_by_block_height: Vector::new(StorageKey::RequestsByTimestamp),
-                    proposed_updates: ProposedUpdates::default(),
-                }))
-            }
-            VersionedMpcContract::V1(mpc_contract_v1) => {
-                Ok(VersionedMpcContract::V2(MpcContractV2 {
-                    config: ConfigV2::from(&mpc_contract_v1.config),
-                    protocol_state: (&mpc_contract_v1.protocol_state).into(),
-                    pending_requests: mpc_contract_v1.pending_requests,
-                    request_by_block_height: Vector::new(StorageKey::RequestsByTimestamp),
-                    proposed_updates: ProposedUpdates::default(),
-                }))
-            }
-            VersionedMpcContract::V2(_) => Ok(old),
+        if let Some(old) = env::state_read::<legacy_contract::VersionedMpcContract>() {
+            return Ok(VersionedMpcContract::V0(MpcContract {
+                config: Config::default(), //todo
+                protocol_state: old.state().into(),
+                pending_requests: LookupMap::new(StorageKey::PendingRequests), // most fields are private, so lets just
+                // leave it at that and abandon them.
+                request_by_block_height: Vector::new(StorageKey::RequestsByTimestamp),
+                proposed_updates: ProposedUpdates::default(),
+            }));
         }
+        if let Some(v2_contract) = env::state_read::<VersionedMpcContract>() {
+            return Ok(v2_contract);
+        }
+        Err(InvalidState::ContractStateIsMissing.into())
     }
 
-    pub fn state(&self) -> &ProtocolContractStateV2 {
+    pub fn state(&self) -> &ProtocolContractState {
         match self {
-            Self::V0(_) | Self::V1(_) => env::panic_str("deprecated"),
-            Self::V2(mpc_contract) => &mpc_contract.protocol_state,
+            Self::V0(mpc_contract) => &mpc_contract.protocol_state,
         }
     }
 
     pub fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
         match self {
             Self::V0(mpc_contract) => mpc_contract.get_pending_request(request),
-            Self::V1(mpc_contract) => mpc_contract.get_pending_request(request),
-            Self::V2(mpc_contract) => mpc_contract.get_pending_request(request),
         }
     }
 
-    pub fn config(&self) -> &ConfigV2 {
+    pub fn config(&self) -> &Config {
         match self {
-            Self::V0(_) | Self::V1(_) => panic!("Deprecated, use V2"),
-            Self::V2(mpc_contract) => &mpc_contract.config,
+            Self::V0(mpc_contract) => &mpc_contract.config,
         }
     }
 
@@ -839,46 +674,17 @@ impl VersionedMpcContract {
         env!("CARGO_PKG_VERSION").to_string()
     }
 
-    /// **DEPRECATED after V2** Upon success, removes the signature from state and returns it.
-    /// Returns an Error if the signature timed out.
-    /// Note that timed out signatures will need to be cleaned up from the state by a different function.
-    #[private]
-    #[handle_result]
-    pub fn return_signature_and_clean_state_on_success(
-        &mut self,
-        contract_signature_request: ContractSignatureRequest,
-        #[callback_result] signature: Result<SignatureResponse, PromiseError>,
-    ) -> Result<SignatureResponse, Error> {
-        match self {
-            Self::V0(_) | Self::V2(_) => {
-                panic!("not supposed to be called");
-            }
-            Self::V1(mpc_contract) => match signature {
-                Ok(signature) => {
-                    log!("Signature is ready.");
-                    mpc_contract
-                        .pending_requests
-                        .remove(&contract_signature_request.request);
-                    Ok(signature)
-                }
-                Err(_) => Err(SignError::Timeout.into()),
-            },
-        }
-    }
-
     /// Upon success, removes the signature from state and returns it.
     /// Returns an Error if the signature timed out.
     /// Note that timed out signatures will need to be cleaned up from the state by a different function.
     #[private]
     #[handle_result] // question: is this bad? should we remove this?
-    pub fn return_signature_and_clean_state_on_success_v2(
+    pub fn return_signature_and_clean_state_on_success(
         &mut self,
-        request: SignatureRequest,
+        request: SignatureRequest, // BREAKING CHANGE!!!
         #[callback_result] signature: Result<SignatureResponse, PromiseError>,
     ) -> Result<SignatureResponse, Error> {
-        let Self::V2(mpc_contract) = self else {
-            return Err(VersionError::VersionMismatch.into());
-        };
+        let Self::V0(mpc_contract) = self;
         match signature {
             Ok(signature) => {
                 log!("Signature is ready.");
@@ -890,25 +696,20 @@ impl VersionedMpcContract {
     }
 
     #[private]
-    pub fn update_config(&mut self, config: ConfigV2) {
-        let Self::V2(mpc_contract) = self else {
-            env::panic_str(&VersionError::VersionMismatch.to_string());
-        };
+    pub fn update_config(&mut self, config: Config) {
+        let Self::V0(mpc_contract) = self;
         mpc_contract.config = config;
     }
 
-    fn mutable_state(&mut self) -> &mut ProtocolContractStateV2 {
+    fn mutable_state(&mut self) -> &mut ProtocolContractState {
         match self {
-            Self::V0(_) | Self::V1(_) => env::panic_str("deprecated"),
-            Self::V2(ref mut mpc_contract) => &mut mpc_contract.protocol_state,
+            Self::V0(ref mut mpc_contract) => &mut mpc_contract.protocol_state,
         }
     }
 
     fn proposed_updates(&mut self) -> &mut ProposedUpdates {
         match self {
             Self::V0(contract) => &mut contract.proposed_updates,
-            Self::V1(contract) => &mut contract.proposed_updates,
-            Self::V2(contract) => &mut contract.proposed_updates,
         }
     }
     /// Get our own account id as a voter.
@@ -916,8 +717,7 @@ impl VersionedMpcContract {
     fn voter_or_panic(&self) -> AccountId {
         let voter = env::signer_account_id();
         match self {
-            Self::V0(_) | Self::V1(_) => env::panic_str("deprecated"),
-            Self::V2(contract) => match contract.protocol_state.is_participant(voter) {
+            Self::V0(contract) => match contract.protocol_state.is_participant(voter) {
                 Ok(voter) => voter,
                 Err(err) => {
                     env::panic_str(format!("not a voter, {:?}", err).as_str());
