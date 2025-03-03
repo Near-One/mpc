@@ -38,7 +38,7 @@ def set_config():
         os.environ[CONFIG_ENV_VAR] = constants.CONFIG_PATH
 
 
-@pytest.fixture(scope="session", autouse=True)
+#@pytest.fixture(scope="session", autouse=True)
 def compile_contract():
     """
     This function navigates to the chain-signatures directory, compiles the mpc-contract and moves it in the res folder.
