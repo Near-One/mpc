@@ -1,6 +1,6 @@
 use actix::Addr;
 use anyhow::bail;
-use mpc_contract::ProtocolContractState;
+use legacy_mpc_contract;
 use near_client::ClientActor;
 use near_client::Status;
 use near_indexer_primitives::types;
@@ -39,7 +39,7 @@ pub(crate) async fn wait_for_full_sync(client: &Addr<ClientActor>) {
 pub(crate) async fn get_mpc_contract_state(
     mpc_contract_id: AccountId,
     client: &actix::Addr<near_client::ViewClientActor>,
-) -> anyhow::Result<ProtocolContractState> {
+) -> anyhow::Result<legacy_mpc_contract::ProtocolContractState> {
     let request = QueryRequest::CallFunction {
         account_id: mpc_contract_id,
         method_name: "state".to_string(),
