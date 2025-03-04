@@ -1,8 +1,8 @@
 pub mod common;
 use common::{candidates, create_response, init, init_env, sign_and_validate};
 
-use mpc_contract::errors;
-use mpc_contract::primitives::{CandidateInfo, SignRequest};
+use legacy_contract::errors;
+use legacy_contract::primitives::{CandidateInfo, SignRequest};
 use near_workspaces::types::{AccountId, NearToken};
 
 use crypto_shared::SignatureResponse;

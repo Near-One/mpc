@@ -29,5 +29,7 @@ signature = "2.2.0"
 digest = "0.10.7"
 
 # near dependencies
+#near-crypto = "0.27.0"
 near-crypto = "0.26.0"
-near-workspaces = { git = "https://github.com/near/near-workspaces-rs", branch = "phuong/tmp-node-2.3.0" }
+near-workspaces = "0.14.1"
+#near-workspaces = { git = "https://github.com/near/near-workspaces-rs", tag = "near-workspaces-v0.17.0" }# branch = "phuong/tmp-node-2.3.0" }
