@@ -21,10 +21,10 @@ async fn test_join() -> anyhow::Result<()> {
 
     assert!(execution.is_success());
 
-    let state: mpc_contract::ProtocolContractState =
+    let state: legacy_contract::ProtocolContractState =
         contract.view("state").await.unwrap().json().unwrap();
     match state {
-        mpc_contract::ProtocolContractState::Running(r) => {
+        legacy_contract::ProtocolContractState::Running(r) => {
             assert!(r.candidates.contains_key(alice.id()));
         }
         _ => panic!("should be in running state"),
@@ -183,10 +183,10 @@ async fn test_vote_leave() -> anyhow::Result<()> {
     let vote_pass: bool = execution.json().unwrap();
     assert!(vote_pass);
 
-    let state: mpc_contract::ProtocolContractState =
+    let state: legacy_contract::ProtocolContractState =
         contract.view("state").await.unwrap().json().unwrap();
     match state {
-        mpc_contract::ProtocolContractState::Resharing(r) => {
+        legacy_contract::ProtocolContractState::Resharing(r) => {
             assert!(!r
                 .new_participants
                 .participants
@@ -284,10 +284,10 @@ async fn test_vote_reshare() -> anyhow::Result<()> {
     assert!(execution.is_success());
     let vote_pass: bool = execution.json().unwrap();
     assert!(vote_pass);
-    let state: mpc_contract::ProtocolContractState =
+    let state: legacy_contract::ProtocolContractState =
         contract.view("state").await.unwrap().json().unwrap();
     match state {
-        mpc_contract::ProtocolContractState::Resharing(r) => {
+        legacy_contract::ProtocolContractState::Resharing(r) => {
             assert!(r.new_participants.participants.contains_key(alice.id()));
         }
         _ => panic!("should be in resharing state"),
@@ -337,10 +337,10 @@ async fn test_vote_reshare() -> anyhow::Result<()> {
     let vote_pass: bool = execution.json().unwrap();
     assert!(vote_pass);
 
-    let state: mpc_contract::ProtocolContractState =
+    let state: legacy_contract::ProtocolContractState =
         contract.view("state").await.unwrap().json().unwrap();
     match state {
-        mpc_contract::ProtocolContractState::Running(r) => {
+        legacy_contract::ProtocolContractState::Running(r) => {
             assert!(r.epoch == 1);
             assert!(r.participants.contains_key(alice.id()));
         }

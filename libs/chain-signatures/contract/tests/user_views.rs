@@ -1,7 +1,7 @@
 pub mod common;
 use common::{create_response, init_env};
 
-use mpc_contract::primitives::SignRequest;
+use legacy_contract::primitives::SignRequest;
 
 use near_sdk::{CurveType, PublicKey};
 use near_workspaces::types::NearToken;

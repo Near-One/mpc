@@ -12,10 +12,10 @@ use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::DecompressPoint as _;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{AffinePoint, FieldBytes, Scalar, Secp256k1};
-use mpc_contract::primitives::{
+use legacy_contract::primitives::{
     CandidateInfo, ParticipantInfo, Participants, SignRequest, SignatureRequest,
 };
-use mpc_contract::update::UpdateId;
+use near_sdk::log;
 use near_workspaces::network::Sandbox;
 use near_workspaces::types::{AccountId, NearToken};
 use near_workspaces::{Account, Contract, Worker};
@@ -58,7 +58,9 @@ pub async fn accounts(
 ) -> (Vec<Account>, HashMap<AccountId, CandidateInfo>) {
     let mut accounts = Vec::with_capacity(PARTICIPANT_LEN);
     for _ in 0..PARTICIPANT_LEN {
+        log!("attempting to create account");
         let account = worker.dev_create_account().await.unwrap();
+        log!("created account");
         accounts.push(account);
     }
     let candidates = candidates(Some(accounts.iter().map(|a| a.id().clone()).collect()));
@@ -67,6 +69,9 @@ pub async fn accounts(
 
 pub async fn init() -> (Worker<Sandbox>, Contract) {
     let worker = near_workspaces::sandbox().await.unwrap();
+    log!("worker: {:?}", worker);
+    //let tla = worker.dev_create_account().await.unwrap();
+    //log!("managed to create tla: {:?}", tla);
     let wasm = std::fs::read(CONTRACT_FILE_PATH).unwrap();
     let contract = worker.dev_deploy(&wasm).await.unwrap();
     (worker, contract)
@@ -249,7 +254,7 @@ pub async fn sign_and_validate(
 pub async fn vote_update_till_completion(
     contract: &Contract,
     accounts: &[Account],
-    proposal_id: &UpdateId,
+    proposal_id: &legacy_contract::update::UpdateId,
 ) {
     for voter in accounts {
         let execution = voter
