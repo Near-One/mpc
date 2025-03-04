@@ -45,6 +45,8 @@ pub enum VoteError {
     ParticipantVoteAlreadyRegistered,
     #[error("Voting account is not the leader of the current reshare or keygen instance.")]
     VoterNotLeader,
+    #[error("Inconsistent voting state")]
+    InconsistentVotingState,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -67,6 +69,8 @@ pub enum InvalidState {
     ProtocolStateNotRunning,
     #[error("Protocol state is not resharing.")]
     ProtocolStateNotResharing,
+    #[error("Protocol state is not initializing.")]
+    ProtocolStateNotInitializing,
     #[error("Protocol state is not running, nor resharing.")]
     ProtocolStateNotRunningNorResharing,
     #[error("Unexpected protocol state.")]

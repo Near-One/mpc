@@ -12,9 +12,9 @@ use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::DecompressPoint as _;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{AffinePoint, FieldBytes, Scalar, Secp256k1};
-use legacy_contract::primitives::{
-    CandidateInfo, ParticipantInfo, Participants, SignRequest, SignatureRequest,
-};
+//use legacy_contract::primitives::{
+//    CandidateInfo, ParticipantInfo, Participants, SignRequest, SignatureRequest,
+//};
 use near_sdk::log;
 use near_workspaces::network::Sandbox;
 use near_workspaces::types::{AccountId, NearToken};

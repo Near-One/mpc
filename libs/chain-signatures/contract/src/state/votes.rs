@@ -45,6 +45,9 @@ impl PkVotes {
             votes: BTreeMap::new(),
         }
     }
+    pub fn n_votes(&self, public_key: &PublicKey) -> usize {
+        return self.votes.get(public_key).map_or(0, |votes| votes.len());
+    }
 
     pub fn entry(&mut self, public_key: PublicKey) -> &mut HashSet<AccountId> {
         self.votes.entry(public_key).or_default()
