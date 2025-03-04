@@ -10,7 +10,7 @@ anyhow = "1.0.92"
 async-trait = "0.1.83"
 axum = "0.7.9"
 borsh = { version = "1.5.1", features = ["derive"] }
-cait-sith = { git = "https://github.com/Near-One/cait-sith.git", features = ["k256"], rev = "1bb67e2a04f01cc7835ce4d8a611064229acc10c" }
+cait-sith = { git = "https://github.com/Near-One/cait-sith.git", rev = "d0144f8dd94e6e78f85a526fb45b5c891bf8bf7e", features = ["k256", "internals"] }
 clap = { version = "4.5.20", features = ["derive", "env"] }
 flume = "0.11.1"
 futures = "0.3.31"
@@ -43,6 +43,10 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 url = "2"
 x509-parser = "0.16.0"
+
+frost-ed25519 = { git = "https://github.com/kuksag/frost", rev = "5807812176b7b7b220286bc4ec7c080da72c04b8" }
+frost-core = { git = "https://github.com/kuksag/frost", rev = "5807812176b7b7b220286bc4ec7c080da72c04b8" }
+itertools = "0.12.1"
 
 near-indexer = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
 near-indexer-primitives = { git = "https://github.com/near/nearcore",rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }

@@ -1,3 +1,5 @@
+extern crate core;
+
 use clap::Parser;
 use tracing::init_logging;
 
@@ -9,6 +11,7 @@ mod cli;
 mod config;
 mod coordinator;
 mod db;
+mod frost;
 mod hkdf;
 mod indexer;
 mod key_generation;
