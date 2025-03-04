@@ -17,6 +17,7 @@
 //! There's no identifiable aborts, i.e. you might see an Err(_) with e.g. "incorrect number of shares supplied",
 //! or "Participant X supplied incorrect data", but pragmatically you will not be able to do anything with this info.
 
+mod dkg;
 mod kdf;
 mod sign;
 mod tests;
@@ -57,6 +58,7 @@ pub fn sign_passive<RNG: CryptoRng + RngCore + 'static + Send>(
 }
 
 /// Participant's key-pair in Frost
+#[allow(dead_code)] // TODO(#119): remove compiler directive when this will be actually used.
 #[derive(Debug, Clone)]
 pub struct KeygenOutput {
     pub key_package: KeyPackage,
@@ -71,8 +73,18 @@ pub fn derive_keygen_output(keygen_output: &KeygenOutput, tweak: [u8; 32]) -> Ke
     kdf::derive_keygen_output(keygen_output, tweak)
 }
 
+/// Distributed Key Generation protocol.
+#[allow(dead_code)] // TODO(#119): remove compiler directive when this will be actually used.
+pub fn dkg<RNG: CryptoRng + RngCore + 'static + Send>(
+    rng: RNG,
+    participants: Vec<Participant>,
+    me: Participant,
+    threshold: usize,
+) -> anyhow::Result<impl Protocol<Output = KeygenOutput>> {
+    dkg::dkg_internal(rng, participants, me, threshold)
+}
+
 /// Derive Frost identifier (ed25519 scalar) from u32
-#[allow(dead_code)] // TODO(#119): remove this compiler directive when this will be actually used.
 pub fn to_frost_identifier(participant: Participant) -> frost_ed25519::Identifier {
     frost_ed25519::Identifier::derive(participant.bytes().as_slice())
         .expect("Identifier derivation must succeed: cipher suite is guaranteed to be implemented")
