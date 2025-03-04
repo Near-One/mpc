@@ -128,6 +128,8 @@ impl ProposedUpdates {
 
         let mut promise = Promise::new(env::current_account_id());
         for update in entry.updates {
+            // does it make sense to update both code & config
+            // simultaneously?
             match update {
                 Update::Contract(code) => {
                     // deploy contract then do a `migrate` call to migrate state.

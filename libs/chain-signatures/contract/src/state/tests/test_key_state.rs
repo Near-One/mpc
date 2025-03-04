@@ -2,23 +2,21 @@ use std::collections::BTreeMap;
 
 use crate::state::{
     key_state::{DKGThreshold, KeyStateProposal, Threshold, ThresholdParameters},
-    tests::test_utils::dummy_participants,
+    tests::test_utils::gen_participants,
 };
 
 #[test]
 fn test_constructor() {
     let n = 40;
     let min_threshold = 24; // 60%
-    let participant_set_a = dummy_participants(n);
+    let participant_set_a = gen_participants(n);
     for k in 1..min_threshold {
-        assert!(
-            ThresholdParameters::new(participant_set_a.clone(), Threshold::new(k as u64)).is_err()
-        );
+        let invalid_threshold = Threshold::new(k as u64);
+        assert!(ThresholdParameters::new(participant_set_a.clone(), invalid_threshold).is_err());
     }
     for k in min_threshold..(n + 1) {
-        assert!(
-            ThresholdParameters::new(participant_set_a.clone(), Threshold::new(k as u64)).is_ok()
-        );
+        let valid_threshold = Threshold::new(k as u64);
+        assert!(ThresholdParameters::new(participant_set_a.clone(), valid_threshold).is_ok());
     }
 
     let tpt = min_threshold;

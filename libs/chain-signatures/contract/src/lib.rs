@@ -3,6 +3,8 @@ pub mod errors;
 pub mod state;
 pub mod storage_keys;
 pub mod update;
+use crate::errors::Error;
+use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
 use config::{Config, InitConfig};
 use crypto_shared::{
     derive_epsilon, derive_key, kdf::check_ec_signature, near_public_key_to_affine_point,
@@ -20,25 +22,21 @@ use near_sdk::{
     env, log, near_bindgen, AccountId, CryptoHash, Gas, GasWeight, NearToken, Promise,
     PromiseError, PublicKey,
 };
-use state::key_state::{DKState, KeyEventId, KeyStateProposal};
-use state::protocol_state::{
-    InitializingContractState, ProtocolContractState, ResharingContractState, RunningContractState,
-};
+use state::initializing::InitializingContractState;
+use state::key_state::{DKState, KeyEventId, KeyStateProposal, Threshold};
+use state::running::RunningContractState;
 use state::signature::{SignRequest, SignatureRequest, YieldIndex};
 use state::votes::KeyStateVotes;
+use state::ProtocolContractState;
 use std::cmp;
 use storage_keys::StorageKey;
 
-use crate::errors::Error;
-use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
+//Gas requised for a sign request
 const GAS_FOR_SIGN_CALL: Gas = Gas::from_tgas(10);
-
 // Register used to receive data id from `promise_await_data`.
 const DATA_ID_REGISTER: u64 = 0;
-
 // Prepaid gas for a `return_signature_and_clean_state_on_success` call
 const RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS: Gas = Gas::from_tgas(5);
-
 // Prepaid gas for a `update_config` call
 const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
 
@@ -65,6 +63,9 @@ pub struct MpcContract {
 }
 
 impl MpcContract {
+    fn threshold(&self) -> Result<Threshold, Error> {
+        self.protocol_state.threshold()
+    }
     fn remove_timed_out_requests(&mut self, max_num_to_remove: u32) -> u32 {
         let min_pending_request_height =
             cmp::max(env::block_height(), self.config.request_timeout_blocks)
@@ -113,128 +114,42 @@ impl MpcContract {
         }
     }
     pub fn start_keygen_instance(&mut self) -> Result<(), Error> {
-        match &mut self.protocol_state {
-            ProtocolContractState::Initializing(initializing) => {
-                initializing.start_keygen_instance(self.config.reshare_timeout_blocks)
-            }
-            _ => Err(InvalidState::ProtocolStateNotResharing.into()),
-        }
+        self.protocol_state
+            .start_keygen_instance(self.config.dk_event_timeout_blocks)
     }
     pub fn start_reshare_instance(&mut self, new_epoch_id: u64) -> Result<(), Error> {
-        match &mut self.protocol_state {
-            ProtocolContractState::Resharing(resharing) => {
-                resharing.start_reshare_instance(new_epoch_id, self.config.reshare_timeout_blocks)
-            }
-            _ => Err(InvalidState::ProtocolStateNotResharing.into()),
-        }
+        self.protocol_state
+            .start_reshare_instance(new_epoch_id, self.config.dk_event_timeout_blocks)
     }
-    pub fn conclude_reshare_instance(
+    /// vote to conclude the resharing
+    pub fn vote_reshared(
         &mut self,
         key_event_id: KeyEventId,
-    ) -> Result<Option<RunningContractState>, Error> {
-        let running = match &mut self.protocol_state {
-            ProtocolContractState::Resharing(resharing) => {
-                resharing.vote_reshared(key_event_id, self.config.reshare_timeout_blocks)?
-            }
-            _ => {
-                return Err(InvalidState::ProtocolStateNotResharing.into());
-            }
-        };
-        if running {
-            match &self.protocol_state {
-                ProtocolContractState::Resharing(resharing) => {
-                    return Ok(Some(RunningContractState::from(resharing)));
-                }
-                _ => {
-                    return Err(InvalidState::ProtocolStateNotResharing.into());
-                }
-            }
-        }
-        Ok(None)
+    ) -> Result<Option<ProtocolContractState>, Error> {
+        self.protocol_state
+            .vote_reshared(key_event_id, self.config.dk_event_timeout_blocks)
     }
-    pub fn conclude_keygen_instance(
+    pub fn vote_pk(
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
-    ) -> Result<Option<RunningContractState>, Error> {
-        let running = match &mut self.protocol_state {
-            ProtocolContractState::Initializing(initializing) => initializing.vote_keygen(
-                key_event_id,
-                public_key.clone(),
-                self.config.reshare_timeout_blocks,
-            )?,
-            _ => {
-                return Err(InvalidState::ProtocolStateNotResharing.into());
-            }
-        };
-        if running {
-            match &self.protocol_state {
-                ProtocolContractState::Initializing(state) => {
-                    return Ok(Some(RunningContractState {
-                        key_state: DKState::from((
-                            &state.proposed_key_state,
-                            &public_key,
-                            &state.current_keygen_instance.as_ref().unwrap().key_event_id,
-                        )),
-                        key_state_votes: KeyStateVotes::default(),
-                    }));
-                }
-                _ => {
-                    return Err(InvalidState::ProtocolStateNotResharing.into());
-                }
-            }
-        }
-        Ok(None)
+    ) -> Result<Option<ProtocolContractState>, Error> {
+        self.protocol_state.vote_pk(
+            key_event_id,
+            public_key,
+            self.config.dk_event_timeout_blocks,
+        )
+    }
+
+    /// vote for `proposed_key_state`
+    pub fn vote_new_key_state(
+        &mut self,
+        proposed_key_state: &KeyStateProposal,
+    ) -> Result<Option<ProtocolContractState>, Error> {
+        self.protocol_state.vote_new_key_state(proposed_key_state)
     }
 }
 
-fn valid_signature_request(
-    max_key_version: u32,
-    request: &SignRequest,
-) -> Result<SignatureRequest, Error> {
-    // It's important we fail here because the MPC nodes will fail in an identical way.
-    // This allows users to get the error message
-    let payload = match Scalar::from_bytes(request.payload) {
-        Some(payload) => payload,
-        None => {
-            return Err(InvalidParameters::MalformedPayload
-                .message("Payload hash cannot be convereted to Scalar"));
-        }
-    };
-
-    if request.key_version > max_key_version {
-        return Err(SignError::UnsupportedKeyVersion.into());
-    }
-
-    // Make sure sign call will not run out of gas doing yield/resume logic
-    if env::prepaid_gas() < GAS_FOR_SIGN_CALL {
-        return Err(InvalidParameters::InsufficientGas.message(format!(
-            "Provided: {}, required: {}",
-            env::prepaid_gas(),
-            GAS_FOR_SIGN_CALL
-        )));
-    }
-
-    let predecessor = env::predecessor_account_id();
-    // Check deposit and refund if required
-    let deposit = env::attached_deposit();
-    match deposit.checked_sub(NearToken::from_yoctonear(1)) {
-        None => {
-            return Err(InvalidParameters::InsufficientDeposit.message(format!(
-                "Require a deposit of 1 yoctonear, found: {}",
-                deposit.as_yoctonear(),
-            )));
-        }
-        Some(diff) => {
-            if diff > NearToken::from_yoctonear(0) {
-                log!("refund excess deposit {diff} to {predecessor}");
-                Promise::new(predecessor.clone()).transfer(diff);
-            }
-        }
-    }
-
-    Ok(SignatureRequest::new(payload, &predecessor, &request.path))
-}
 // User contract API
 #[near_bindgen]
 impl VersionedMpcContract {
@@ -258,10 +173,60 @@ impl VersionedMpcContract {
             request
         );
         // ensure the signer sent a valid signature request
-        let request = match valid_signature_request(self.latest_key_version(), &request) {
-            Err(err) => env::panic_str(&err.to_string()),
-            Ok(request) => request,
+
+        // It's important we fail here because the MPC nodes will fail in an identical way.
+        // This allows users to get the error message
+        let payload = match Scalar::from_bytes(request.payload) {
+            Some(payload) => payload,
+            None => {
+                env::panic_str(
+                    &InvalidParameters::MalformedPayload
+                        .message("Payload hash cannot be convereted to Scalar")
+                        .to_string(),
+                );
+            }
         };
+
+        if request.key_version > self.latest_key_version() {
+            env::panic_str(&SignError::UnsupportedKeyVersion.to_string());
+        }
+
+        // Make sure sign call will not run out of gas doing yield/resume logic
+        if env::prepaid_gas() < GAS_FOR_SIGN_CALL {
+            env::panic_str(
+                &InvalidParameters::InsufficientGas
+                    .message(format!(
+                        "Provided: {}, required: {}",
+                        env::prepaid_gas(),
+                        GAS_FOR_SIGN_CALL
+                    ))
+                    .to_string(),
+            );
+        }
+
+        let predecessor = env::predecessor_account_id();
+        // Check deposit and refund if required
+        let deposit = env::attached_deposit();
+        match deposit.checked_sub(NearToken::from_yoctonear(1)) {
+            None => {
+                env::panic_str(
+                    &InvalidParameters::InsufficientDeposit
+                        .message(format!(
+                            "Require a deposit of 1 yoctonear, found: {}",
+                            deposit.as_yoctonear(),
+                        ))
+                        .to_string(),
+                );
+            }
+            Some(diff) => {
+                if diff > NearToken::from_yoctonear(0) {
+                    log!("refund excess deposit {diff} to {predecessor}");
+                    Promise::new(predecessor.clone()).transfer(diff);
+                }
+            }
+        }
+
+        let request = SignatureRequest::new(payload, &predecessor, &request.path);
 
         let Self::V0(mpc_contract) = self;
         // Remove timed out requests
@@ -351,9 +316,9 @@ impl VersionedMpcContract {
             &response.big_r,
             &response.s
         );
-        let ProtocolContractState::Running(_) = self.mutable_state() else {
+        if !self.state().is_running() {
             return Err(InvalidState::ProtocolStateNotRunning.into());
-        };
+        }
         // generate the expected public key
         let pk = self.public_key()?;
         let expected_public_key =
@@ -391,49 +356,27 @@ impl VersionedMpcContract {
     }
 
     #[handle_result]
-    pub fn propose_new_key_state(
+    pub fn vote_new_key_state(
         &mut self,
         proposed_key_state: KeyStateProposal,
     ) -> Result<bool, Error> {
         log!(
-            "propose_new_key_state: signer={}, proposed_key_state={:?}",
+            "vote_new_key_state: signer={}, proposed_key_state={:?}",
             env::signer_account_id(),
             proposed_key_state,
         );
         match self {
             Self::V0(mpc_contract) => {
-                let enter = match &mut mpc_contract.protocol_state {
-                    ProtocolContractState::Running(state) => {
-                        state.vote_key_state_proposal(&proposed_key_state)?
-                    }
-                    ProtocolContractState::Resharing(state) => {
-                        state.vote_key_state_proposal(&proposed_key_state)?
-                    }
-                    _ => {
-                        env::panic_str("unsupported");
-                    }
-                };
-                if enter {
-                    let next_state = match &mpc_contract.protocol_state {
-                        ProtocolContractState::Running(state) => {
-                            ResharingContractState::from((state, &proposed_key_state))
-                        }
-                        ProtocolContractState::Resharing(state) => {
-                            ResharingContractState::from((state, &proposed_key_state))
-                        }
-                        _ => {
-                            env::panic_str("unexpected");
-                        }
-                    };
-                    // todo add log messages
-                    mpc_contract.protocol_state = ProtocolContractState::Resharing(next_state);
-                    return Ok(true);
+                if let Some(next_state) = mpc_contract.vote_new_key_state(&proposed_key_state)? {
+                    mpc_contract.protocol_state = next_state;
+                    Ok(true)
+                } else {
+                    Ok(false)
                 }
             }
-        };
-        Ok(false)
+        }
     }
-
+    /// Starts a reshare instance or returns an Error.
     #[handle_result]
     pub fn start_keygen_instance(&mut self) -> Result<(), Error> {
         log!("start_keygen_instance: signer={}", env::signer_account_id(),);
@@ -441,23 +384,26 @@ impl VersionedMpcContract {
             Self::V0(contract_state) => contract_state.start_keygen_instance(),
         }
     }
+    /// Registers a vote from `env::signer_account_id()` for `public_key` generated by `key_event_id`.
+    /// Removes any previous votes from `env::signer_account_id()`.
+    /// Returns an error if the vote is rejected. Otherwise:
+    /// - enters running state and returns `true` if dkg_threshold votes have been reached;
+    /// - returns false if more votes are required to reach threshold.
     #[handle_result]
-    pub fn complete_keygen_instance(
+    pub fn vote_pk(
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
     ) -> Result<bool, Error> {
         log!(
-            "complete_keygen_instance: signer={}, resharing_id={:?}",
+            "vote_pk: signer={}, resharing_id={:?}",
             env::signer_account_id(),
             key_event_id,
         );
         match self {
             Self::V0(contract_state) => {
-                if let Some(running) =
-                    contract_state.conclude_keygen_instance(key_event_id, public_key)?
-                {
-                    contract_state.protocol_state = ProtocolContractState::Running(running);
+                if let Some(next_state) = contract_state.vote_pk(key_event_id, public_key)? {
+                    contract_state.protocol_state = next_state;
                 }
                 Ok(false)
             }
@@ -476,16 +422,16 @@ impl VersionedMpcContract {
     }
 
     #[handle_result]
-    pub fn complete_reshare_instance(&mut self, key_event_id: KeyEventId) -> Result<bool, Error> {
+    pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<bool, Error> {
         log!(
-            "complete_reshare_instance: signer={}, resharing_id={:?}",
+            "vote_reshared: signer={}, resharing_id={:?}",
             env::signer_account_id(),
             key_event_id,
         );
         match self {
             Self::V0(contract_state) => {
-                if let Some(running) = contract_state.conclude_reshare_instance(key_event_id)? {
-                    contract_state.protocol_state = ProtocolContractState::Running(running);
+                if let Some(running) = contract_state.vote_reshared(key_event_id)? {
+                    contract_state.protocol_state = running; //ProtocolContractState::Running(running);
                 }
                 Ok(false)
             }
@@ -546,18 +492,7 @@ impl VersionedMpcContract {
         );
         let voter = self.voter_or_panic();
         let threshold = match &self {
-            Self::V0(mpc_contract) => match &mpc_contract.protocol_state {
-                ProtocolContractState::Initializing(state) => {
-                    state.proposed_key_state.proposed_threshold()
-                }
-                ProtocolContractState::Running(state) => state.key_state.threshold(),
-                ProtocolContractState::Resharing(state) => {
-                    state.current_state.key_state.threshold()
-                }
-                ProtocolContractState::NotInitialized => {
-                    return Err(InvalidState::UnexpectedProtocolState.into());
-                }
-            },
+            Self::V0(mpc_contract) => mpc_contract.threshold()?,
         };
         let Some(votes) = self.proposed_updates().vote(&id, voter) else {
             return Err(InvalidParameters::UpdateNotFound.into());
@@ -699,12 +634,6 @@ impl VersionedMpcContract {
     pub fn update_config(&mut self, config: Config) {
         let Self::V0(mpc_contract) = self;
         mpc_contract.config = config;
-    }
-
-    fn mutable_state(&mut self) -> &mut ProtocolContractState {
-        match self {
-            Self::V0(ref mut mpc_contract) => &mut mpc_contract.protocol_state,
-        }
     }
 
     fn proposed_updates(&mut self) -> &mut ProposedUpdates {
