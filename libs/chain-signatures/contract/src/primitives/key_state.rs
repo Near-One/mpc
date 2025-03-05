@@ -1,9 +1,7 @@
+use super::participants::{ParticipantId, Participants};
+use super::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 use crate::errors::{Error, InvalidThreshold};
 use near_sdk::{env, near, AccountId, PublicKey};
-use std::collections::BTreeMap;
-
-use super::participants::ParticipantInfo;
-use super::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 
 /// Identifier for a key event:
 /// `epoch_id` the epoch for which the key is supposed to be active
@@ -26,7 +24,6 @@ pub struct KeyEventId {
     random_uid: u64,
     leader: AccountId,
 }
-
 impl KeyEventId {
     /// Returns the unique id associated with this key event.
     pub fn uid(&self) -> u64 {
@@ -55,6 +52,7 @@ impl KeyEventId {
             leader,
         }
     }
+
     pub fn leader(&self) -> &AccountId {
         &self.leader
     }
@@ -102,11 +100,11 @@ impl DKState {
     pub fn uid(&self) -> u64 {
         self.key_event_id.random_uid
     }
-    pub fn participants(&self) -> &BTreeMap<AccountId, ParticipantInfo> {
+    pub fn participants(&self) -> &Participants {
         self.threshold_parameters.participants()
     }
     pub fn validate(&self) -> Result<(), Error> {
-        ThresholdParameters::validate_threshold(self.participants().len() as u64, self.threshold())
+        ThresholdParameters::validate_threshold(self.participants().count(), self.threshold())
     }
     pub fn new(
         public_key: PublicKey,
@@ -153,10 +151,10 @@ impl KeyStateProposal {
         self.proposed_threshold_parameters
             .is_participant(account_id)
     }
-    pub fn candidates(&self) -> &BTreeMap<AccountId, ParticipantInfo> {
+    pub fn candidates(&self) -> &Participants {
         self.proposed_threshold_parameters.participants()
     }
-    pub fn candidate_by_index(&self, idx: u64) -> Result<AccountId, Error> {
+    pub fn candidate_by_index(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
         self.proposed_threshold_parameters.participant_by_idx(idx)
     }
     pub fn proposed_threshold(&self) -> Threshold {
@@ -198,7 +196,7 @@ impl From<&legacy_contract::ResharingContractState> for DKState {
             key_event_id: KeyEventId::new_migrated_key(state.old_epoch),
             threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),
-                &state.old_participants,
+                state.old_participants.clone(),
             )),
         }
     }
@@ -210,7 +208,7 @@ impl From<&legacy_contract::RunningContractState> for DKState {
             key_event_id: KeyEventId::new_migrated_key(state.epoch),
             threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),
-                &state.participants,
+                state.participants.clone(),
             )),
         }
     }
@@ -220,7 +218,7 @@ impl From<&legacy_contract::ResharingContractState> for KeyStateProposal {
         KeyStateProposal {
             proposed_threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),
-                &state.new_participants,
+                state.new_participants.clone(),
             )),
             key_event_threshold: DKGThreshold::new(state.threshold as u64),
         }
@@ -231,7 +229,7 @@ impl From<&legacy_contract::InitializingContractState> for KeyStateProposal {
         KeyStateProposal {
             proposed_threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),
-                &state.candidates,
+                state.candidates.clone(),
             )),
             key_event_threshold: DKGThreshold::new(state.threshold as u64),
         }
@@ -246,7 +244,6 @@ mod tests {
     use crate::state::tests::test_utils::{gen_participants, gen_rand_account_id};
     use near_sdk::{log, test_utils::VMContextBuilder, testing_env, AccountId};
     use rand::Rng;
-    use std::collections::BTreeMap;
     fn get_random_seed_and_uid() -> ([u8; 32], u64) {
         let mut rng = rand::thread_rng();
         let mut seed = [0u8; 32];
@@ -283,34 +280,29 @@ mod tests {
     fn test_threshold_parameters() {
         let n = 40;
         let min_threshold = 24; // 60%
-        let participant_set_a = gen_participants(n);
+        let participants = gen_participants(n);
         for k in 1..min_threshold {
             let invalid_threshold = Threshold::new(k as u64);
-            assert!(
-                ThresholdParameters::new(participant_set_a.clone(), invalid_threshold).is_err()
-            );
+            assert!(ThresholdParameters::new(participants.clone(), invalid_threshold).is_err());
         }
         for k in min_threshold..(n + 1) {
             let valid_threshold = Threshold::new(k as u64);
-            assert!(ThresholdParameters::new(participant_set_a.clone(), valid_threshold).is_ok());
+            assert!(ThresholdParameters::new(participants.clone(), valid_threshold).is_ok());
         }
 
         let tpt = min_threshold;
-        let tp = ThresholdParameters::new(participant_set_a.clone(), Threshold::new(tpt as u64))
-            .unwrap();
-        assert!(tp.threshold().value() == (tpt as u64));
-        assert!(tp.n_participants() == (n as u64));
-        for account_id in participant_set_a.keys() {
+        let tp =
+            ThresholdParameters::new(participants.clone(), Threshold::new(tpt as u64)).unwrap();
+        assert_eq!(participants, *tp.participants());
+        assert_eq!(tp.threshold().value(), (tpt as u64));
+        assert_eq!(tp.n_participants(), (n as u64));
+        // porbably overkill to test below
+        for account_id in participants.participants().keys() {
             assert!(tp.is_participant(account_id));
+            let expected_id = participants.id(account_id).unwrap();
+            assert_eq!(expected_id, tp.participant_idx(account_id).unwrap());
+            assert_eq!(tp.participant_by_idx(&expected_id).unwrap(), *account_id);
         }
-        let mut res = BTreeMap::new();
-        for i in 0..n {
-            let p = tp.participant_by_idx(i as u64).unwrap();
-            assert!(tp.participant_idx(&p).unwrap() == (i as u64));
-            let info = tp.participants().get(&p).unwrap();
-            assert!(res.insert(p, info.clone()).is_none());
-        }
-        assert!(res == *tp.participants());
         for ket in tpt..(n + 1) {
             assert!(KeyStateProposal::new(tp.clone(), DKGThreshold::new(ket as u64)).is_ok());
         }

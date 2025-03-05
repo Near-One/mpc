@@ -2,6 +2,8 @@ use super::running::RunningContractState;
 use crate::errors::VoteError;
 use crate::errors::{Error, KeyEventError};
 use crate::primitives::key_state::{DKState, KeyEventId, KeyStateProposal};
+use crate::primitives::leader::leader;
+use crate::primitives::participants::ParticipantId;
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::{env, near, AccountId, PublicKey};
 use std::collections::BTreeSet;
@@ -87,7 +89,7 @@ impl ResharingContractState {
             Err(err) => env::panic_str(&err.to_string()),
         }
     }
-    pub fn get_candidate_by_index(&self, idx: u64) -> Result<AccountId, Error> {
+    pub fn get_candidate_by_index(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
         self.proposed_key_state.candidate_by_index(idx)
     }
     pub fn n_proposed_participants(&self) -> u64 {
@@ -121,6 +123,7 @@ impl ResharingContractState {
 /// Helper functions
 impl ResharingContractState {
     /// returns the uid of the last key event
+    /// todo: FIX THIS: introduce some mechanism to overcome stalling leader.
     fn last_uid(&self) -> u64 {
         if let Some(current_resharing) = &self.current_reshare {
             current_resharing.key_event_id.uid()
@@ -130,9 +133,14 @@ impl ResharingContractState {
     }
 
     /// returns the seed%len(participants)-th in the participants set.
-    fn get_leader_from_seed(&self, seed: u64) -> Result<AccountId, Error> {
-        let leader_idx = seed % self.n_proposed_participants();
-        self.get_candidate_by_index(leader_idx)
+    fn get_leader_from_seed(&self, uid: u64) -> Result<AccountId, Error> {
+        let leader_id = leader(
+            self.proposed_key_state
+                .proposed_threshold_parameters()
+                .participants(),
+            uid,
+        );
+        self.get_candidate_by_index(&leader_id)
     }
 }
 
