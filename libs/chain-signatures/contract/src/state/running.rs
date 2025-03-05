@@ -69,10 +69,19 @@ impl RunningContractState {
         proposal.validate()?;
 
         // ensure there are enough old participant in the new participant set:
-        let new_participant_set: BTreeSet<AccountId> =
-            proposal.candidates().keys().cloned().collect();
-        let old_participant_set: BTreeSet<AccountId> =
-            self.key_state.participants().keys().cloned().collect();
+        let new_participant_set: BTreeSet<AccountId> = proposal
+            .candidates()
+            .participants()
+            .keys()
+            .cloned()
+            .collect();
+        let old_participant_set: BTreeSet<AccountId> = self
+            .key_state
+            .participants()
+            .participants()
+            .keys()
+            .cloned()
+            .collect();
         let n_old = new_participant_set
             .intersection(&old_participant_set)
             .count() as u64;

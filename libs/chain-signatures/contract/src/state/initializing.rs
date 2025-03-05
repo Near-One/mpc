@@ -2,6 +2,7 @@ use super::running::RunningContractState;
 use crate::errors::VoteError;
 use crate::errors::{Error, KeyEventError};
 use crate::primitives::key_state::{DKState, KeyEventId, KeyStateProposal};
+use crate::primitives::leader::leader;
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::log;
 use near_sdk::{env, near, AccountId, PublicKey};
@@ -206,13 +207,20 @@ impl InitializingContractState {
     }
     /// Returns the AccountId of the current keygen leader
     pub fn keygen_leader(&self) -> AccountId {
+        // todo: FIX THIS. There needs to be a mechanism to introduce randomness if a timeout is reached.
+        // idem for reshare
         let last_uid = if let Some(current_keygen) = &self.current_keygen_instance {
             current_keygen.key_event_id.uid()
         } else {
             0
         };
-        let leader_idx = last_uid % self.proposed_key_state.n_proposed_participants();
-        match self.proposed_key_state.candidate_by_index(leader_idx) {
+        let leader_id = leader(
+            self.proposed_key_state
+                .proposed_threshold_parameters()
+                .participants(),
+            last_uid,
+        );
+        match self.proposed_key_state.candidate_by_index(&leader_id) {
             Ok(res) => res,
             Err(err) => env::panic_str(&err.to_string()),
         }

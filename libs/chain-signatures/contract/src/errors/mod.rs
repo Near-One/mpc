@@ -61,6 +61,8 @@ pub enum InvalidParameters {
     RequestNotFound,
     #[error("Update not found.")]
     UpdateNotFound,
+    #[error("Participant already in set.")]
+    ParticipantAlreadyInSet,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
