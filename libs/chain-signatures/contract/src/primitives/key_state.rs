@@ -3,7 +3,7 @@ use near_sdk::{env, near, AccountId, PublicKey};
 use std::collections::BTreeMap;
 
 use super::participants::ParticipantInfo;
-use super::thresholds::{validate_threshold, DKGThreshold, Threshold, ThresholdParameters};
+use super::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 
 /// Identifier for a key event:
 /// `epoch_id` the epoch for which the key is supposed to be active
@@ -106,7 +106,7 @@ impl DKState {
         self.threshold_parameters.participants()
     }
     pub fn validate(&self) -> Result<(), Error> {
-        validate_threshold(self.participants().len() as u64, self.threshold())
+        ThresholdParameters::validate_threshold(self.participants().len() as u64, self.threshold())
     }
     pub fn new(
         public_key: PublicKey,
@@ -188,7 +188,7 @@ pub fn validate_thresholds(
     if dkg_threshold.value() < k.value() {
         return Err(InvalidThreshold::MinDKGThresholdFailed.into());
     }
-    validate_threshold(n_shares, k)
+    ThresholdParameters::validate_threshold(n_shares, k)
 }
 /* Migration helpers. Test it. Or delete it and ensure migrate() is never called while in resharing */
 impl From<&legacy_contract::ResharingContractState> for DKState {
@@ -240,9 +240,9 @@ impl From<&legacy_contract::InitializingContractState> for KeyStateProposal {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::primitives::key_state::KeyStateProposal;
-    use crate::state::primitives::thresholds::{DKGThreshold, Threshold};
-    use crate::state::primitives::{key_state::KeyEventId, thresholds::ThresholdParameters};
+    use crate::primitives::key_state::KeyStateProposal;
+    use crate::primitives::thresholds::{DKGThreshold, Threshold};
+    use crate::primitives::{key_state::KeyEventId, thresholds::ThresholdParameters};
     use crate::state::tests::test_utils::{gen_participants, gen_rand_account_id};
     use near_sdk::{log, test_utils::VMContextBuilder, testing_env, AccountId};
     use rand::Rng;
@@ -277,15 +277,6 @@ mod tests {
             .build();
         testing_env!(context);
         assert!(key_event_id.timed_out(999));
-    }
-
-    #[test]
-    fn test_threshold() {
-        for _ in 0..20 {
-            let v = rand::thread_rng().gen::<u64>();
-            let x = Threshold::new(v);
-            assert_eq!(v, x.value());
-        }
     }
 
     #[test]

@@ -131,6 +131,14 @@ impl KeyEventError {
     }
 }
 
+impl InvalidThreshold {
+    pub(crate) fn message<T>(self, msg: T) -> Error
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        Error::message(ErrorKind::InvalidThreshold(self), msg)
+    }
+}
 impl From<InvalidThreshold> for Error {
     fn from(code: InvalidThreshold) -> Self {
         Self::simple(ErrorKind::InvalidThreshold(code))

@@ -1,7 +1,5 @@
-use crate::state::{
-    key_state::{Threshold, ThresholdParameters},
-    participants::ParticipantInfo,
-};
+use crate::primitives::participants::ParticipantInfo;
+use legacy_contract::primitives::CandidateInfo;
 use near_sdk::{AccountId, CurveType, PublicKey};
 use rand::{distributions::Uniform, Rng};
 use std::collections::BTreeMap;
@@ -49,6 +47,28 @@ pub fn gen_participants(n: usize) -> BTreeMap<AccountId, ParticipantInfo> {
     (0..n).map(gen_participant).collect()
 }
 
-fn gen_rand_threshold_params(n: usize, k: usize) -> ThresholdParameters {
-    ThresholdParameters::new(gen_participants(n), Threshold::new(k as u64)).unwrap()
+pub fn gen_legacy_participants(n: usize) -> legacy_contract::primitives::Participants {
+    let legacy_candidates = gen_legacy_candidates(n);
+    legacy_candidates.into()
+}
+pub fn gen_legacy_candidates(n: usize) -> legacy_contract::primitives::Candidates {
+    pub fn candidates(names: Vec<AccountId>) -> BTreeMap<AccountId, CandidateInfo> {
+        let mut candidates: BTreeMap<AccountId, CandidateInfo> = BTreeMap::new();
+        for (i, account_id) in names.iter().enumerate() {
+            candidates.insert(
+                account_id.clone(),
+                CandidateInfo {
+                    account_id: account_id.clone(),
+                    url: format!("127.0.0.1:{}", i).into(),
+                    cipher_pk: [0; 32],
+                    sign_pk: gen_rand_pk(),
+                },
+            );
+        }
+        candidates
+    }
+    let accounts: Vec<AccountId> = (0..n).map(|_| gen_rand_account_id()).collect();
+    legacy_contract::primitives::Candidates {
+        candidates: candidates(accounts),
+    }
 }
