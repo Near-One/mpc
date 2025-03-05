@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::state::{
-    key_state::{DKGThreshold, KeyStateProposal, Threshold, ThresholdParameters},
-    tests::test_utils::gen_participants,
-};
+use crate::primitives::key_state::KeyStateProposal;
+use crate::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
+use crate::state::tests::test_utils::gen_participants;
 
 #[test]
 fn test_constructor() {
