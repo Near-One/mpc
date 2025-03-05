@@ -1,18 +1,13 @@
 pub mod initializing;
-pub mod key_state;
-pub mod keygen;
-pub mod participants;
 pub mod resharing;
 pub mod running;
-pub mod signature;
-pub mod signature_state;
 #[cfg(test)]
 pub mod tests;
-pub mod votes;
 
 use crate::errors::{Error, InvalidState, VoteError};
+use crate::primitives::key_state::{KeyEventId, KeyStateProposal};
+use crate::primitives::thresholds::Threshold;
 use initializing::InitializingContractState;
-use key_state::{KeyEventId, KeyStateProposal, Threshold};
 use near_sdk::{near, AccountId, PublicKey};
 use resharing::ResharingContractState;
 use running::RunningContractState;
@@ -27,6 +22,13 @@ pub enum ProtocolContractState {
 }
 
 impl ProtocolContractState {
+    pub fn public_key(&self) -> Result<PublicKey, Error> {
+        match self {
+            ProtocolContractState::Running(state) => Ok(state.public_key().clone()),
+            ProtocolContractState::Resharing(state) => Ok(state.public_key().clone()),
+            _ => Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
+        }
+    }
     pub fn threshold(&self) -> Result<Threshold, Error> {
         match self {
             ProtocolContractState::Initializing(state) => {
@@ -85,6 +87,9 @@ impl ProtocolContractState {
             .vote_pk(key_event_id, public_key, dk_event_timeout_blocks)
             .map(|x| x.map(ProtocolContractState::Running))
     }
+    /// Casts a vote for `proposed_key_state`, returning the new protocol state if the proposal is
+    /// accepted.
+    /// Returns an error if the protocol is not in running resharing.
     pub fn vote_new_key_state(
         &mut self,
         proposed_key_state: &KeyStateProposal,

@@ -1,9 +1,9 @@
-use super::key_state::{DKState, KeyEventId, KeyStateProposal};
 use super::running::RunningContractState;
-use super::votes::KeyStateVotes;
 use crate::errors::VoteError;
 use crate::errors::{Error, KeyEventError};
-use near_sdk::{env, near, AccountId};
+use crate::primitives::key_state::{DKState, KeyEventId, KeyStateProposal};
+use crate::primitives::votes::KeyStateVotes;
+use near_sdk::{env, near, AccountId, PublicKey};
 use std::collections::BTreeSet;
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq)]
@@ -55,6 +55,12 @@ impl From<&legacy_contract::ResharingContractState> for ResharingContractState {
 }
 
 impl ResharingContractState {
+    pub fn public_key(&self) -> &PublicKey {
+        self.current_state.public_key()
+    }
+    /// Casts a vote for `proposal`, removing any exiting votes by `signer_account_id()`.
+    /// Returns an error if `proposal` is invalid or signer not in the old partipicant set.
+    /// Returns ResharingContract state if the proposal is accepted.
     pub fn vote_new_key_state(
         &mut self,
         proposal: &KeyStateProposal,
@@ -75,6 +81,8 @@ impl ResharingContractState {
     /// returns the AccountId of the current reshare leader
     pub fn reshare_leader(&self) -> AccountId {
         match self.get_leader_from_seed(self.last_uid()) {
+            // todo: not great. Maybe return multiple options?
+            // change the seed if a timeout has been reached after entering resharing state.
             Ok(res) => res,
             Err(err) => env::panic_str(&err.to_string()),
         }
@@ -205,11 +213,13 @@ impl ResharingContractState {
         let n_votes = current.vote_completed(signer);
         if self.proposed_key_state.key_event_threshold().value() <= n_votes {
             return Ok(Some(RunningContractState {
-                key_state: DKState::from((
-                    &self.proposed_key_state,
-                    &self.current_state.key_state.public_key,
-                    &self.current_reshare.as_ref().unwrap().key_event_id,
-                )),
+                key_state: DKState::new(
+                    self.current_state.key_state.public_key().clone(),
+                    self.current_reshare.as_ref().unwrap().key_event_id.clone(),
+                    self.proposed_key_state
+                        .proposed_threshold_parameters()
+                        .clone(),
+                )?,
                 key_state_votes: KeyStateVotes::default(),
             }));
         }

@@ -1,4 +1,7 @@
-use crate::state::participants::ParticipantInfo;
+use crate::state::{
+    key_state::{Threshold, ThresholdParameters},
+    participants::ParticipantInfo,
+};
 use near_sdk::{AccountId, CurveType, PublicKey};
 use rand::{distributions::Uniform, Rng};
 use std::collections::BTreeMap;
@@ -44,4 +47,8 @@ pub fn gen_participant(i: usize) -> (AccountId, ParticipantInfo) {
 
 pub fn gen_participants(n: usize) -> BTreeMap<AccountId, ParticipantInfo> {
     (0..n).map(gen_participant).collect()
+}
+
+fn gen_rand_threshold_params(n: usize, k: usize) -> ThresholdParameters {
+    ThresholdParameters::new(gen_participants(n), Threshold::new(k as u64)).unwrap()
 }

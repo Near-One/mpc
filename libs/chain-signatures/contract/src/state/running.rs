@@ -1,9 +1,9 @@
-use super::key_state::{DKState, KeyStateProposal};
 use super::resharing::ResharingContractState;
-use super::votes::KeyStateVotes;
 use crate::errors::VoteError;
 use crate::errors::{Error, InvalidCandidateSet};
-use near_sdk::{env, log, near, AccountId};
+use crate::primitives::key_state::{DKState, KeyStateProposal};
+use crate::primitives::votes::KeyStateVotes;
+use near_sdk::{env, log, near, AccountId, PublicKey};
 use std::collections::BTreeSet;
 
 #[near(serializers=[borsh, json])]
@@ -22,6 +22,9 @@ impl From<&legacy_contract::RunningContractState> for RunningContractState {
 }
 
 impl RunningContractState {
+    pub fn public_key(&self) -> &PublicKey {
+        self.key_state.public_key()
+    }
     pub fn epoch_id(&self) -> u64 {
         self.key_state.epoch_id()
     }
@@ -35,6 +38,8 @@ impl RunningContractState {
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
         self.key_state.is_participant(account_id)
     }
+    /// Casts a vote for `proposal` to the current state, propagating any errors.
+    /// Returns ResharingContract state if the proposal is accepted.
     pub fn vote_new_key_state(
         &mut self,
         proposal: &KeyStateProposal,
@@ -51,7 +56,9 @@ impl RunningContractState {
         }
         Ok(None)
     }
-    /// returns true if threshold has been reached
+    /// Casts a vote for `proposal`, removing any previous votes by `env::signer_account_id()`.
+    /// Fails if the proposal is invalid or the signer is not a participant.
+    /// Returns true if the proposal reached `threshold` number of votes.
     pub fn vote_key_state_proposal(&mut self, proposal: &KeyStateProposal) -> Result<bool, Error> {
         // ensure the signer is a participant
         let signer = env::signer_account_id();
@@ -62,7 +69,6 @@ impl RunningContractState {
         proposal.validate()?;
 
         // ensure there are enough old participant in the new participant set:
-        //
         let new_participant_set: BTreeSet<AccountId> =
             proposal.candidates().keys().cloned().collect();
         let old_participant_set: BTreeSet<AccountId> =

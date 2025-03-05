@@ -1,5 +1,6 @@
 pub mod config;
 pub mod errors;
+pub mod primitives;
 pub mod state;
 pub mod storage_keys;
 pub mod update;
@@ -22,11 +23,12 @@ use near_sdk::{
     env, log, near_bindgen, AccountId, CryptoHash, Gas, GasWeight, NearToken, Promise,
     PromiseError, PublicKey,
 };
+use primitives::key_state::{DKState, KeyEventId, KeyStateProposal};
+use primitives::signature::{SignRequest, SignatureRequest, YieldIndex};
+use primitives::thresholds::Threshold;
+use primitives::votes::KeyStateVotes;
 use state::initializing::InitializingContractState;
-use state::key_state::{DKState, KeyEventId, KeyStateProposal, Threshold};
 use state::running::RunningContractState;
-use state::signature::{SignRequest, SignatureRequest, YieldIndex};
-use state::votes::KeyStateVotes;
 use state::ProtocolContractState;
 use std::cmp;
 use storage_keys::StorageKey;
@@ -63,6 +65,9 @@ pub struct MpcContract {
 }
 
 impl MpcContract {
+    fn public_key(&self) -> Result<PublicKey, Error> {
+        self.protocol_state.public_key()
+    }
     fn threshold(&self) -> Result<Threshold, Error> {
         self.protocol_state.threshold()
     }
@@ -140,8 +145,7 @@ impl MpcContract {
             self.config.dk_event_timeout_blocks,
         )
     }
-
-    /// vote for `proposed_key_state`
+    /// Casts a vote for `proposed_key_state`.
     pub fn vote_new_key_state(
         &mut self,
         proposed_key_state: &KeyStateProposal,
@@ -261,13 +265,7 @@ impl VersionedMpcContract {
     #[handle_result]
     pub fn public_key(&self) -> Result<PublicKey, Error> {
         match self {
-            Self::V0(mpc_contract) => match &mpc_contract.protocol_state {
-                ProtocolContractState::Running(state) => Ok(state.key_state.public_key.clone()),
-                ProtocolContractState::Resharing(state) => {
-                    Ok(state.current_state.key_state.public_key.clone())
-                }
-                _ => Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
-            },
+            Self::V0(mpc_contract) => mpc_contract.public_key(),
         }
     }
 

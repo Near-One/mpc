@@ -1,67 +1,8 @@
-use super::key_state::KeyStateProposal;
 use crate::errors::{Error, VoteError};
-use near_sdk::{near, AccountId, PublicKey};
+use crate::primitives::key_state::KeyStateProposal;
+use near_sdk::{near, AccountId};
 use std::collections::{BTreeMap, HashSet};
 
-#[near(serializers=[borsh])]
-#[derive(Debug)]
-pub struct Votes {
-    pub votes: BTreeMap<AccountId, HashSet<AccountId>>,
-}
-
-impl Default for Votes {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Votes {
-    pub fn new() -> Self {
-        Votes {
-            votes: BTreeMap::new(),
-        }
-    }
-
-    pub fn entry(&mut self, account_id: AccountId) -> &mut HashSet<AccountId> {
-        self.votes.entry(account_id).or_default()
-    }
-}
-
-#[near(serializers=[borsh, json])]
-#[derive(Debug)]
-pub struct PkVotes {
-    pub votes: BTreeMap<PublicKey, HashSet<AccountId>>,
-}
-
-impl Default for PkVotes {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PkVotes {
-    pub fn new() -> Self {
-        PkVotes {
-            votes: BTreeMap::new(),
-        }
-    }
-    pub fn n_votes(&self, public_key: &PublicKey) -> usize {
-        return self.votes.get(public_key).map_or(0, |votes| votes.len());
-    }
-
-    pub fn entry(&mut self, public_key: PublicKey) -> &mut HashSet<AccountId> {
-        self.votes.entry(public_key).or_default()
-    }
-}
-
-/// Tracks votes for key state proposals. Each participant is allowed only a single vote.
-///
-/// # Examples
-/// ```
-/// use mpc_contract::state::votes::KeyStateVotes;
-/// let mut ksv = KeyStateVotes::default();
-/// assert!(false == ksv.remove_vote(&"account.near".parse().unwrap()));
-/// ```
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Default)]
 pub struct KeyStateVotes {

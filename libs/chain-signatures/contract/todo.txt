@@ -1,4 +1,0 @@
-- do not redefine structs in mpc, but import contract and use those
-- exposed API like "return_signature_and_clean_state_on_success" (after merging #238), should be in a separate file "exposed_api.rs" (e.g. PROMISE_CALLBACK, or SIGNATURE_RESPONSE_CALLBACK)
-
-- key generation should have a specified timeout (might be different to key reshare)
