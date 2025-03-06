@@ -1,4 +1,4 @@
-use crate::errors::{Error, InvalidParameters, InvalidState};
+use crate::errors::{Error, InvalidCandidateSet, InvalidParameters, InvalidState};
 use near_sdk::{log, near, AccountId, PublicKey};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -101,6 +101,29 @@ impl Participants {
             .map(|account_id| self.id(account_id).unwrap())
             .collect()
     }
+    pub fn next_id(&self) -> ParticipantId {
+        self.next_id.clone()
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.participant_by_id.len() != self.id_by_participant.len() {
+            return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+        }
+        for account_id in self.participants.keys() {
+            let Some(id) = self.id_by_participant.get(account_id) else {
+                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+            };
+            if self.next_id.get() <= id.get() {
+                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+            }
+            let Some(participant) = self.participant_by_id.get(id) else {
+                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+            };
+            if *participant != *account_id {
+                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+            };
+        }
+        Ok(())
+    }
 }
 
 /* Migration helpers */
@@ -166,7 +189,7 @@ impl From<legacy_contract::primitives::Candidates> for Participants {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::collections::BTreeSet;
 
     use crate::primitives::participants::{ParticipantId, Participants};
@@ -196,32 +219,54 @@ mod tests {
         assert_eq!(participants.count(), n as u64);
         let expected: BTreeSet<ParticipantId> = (0..n).map(|i| ParticipantId(i as u32)).collect();
         assert_eq!(expected, participants.ids());
+        assert!(participants.validate().is_ok());
     }
-    #[test]
-    fn test_migration_candidates() {
-        let n: usize = rand::thread_rng().gen_range(2..600);
-        let candidates = gen_legacy_candidates(n);
-        let mp: Participants = candidates.clone().into();
-        assert_eq!(mp.count(), n as u64);
-        for (account_id, info) in &candidates.candidates {
-            assert!(mp.is_participant(account_id));
-            let mp_info = mp.info(account_id).unwrap();
+
+    pub fn assert_candidate_migration(
+        legacy_candidates: &legacy_contract::primitives::Candidates,
+        migrated_participants: &Participants,
+    ) {
+        assert_eq!(
+            migrated_participants.count(),
+            legacy_candidates.candidates.len() as u64
+        );
+        for (account_id, info) in &legacy_candidates.candidates {
+            assert!(migrated_participants.is_participant(account_id));
+            let mp_info = migrated_participants.info(account_id).unwrap();
             assert_eq!(mp_info.url, info.url);
             assert_eq!(mp_info.cipher_pk, info.cipher_pk);
             assert_eq!(mp_info.sign_pk, info.sign_pk);
             assert_eq!(
                 *account_id,
-                mp.account_id(&mp.id(account_id).unwrap()).unwrap()
+                migrated_participants
+                    .account_id(&migrated_participants.id(account_id).unwrap())
+                    .unwrap()
             );
         }
     }
+
     #[test]
-    fn test_migration_participants() {
+    fn test_migration_candidates() {
         let n: usize = rand::thread_rng().gen_range(2..600);
-        let legacy_participants = gen_legacy_participants(n);
-        let participants: Participants = legacy_participants.clone().into();
-        assert_eq!(participants.count(), n as u64);
-        for (account_id, info) in participants.participants() {
+        let candidates = gen_legacy_candidates(n);
+        let mp: Participants = candidates.clone().into();
+        assert_candidate_migration(&candidates, &mp);
+        assert!(mp.validate().is_ok());
+    }
+
+    pub fn assert_participant_migration(
+        legacy_participants: &legacy_contract::primitives::Participants,
+        migrated_participants: &Participants,
+    ) {
+        assert_eq!(
+            legacy_participants.participants.len() as u64,
+            migrated_participants.count(),
+        );
+        assert_eq!(
+            legacy_participants.next_id,
+            migrated_participants.next_id().get(),
+        );
+        for (account_id, info) in migrated_participants.participants() {
             let legacy_participant = legacy_participants.get(account_id);
             assert!(legacy_participant.is_some());
             let legacy_participant = legacy_participant.unwrap();
@@ -233,7 +278,19 @@ mod tests {
                 .account_to_participant_id
                 .get(account_id)
                 .unwrap();
-            assert_eq!(participants.id(account_id).unwrap().get(), legacy_idx)
+            assert_eq!(
+                migrated_participants.id(account_id).unwrap().get(),
+                legacy_idx
+            )
         }
+    }
+
+    #[test]
+    fn test_migration_participants() {
+        let n: usize = rand::thread_rng().gen_range(2..600);
+        let legacy_participants = gen_legacy_participants(n);
+        let participants: Participants = legacy_participants.clone().into();
+        assert_participant_migration(&legacy_participants, &participants);
+        assert!(participants.validate().is_ok());
     }
 }

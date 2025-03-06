@@ -65,7 +65,7 @@ impl RunningContractState {
         if !self.is_participant(&signer) {
             return Err(VoteError::VoterNotParticipant.into());
         }
-        // ensure the proposed threshold is valid:
+        // ensure the proposed threshold parameters are valid:
         proposal.validate()?;
 
         // ensure there are enough old participant in the new participant set:
@@ -82,11 +82,21 @@ impl RunningContractState {
             .keys()
             .cloned()
             .collect();
-        let n_old = new_participant_set
+        let inter: BTreeSet<&AccountId> = new_participant_set
             .intersection(&old_participant_set)
-            .count() as u64;
+            .collect();
+        let n_old = inter.len() as u64;
         if n_old < self.key_state.threshold().value() {
             return Err(InvalidCandidateSet::InsufficientOldParticipants.into());
+        }
+
+        // ensure that the participant id is preseved:
+        for account_id in inter {
+            let existing_id = self.key_state.participants().id(account_id)?;
+            let new_id = proposal.candidates().id(account_id)?;
+            if existing_id != new_id {
+                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+            }
         }
 
         // remove any previous votes submitted by the signer:

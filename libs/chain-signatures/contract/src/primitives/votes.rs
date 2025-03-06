@@ -11,6 +11,12 @@ pub struct KeyStateVotes {
 }
 
 impl KeyStateVotes {
+    pub fn new() -> Self {
+        KeyStateVotes {
+            votes_by_proposal: BTreeMap::new(),
+            proposal_by_account: BTreeMap::new(),
+        }
+    }
     /// Removes the vote submitted by `account_id` from the state.
     /// Returns true if the vote was removed and false else.
     pub fn remove_vote(&mut self, account_id: &AccountId) -> bool {
@@ -30,11 +36,15 @@ impl KeyStateVotes {
         proposal: &KeyStateProposal,
         account_id: &AccountId,
     ) -> Result<u64, Error> {
+        if self.proposal_by_account.contains_key(account_id) {
+            return Err(VoteError::ParticipantVoteAlreadyRegistered.into());
+        }
         if self
             .proposal_by_account
             .insert(account_id.clone(), proposal.clone())
             .is_some()
         {
+            // this should not really happen
             return Err(VoteError::ParticipantVoteAlreadyRegistered.into());
         }
         Ok(self
@@ -52,38 +62,25 @@ impl KeyStateVotes {
     }
 }
 
-//#[cfg(test)]
-//mod tests {
-//
-//    use super::*;
-//    use crate::state::{key_state::ThresholdParameters, test_utils::dummy_participants};
-//    #[test]
-//    fn test_voting_and_removal() {
-//        // todo: move these to their file
-//        let n = 40;
-//        let min_threshold = 24; // 60%
-//        let participant_set_a = dummy_participants(n);
-//        //for k in 1..min_threshold {
-//        //    assert!(ThresholdParameters::new(participant_set_a.clone(), k as u64).is_err());
-//        //}
-//        //for k in min_threshold..(n + 1) {
-//        //    assert!(ThresholdParameters::new(participant_set_a.clone(), k as u64).is_ok());
-//        //}
-//        //let tpt = min_threshold;
-//        //let tp = ThresholdParameters::new(participant_set_a, tpt as u64).unwrap();
-//        //for ket in tpt..(n + 1) {
-//        //    assert!(KeyStateProposal::new(tp.clone(), ket as u64).is_ok());
-//        //}
-//
-//        //        // 3. Assert
-//        //        assert!(vote_result.is_ok());
-//        //        assert_eq!(vote_result.unwrap(), 1);
-//        //
-//        //        // Now remove the vote
-//        //        let removed = votes.remove_vote(&account_1);
-//        //        assert!(removed);
-//        //
-//        //        // Check that the vote no longer exists
-//        //        assert_eq!(votes.proposal_by_account.contains_key(&account_1), false);
-//    }
-//}
+#[cfg(test)]
+mod tests {
+    use crate::{
+        primitives::key_state::tests::gen_key_state_proposal,
+        state::tests::test_utils::gen_account_id,
+    };
+
+    use super::KeyStateVotes;
+
+    #[test]
+    fn test_voting_and_removal() {
+        let account_id = gen_account_id();
+        let mut ksv = KeyStateVotes::new();
+        let ksp = gen_key_state_proposal();
+        assert!(!ksv.remove_vote(&account_id));
+        assert_eq!(ksv.vote(&ksp, &account_id).unwrap(), 1);
+        assert!(ksv.vote(&ksp, &account_id).is_err());
+        assert!(ksv.remove_vote(&account_id));
+        let account_id = gen_account_id();
+        assert_eq!(ksv.vote(&ksp, &account_id).unwrap(), 1);
+    }
+}

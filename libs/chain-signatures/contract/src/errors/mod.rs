@@ -101,6 +101,8 @@ pub enum InvalidThreshold {
 pub enum InvalidCandidateSet {
     #[error("Set of proposed participants must contain at least `threshold` old participants.")]
     InsufficientOldParticipants,
+    #[error("Participant ids are not coherent.")]
+    IncoherentParticipantIds,
 }
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum ConversionError {

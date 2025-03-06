@@ -103,21 +103,21 @@ impl KeygenInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::tests::test_utils::gen_rand_account_id;
+    use crate::state::tests::test_utils::gen_account_id;
     //use crate::state::protocol_state::KeygenInstance;
-    use crate::state::tests::test_utils::gen_rand_pk;
+    use crate::state::tests::test_utils::gen_pk;
     use near_sdk::{AccountId, PublicKey};
 
     #[test]
     fn test_keygen_instance() {
-        let leader_account: AccountId = gen_rand_account_id();
+        let leader_account: AccountId = gen_account_id();
         let key_event_id = KeyEventId::new(1, leader_account.clone());
         //assert_eq!(leader_account, *key_event_id.leader());
         //log!(key_event_id.)
         //assert_eq!(leader_account, *key_event_id.leader());
         let mut instance = KeygenInstance::new(key_event_id);
-        let account_id = gen_rand_account_id();
-        let pk1: PublicKey = gen_rand_pk();
+        let account_id = gen_account_id();
+        let pk1: PublicKey = gen_pk();
         let votes = instance.vote_pk(account_id.clone(), pk1.clone()).unwrap();
         assert_eq!(votes, 1);
         assert_eq!(instance.n_votes(&pk1), 1);

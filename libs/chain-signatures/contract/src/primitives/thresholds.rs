@@ -39,6 +39,15 @@ impl DKGThreshold {
     pub fn value(&self) -> u64 {
         self.0
     }
+    pub fn validate(&self, n_shares: u64, k: Threshold) -> Result<(), Error> {
+        if self.value() > n_shares {
+            return Err(InvalidThreshold::MaxDKGThresholdFailed.into());
+        }
+        if self.value() < k.value() {
+            return Err(InvalidThreshold::MinDKGThresholdFailed.into());
+        }
+        ThresholdParameters::validate_threshold(n_shares, k)
+    }
 }
 
 /// Stores information about the threshold key parameters:
@@ -86,7 +95,8 @@ impl ThresholdParameters {
         Ok(())
     }
     pub fn validate(&self) -> Result<(), Error> {
-        Self::validate_threshold(self.n_participants(), self.threshold())
+        Self::validate_threshold(self.n_participants(), self.threshold())?;
+        self.participants.validate()
     }
     pub fn threshold(&self) -> Threshold {
         self.threshold.clone()
@@ -139,8 +149,13 @@ impl From<(Threshold, legacy_contract::primitives::Participants)> for ThresholdP
 }
 #[cfg(test)]
 mod tests {
+    use crate::primitives::participants::tests::{
+        assert_candidate_migration, assert_participant_migration,
+    };
     use crate::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
-    use crate::state::tests::test_utils::gen_participants;
+    use crate::state::tests::test_utils::{
+        gen_legacy_candidates, gen_legacy_participants, gen_participants,
+    };
     use rand::Rng;
 
     #[test]
@@ -202,50 +217,29 @@ mod tests {
             }
         }
     }
-    //#[test]
-    //fn test_migration_candidates() {
-    //    let n: usize = rand::thread_rng().gen_range(2..600);
-    //    let candidates = gen_legacy_candidates(n);
-    //    // migratin has to work for now invalid thresholds as well.
-    //    let threshold = Threshold::new(rand::thread_rng().gen::<u64>());
-    //    let tp: ThresholdParameters = (threshold.clone(), &candidates).into();
-    //    assert_eq!(threshold, tp.threshold());
-    //    let participants = tp.participants();
-    //    assert_eq!(participants.count(), n as u64);
-    //    for (account_id, info) in participants.participants() {
-    //        let candidate = candidates.get(account_id);
-    //        assert!(candidate.is_some());
-    //        let candidate = candidate.unwrap();
-    //        assert_eq!(candidate.account_id, *account_id);
-    //        assert_eq!(candidate.url, info.url);
-    //        assert_eq!(candidate.cipher_pk, info.cipher_pk);
-    //        assert_eq!(candidate.sign_pk, info.sign_pk);
-    //    }
-    //}
-    //#[test]
-    //fn test_migration_participants() {
-    //    let n: usize = rand::thread_rng().gen_range(2..600);
-    //    let legacy_participants = gen_legacy_participants(n);
-    //    // migratin has to work for now invalid thresholds as well.
-    //    let threshold = Threshold::new(rand::thread_rng().gen::<u64>());
-    //    let tp: ThresholdParameters = (threshold.clone(), &legacy_participants).into();
-    //    assert_eq!(threshold, tp.threshold());
-    //    let participants = tp.participants();
-    //    assert_eq!(participants.count(), n as u64);
-    //    for (account_id, info) in participants.participants() {
-    //        let legacy_participant = legacy_participants.get(account_id);
-    //        assert!(legacy_participant.is_some());
-    //        let legacy_participant = legacy_participant.unwrap();
-    //        assert_eq!(legacy_participant.account_id, *account_id);
-    //        assert_eq!(legacy_participant.url, info.url);
-    //        assert_eq!(legacy_participant.cipher_pk, info.cipher_pk);
-    //        assert_eq!(legacy_participant.sign_pk, info.sign_pk);
-    //        let legacy_idx = *legacy_participants
-    //            .account_to_participant_id
-    //            .get(account_id)
-    //            .unwrap() as u64;
-    //        // Note: Index is NOT preserved in general!
-    //        assert_eq!(tp.participant_idx(account_id).unwrap(), legacy_idx)
-    //    }
-    //}
+
+    #[test]
+    fn test_migration_candidates() {
+        let n: usize = rand::thread_rng().gen_range(2..600);
+        let candidates = gen_legacy_candidates(n);
+        // migratin has to work for now invalid thresholds as well.
+        let threshold = Threshold::new(rand::thread_rng().gen::<u64>());
+        let tp: ThresholdParameters = (threshold.clone(), candidates.clone()).into();
+        assert_eq!(threshold, tp.threshold());
+        let participants = tp.participants();
+        assert_eq!(participants.count(), n as u64);
+        assert_candidate_migration(&candidates, participants);
+    }
+    #[test]
+    fn test_migration_participants() {
+        let n: usize = rand::thread_rng().gen_range(2..600);
+        let legacy_participants = gen_legacy_participants(n);
+        // migratin has to work for now invalid thresholds as well.
+        let threshold = Threshold::new(rand::thread_rng().gen::<u64>());
+        let tp: ThresholdParameters = (threshold.clone(), legacy_participants.clone()).into();
+        assert_eq!(threshold, tp.threshold());
+        let participants = tp.participants();
+        assert_eq!(participants.count(), n as u64);
+        assert_participant_migration(&legacy_participants, participants);
+    }
 }
