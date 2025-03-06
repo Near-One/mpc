@@ -1,0 +1,86 @@
+x-build-context: &build-context
+  context: ../../
+  dockerfile: integration-test/Dockerfile
+
+x-environment: &common-envs
+  MPC_HOME_DIR: /app/data
+  RUST_BACKTRACE: full
+  RUST_LOG: info
+
+services:
+  helios-base:
+    build:
+      context: ../..
+      dockerfile: helios/Dockerfile
+    environment:
+      STACK: opstack
+      NETWORK: base
+      EXECUTION_RPC: ${BASE_EXECUTION_RPC}
+      CONSENSUS_RPC: ${BASE_CONSENSUS_RPC}
+      RPC_PORT: 8545
+    ports:
+      - "8545:8545"
+  helios-eth:
+    build:
+      context: ../..
+      dockerfile: helios/Dockerfile
+    environment:
+      STACK: ethereum
+      NETWORK: mainnet
+      EXECUTION_RPC: ${ETH_EXECUTION_RPC}
+      CONSENSUS_RPC: ${ETH_CONSENSUS_RPC}
+      RPC_PORT: 8546
+    ports:
+      - "8546:8545"
+  node0:
+    build:
+      <<: *build-context
+    environment:
+      <<: *common-envs
+      MPC_SECRET_STORE_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      MPC_P2P_PRIVATE_KEY: ed25519:33XCRLaKvqKAfww7XrpY8MFPqgPcEgdEGDaiGVpaGH2SF2Fjb7wtHJv5GCPBiEJkk1D6KH7iPF6xbZ63RRuYWiUG
+      MPC_NEAR_ACCOUNT_ID: 2719987951
+    ports:
+      - "20000:20000"
+    volumes:
+      - ./0:/app/data
+      - ./config.yaml:/app/data/config.yaml
+  node1:
+    build:
+      <<: *build-context
+    environment:
+      <<: *common-envs
+      MPC_SECRET_STORE_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+      MPC_P2P_PRIVATE_KEY: ed25519:5S7diW9n2XfiydnkbzCgGiL5kCT3KQBjcdEjQaSSXdKcGMK9XMoJQZ1N1n3mTvJiWW663eJ48bigLY85HUA9cHA
+      MPC_NEAR_ACCOUNT_ID: 4271063273
+    ports:
+      - "20001:20000"
+    volumes:
+      - ./1:/app/data
+      - ./config.yaml:/app/data/config.yaml
+  node2:
+    build:
+      <<: *build-context
+    environment:
+      <<: *common-envs
+      MPC_SECRET_STORE_KEY: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+      MPC_P2P_PRIVATE_KEY: ed25519:5WHTf6M73AdmuKBRP44G4ieavJFPPZdFgGNbrfcwAhmVmXYQtCrb3TsM7gYT6GDGmitGqimPd3mfgHtKe3tDALeb
+      MPC_NEAR_ACCOUNT_ID: 3961734869
+    ports:
+      - "20002:20000"
+    volumes:
+      - ./2:/app/data
+      - ./config.yaml:/app/data/config.yaml
+  node3:
+    build:
+      <<: *build-context
+    environment:
+      <<: *common-envs
+      MPC_SECRET_STORE_KEY: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+      MPC_P2P_PRIVATE_KEY: ed25519:kbUbiKpbY44tWzeKZxnxTniTBw8ENYtUpCars9qN52qTkEirg2m3b7m4iE5m2zuhLxrzqAKVmpj736mLfRPcC2Y
+      MPC_NEAR_ACCOUNT_ID: 1480181394
+    ports:
+      - "20003:20000"
+    volumes:
+      - ./3:/app/data
+      - ./config.yaml:/app/data/config.yaml
