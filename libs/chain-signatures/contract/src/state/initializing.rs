@@ -6,33 +6,8 @@ use crate::primitives::leader::leader;
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::log;
 use near_sdk::{env, near, AccountId, PublicKey};
-use std::collections::BTreeMap;
-
 use std::collections::HashSet;
-
-#[near(serializers=[borsh])]
-#[derive(Debug)]
-pub struct Votes {
-    pub votes: BTreeMap<AccountId, HashSet<AccountId>>,
-}
-
-impl Default for Votes {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Votes {
-    pub fn new() -> Self {
-        Votes {
-            votes: BTreeMap::new(),
-        }
-    }
-
-    pub fn entry(&mut self, account_id: AccountId) -> &mut HashSet<AccountId> {
-        self.votes.entry(account_id).or_default()
-    }
-}
+use std::collections::{BTreeMap, BTreeSet};
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
@@ -60,6 +35,7 @@ impl PkVotes {
         self.votes.entry(public_key).or_default()
     }
 }
+
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
 pub struct KeygenInstance {
@@ -67,7 +43,9 @@ pub struct KeygenInstance {
     pub participants_completed: BTreeMap<AccountId, PublicKey>,
     pub pk_votes: PkVotes,
     pub active: bool,
+    pub aborted: BTreeSet<AccountId>,
 }
+
 impl KeygenInstance {
     pub fn active(&self, timeout_in_blocks: u64) -> bool {
         self.active && !self.key_event_id.timed_out(timeout_in_blocks)
@@ -78,10 +56,14 @@ impl KeygenInstance {
             participants_completed: BTreeMap::new(),
             pk_votes: PkVotes::new(),
             active: true,
+            aborted: BTreeSet::new(),
         }
     }
     /// Commits the vote of `account_id` to `public_key`, removing any previous votes and returning the total number of votes for `public_key`.
     pub fn vote_pk(&mut self, account_id: AccountId, public_key: PublicKey) -> Result<u64, Error> {
+        if self.aborted.contains(&account_id) {
+            return Err(VoteError::VoterAlreadyAborted.into());
+        }
         if let Some(prev_vote) = self
             .participants_completed
             .insert(account_id.clone(), public_key.clone())
@@ -94,41 +76,27 @@ impl KeygenInstance {
         self.pk_votes.entry(public_key.clone()).insert(account_id);
         Ok(self.pk_votes.entry(public_key).len() as u64)
     }
+
+    pub fn remove_vote(&mut self, account_id: &AccountId) -> bool {
+        if let Some(pk) = self.participants_completed.remove(account_id) {
+            self.pk_votes.entry(pk).remove(account_id)
+        } else {
+            false
+        }
+    }
     /// Returns the total number of votes for `public_key`
     pub fn n_votes(&self, public_key: &PublicKey) -> u64 {
         self.pk_votes.n_votes(public_key) as u64
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::state::tests::test_utils::gen_account_id;
-    //use crate::state::protocol_state::KeygenInstance;
-    use crate::state::tests::test_utils::gen_pk;
-    use near_sdk::{AccountId, PublicKey};
-
-    #[test]
-    fn test_keygen_instance() {
-        let leader_account: AccountId = gen_account_id();
-        let key_event_id = KeyEventId::new(1, leader_account.clone());
-        //assert_eq!(leader_account, *key_event_id.leader());
-        //log!(key_event_id.)
-        //assert_eq!(leader_account, *key_event_id.leader());
-        let mut instance = KeygenInstance::new(key_event_id);
-        let account_id = gen_account_id();
-        let pk1: PublicKey = gen_pk();
-        let votes = instance.vote_pk(account_id.clone(), pk1.clone()).unwrap();
-        assert_eq!(votes, 1);
-        assert_eq!(instance.n_votes(&pk1), 1);
-
-        let pk2: PublicKey = "secp256k1:qMoRgcoXai4mBPsdbHi1wfyxF9TdbPCF4qSDQTRP3TfescSRoUdSx6nmeQoN3aiwGzwMyGXAb1gUjBTv5AY8DXj".parse().unwrap();
-        let votes = instance.vote_pk(account_id, pk2.clone()).unwrap();
-        assert_eq!(votes, 1);
-        assert_eq!(instance.n_votes(&pk1), 0);
-        assert_eq!(instance.n_votes(&pk2), 1);
+    /// aborts the current keygen for `account_id` and returns the number of votes received to
+    /// abort the current keygen.
+    pub fn abort(&mut self, account_id: AccountId) -> u64 {
+        self.remove_vote(&account_id);
+        self.aborted.insert(account_id);
+        self.aborted.len() as u64
     }
 }
+
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
 pub struct InitializingContractState {
@@ -207,8 +175,6 @@ impl InitializingContractState {
     }
     /// Returns the AccountId of the current keygen leader
     pub fn keygen_leader(&self) -> AccountId {
-        // todo: FIX THIS. There needs to be a mechanism to introduce randomness if a timeout is reached.
-        // idem for reshare
         let last_uid = if let Some(current_keygen) = &self.current_keygen_instance {
             current_keygen.key_event_id.uid()
         } else {
@@ -225,6 +191,10 @@ impl InitializingContractState {
             Err(err) => env::panic_str(&err.to_string()),
         }
     }
+
+    // todo: pub fn abort(&mut self) -> Result<Option<InitializingContractState>, Error> {
+    //
+    // }
 }
 
 impl From<&legacy_contract::InitializingContractState> for InitializingContractState {
@@ -233,5 +203,47 @@ impl From<&legacy_contract::InitializingContractState> for InitializingContractS
             proposed_key_state: state.into(),
             current_keygen_instance: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //
+    //pub fn start_keygen_instance(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
+    //
+    //pub fn vote_pk(
+    //pub fn has_active_keygen(&self, dk_event_timeout_blocks: u64) -> bool {
+    //pub fn keygen_leader(&self) -> AccountId {
+    //pub fn abort()
+    //migrating
+    use super::*;
+    use crate::state::tests::test_utils::gen_account_id;
+    use crate::state::tests::test_utils::gen_pk;
+    use near_sdk::{AccountId, PublicKey};
+
+    #[test]
+    fn test_keygen_instance() {
+        let leader_account: AccountId = gen_account_id();
+        let key_event_id = KeyEventId::new(1, leader_account.clone());
+        let mut instance = KeygenInstance::new(key_event_id);
+        let account_id = gen_account_id();
+        let pk1: PublicKey = gen_pk();
+        let votes = instance.vote_pk(account_id.clone(), pk1.clone()).unwrap();
+        assert_eq!(votes, 1);
+        assert_eq!(instance.n_votes(&pk1), 1);
+
+        let pk2: PublicKey = gen_pk();
+        let votes = instance.vote_pk(account_id.clone(), pk2.clone()).unwrap();
+        assert_eq!(votes, 1);
+        assert_eq!(instance.n_votes(&pk1), 0);
+        assert_eq!(instance.n_votes(&pk2), 1);
+        assert!(instance.remove_vote(&account_id));
+        assert_eq!(instance.abort(account_id.clone()), 1);
+        assert!(instance.vote_pk(account_id.clone(), pk1.clone()).is_err());
+        let account_id = gen_account_id();
+        let votes = instance.vote_pk(account_id.clone(), pk1.clone()).unwrap();
+        assert_eq!(votes, 1);
+        assert_eq!(instance.n_votes(&pk1), 1);
+        assert_eq!(instance.n_votes(&pk2), 0);
     }
 }
