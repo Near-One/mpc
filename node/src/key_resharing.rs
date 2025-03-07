@@ -75,6 +75,7 @@ pub async fn run_key_resharing_client(
 ) -> anyhow::Result<()> {
     let task_id = EcdsaTaskId::KeyResharing {
         new_epoch: state.old_epoch + 1,
+        // add instance id
     };
     let channel = if config.is_leader_for_keygen() {
         client.new_channel_for_task(task_id, client.all_participant_ids())?
@@ -112,7 +113,7 @@ pub async fn run_key_resharing_client(
     .await?;
     keyshare_storage
         .store(&RootKeyshareData::new(
-            state.old_epoch + 1,
+            state.old_epoch + 1, // add id
             KeygenOutput {
                 private_share: new_keyshare,
                 public_key,

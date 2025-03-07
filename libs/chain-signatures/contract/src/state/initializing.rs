@@ -4,8 +4,9 @@ use crate::errors::{Error, KeyEventError};
 use crate::primitives::key_state::{DKState, KeyEventId, KeyStateProposal};
 use crate::primitives::leader::leader;
 use crate::primitives::votes::KeyStateVotes;
-use near_sdk::log;
 use near_sdk::{env, near, AccountId, PublicKey};
+use near_sdk::{log, BlockHeight};
+use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,14 +40,19 @@ impl PkVotes {
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
 pub struct KeygenInstance {
-    pub key_event_id: KeyEventId,
-    pub participants_completed: BTreeMap<AccountId, PublicKey>,
-    pub pk_votes: PkVotes,
-    pub active: bool,
-    pub aborted: BTreeSet<AccountId>,
+    key_event_id: KeyEventId,
+    participants_completed: BTreeMap<AccountId, PublicKey>,
+    pk_votes: PkVotes,
+    //active: bool, replace with function: active(event_timeout_blocks,threshold)
+    aborted: BTreeSet<AccountId>,
 }
 
 impl KeygenInstance {
+    //pub fn succeeded(event_timeout_blocks,threshold) -> bool
+    //pub fn active(event_timeout_blocks,threshold) -> bool
+    pub fn deactivate(&mut self) {
+        self.active = false;
+    }
     pub fn active(&self, timeout_in_blocks: u64) -> bool {
         self.active && !self.key_event_id.timed_out(timeout_in_blocks)
     }
@@ -88,18 +94,23 @@ impl KeygenInstance {
     pub fn n_votes(&self, public_key: &PublicKey) -> u64 {
         self.pk_votes.n_votes(public_key) as u64
     }
-    /// aborts the current keygen for `account_id` and returns the number of votes received to
-    /// abort the current keygen.
+    pub fn n_aborts(&self) -> u64 {
+        self.aborted.len() as u64
+    }
+    /// Casts a vote from `account_id` to abort the current keygen.
+    /// Removes any previous votes by `account_id`.
+    /// Returns the number of votes received to abort.
     pub fn abort(&mut self, account_id: AccountId) -> u64 {
         self.remove_vote(&account_id);
         self.aborted.insert(account_id);
-        self.aborted.len() as u64
+        self.n_aborts()
     }
 }
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
 pub struct InitializingContractState {
+    pub failed_keygen_attemps: u64, // used to rotate leader
     pub proposed_key_state: KeyStateProposal,
     pub current_keygen_instance: Option<KeygenInstance>,
 }
@@ -180,21 +191,52 @@ impl InitializingContractState {
         } else {
             0
         };
+        let seed = last_uid + self.failed_keygen_attemps;
         let leader_id = leader(
             self.proposed_key_state
                 .proposed_threshold_parameters()
                 .participants(),
-            last_uid,
+            seed,
         );
-        match self.proposed_key_state.candidate_by_index(&leader_id) {
+        match self.proposed_key_state.candidate(&leader_id) {
             Ok(res) => res,
             Err(err) => env::panic_str(&err.to_string()),
         }
     }
 
-    // todo: pub fn abort(&mut self) -> Result<Option<InitializingContractState>, Error> {
-    //
-    // }
+    fn abort_keygen_instance(&mut self) {
+        let current = self.current_keygen_instance.as_mut().unwrap();
+        current.deactivate();
+        self.failed_keygen_attemps += 1;
+    }
+
+    /// Casts a vote to abort the key event `key_event_id`.
+    /// Fails if there is no active keygen or if the igner is not a candidate.
+    pub fn vote_abort(
+        &mut self,
+        key_event_id: KeyEventId,
+        dk_event_timeout_blocks: u64,
+    ) -> Result<Option<InitializingContractState>, Error> {
+        // ensure the signer is a participant
+        let signer = env::signer_account_id();
+        if !self.proposed_key_state.is_proposed(&signer) {
+            return Err(VoteError::VoterNotParticipant.into());
+        }
+        // ensure there is an active reshare
+        if !self.has_active_keygen(dk_event_timeout_blocks) {
+            return Err(KeyEventError::NoActiveKeyEvent.into()); // todo: fix errors and clean them up
+        }
+        // Ensure the key_event_id matches
+        let current = self.current_keygen_instance.as_mut().unwrap();
+        if current.key_event_id != key_event_id {
+            return Err(KeyEventError::KeyEventIdMismatch.into());
+        }
+        if self.proposed_key_state.proposed_threshold().value() <= current.abort(signer) {
+            // de-activate the current keygen instance
+            current.deactivate();
+            self.current_keygen_instance // todo: replace
+        }
+    }
 }
 
 impl From<&legacy_contract::InitializingContractState> for InitializingContractState {

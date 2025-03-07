@@ -1,4 +1,5 @@
 pub mod initializing;
+pub mod key_event;
 pub mod resharing;
 pub mod running;
 #[cfg(test)]

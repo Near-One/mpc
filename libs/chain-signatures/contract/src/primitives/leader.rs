@@ -3,18 +3,17 @@ use k256::sha2::{Digest, Sha256};
 
 /// Computes the leader selection order for a given signature request.
 /// This will be a different pseudorandom order for each signature request.
-pub fn leader(participants: &Participants, uid: u64) -> ParticipantId {
+pub fn leaders(participants: &Participants, uid: u64) -> Vec<ParticipantId> {
     let mut leader_selection_hashes = participants
         .ids()
         .iter()
         .map(|p| (leader_selection_hash(p, uid), p.clone()))
         .collect::<Vec<_>>();
     leader_selection_hashes.sort();
-    let res: Vec<ParticipantId> = leader_selection_hashes
+    leader_selection_hashes
         .into_iter()
         .map(|(_, p)| p)
-        .collect();
-    res[0].clone()
+        .collect()
 }
 
 fn leader_selection_hash(participant_id: &ParticipantId, uid: u64) -> u64 {

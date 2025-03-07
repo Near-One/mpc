@@ -1,12 +1,18 @@
 use super::participants::{ParticipantId, Participants};
 use super::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 use crate::errors::Error;
-use near_sdk::{env, near, AccountId, PublicKey};
+use near_sdk::{near, AccountId, PublicKey};
 
+#[near(serializers=[borsh, json])]
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct EpochId(u64);
+#[near(serializers=[borsh, json])]
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct KeyEventAttempt(u64);
 /// Identifier for a key event:
 /// `epoch_id` the epoch for which the key is supposed to be active
 /// `start_block_id`: the block during which the key event startet
-/// `random_uid`: a random u64 generated via env::random_seed() during `start_block_id`
+/// `uid`: a random u64 generated via env::random_seed() during `start_block_id`
 /// `leader`: the leader for this key event.
 ///
 /// # Example usage:
@@ -19,54 +25,45 @@ use near_sdk::{env, near, AccountId, PublicKey};
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KeyEventId {
-    epoch_id: u64,
-    start_block_id: u64,
-    random_uid: u64,
-    leader: AccountId,
+    epoch_id: EpochId,
+    attempt: KeyEventAttempt,
 }
+pub struct KeyId(u128);
 
 impl KeyEventId {
     /// Returns the unique id associated with this key event.
-    pub fn uid(&self) -> u64 {
-        self.random_uid
+    pub fn attempt(&self) -> u64 {
+        self.attempt.0
+    }
+    /// Returns the unique id associated with this key event.
+    pub fn next_attempt(&self) -> u64 {
+        self.attempt.0 + 1
+    }
+    /// Returns self.epoch_id + 1.
+    pub fn epoch_id(&self) -> u64 {
+        self.epoch_id.0
     }
     /// Returns self.epoch_id + 1.
     pub fn next_epoch_id(&self) -> u64 {
-        self.epoch_id + 1
+        self.epoch_id.0 + 1
     }
-    /// Returns true if `timeout_in_blocks` blocks have passed since the start of this key event.
-    pub fn timed_out(&self, timeout_in_blocks: u64) -> bool {
-        self.start_block_id + timeout_in_blocks < env::block_height()
-    }
+    //pub fn id(&self) -> KeyId {
+    //    KeyId(((self.epoch_id.0 as u128) << 64) ^ (self.attempt.0 as u128))
+    //}
+    ///// Returns true if `timeout_in_blocks` blocks have passed since the start of this key event.
+    //pub fn timed_out(&self, timeout_in_blocks: u64) -> bool {
+    //    self.start_block_id + timeout_in_blocks < env::block_height()
+    //}
     // Construct a new KeyEventId for `epoch_id` and `leader`.
-    pub fn new(epoch_id: u64, leader: AccountId) -> Self {
-        fn p_rand64() -> u64 {
-            let mut bytes = [0u8; 8];
-            let seed = env::random_seed();
-            bytes.copy_from_slice(&seed[..8]);
-            u64::from_le_bytes(bytes)
-        }
-        KeyEventId {
-            epoch_id,
-            start_block_id: env::block_height(),
-            random_uid: p_rand64(),
-            leader,
-        }
-    }
+    //pub fn next_event(epoch_id: EpochId, attempt: AttemptId) -> Self {
+    //    KeyEventId { epoch_id, attempt }
+    //}
 
-    pub fn leader(&self) -> &AccountId {
-        &self.leader
-    }
-    pub fn start_block_id(&self) -> u64 {
-        self.start_block_id
-    }
     // for migrating from V1 to V2
     pub fn new_migrated_key(epoch_id: u64) -> Self {
         KeyEventId {
-            epoch_id,
-            start_block_id: 0,
-            random_uid: 0,
-            leader: "migrated_key".parse().unwrap(),
+            epoch_id: EpochId(epoch_id),
+            attempt: KeyEventAttempt(0),
         }
     }
 }
@@ -87,7 +84,7 @@ impl DKState {
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
     }
-    pub fn epoch_id(&self) -> u64 {
+    pub fn epoch_id(&self) -> EpochId {
         self.key_event_id.epoch_id
     }
     pub fn next_epoch_id(&self) -> u64 {
@@ -99,8 +96,8 @@ impl DKState {
     pub fn threshold(&self) -> Threshold {
         self.threshold_parameters.threshold()
     }
-    pub fn uid(&self) -> u64 {
-        self.key_event_id.random_uid
+    pub fn id(&self) -> u64 {
+        self.key_event_id.id
     }
     pub fn participants(&self) -> &Participants {
         self.threshold_parameters.participants()
@@ -156,7 +153,7 @@ impl KeyStateProposal {
     pub fn candidates(&self) -> &Participants {
         self.proposed_threshold_parameters.participants()
     }
-    pub fn candidate_by_index(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
+    pub fn candidate(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
         self.proposed_threshold_parameters.participant_by_idx(idx)
     }
     pub fn proposed_threshold(&self) -> Threshold {
@@ -235,41 +232,37 @@ pub mod tests {
     use crate::state::tests::test_utils::gen_legacy_resharing_state;
     use crate::state::tests::test_utils::gen_legacy_running_state;
     use crate::state::tests::test_utils::min_thrershold;
-    use crate::state::tests::test_utils::{
-        gen_account_id, gen_key_event_id, gen_pk, gen_seed_uid, gen_threshold_params,
-    };
-    use near_sdk::{log, test_utils::VMContextBuilder, testing_env, AccountId};
+    use crate::state::tests::test_utils::{gen_key_event_id, gen_pk, gen_threshold_params};
     use rand::Rng;
 
     const MAX_N: usize = 900;
 
     #[test]
     fn test_key_event_id() {
-        let leader_account: AccountId = gen_account_id();
-        let (seed1, uid1) = gen_seed_uid();
-        let expected_block_height: u64 = 80;
-        let context = VMContextBuilder::new()
-            .random_seed(seed1)
-            .block_height(expected_block_height)
-            .build();
-        testing_env!(context);
-        let key_event_id = KeyEventId::new(0, leader_account.clone());
-        assert_eq!(leader_account, *key_event_id.leader());
-        assert_eq!(1, key_event_id.next_epoch_id());
-        assert_eq!(uid1, key_event_id.uid());
-        assert!(!key_event_id.timed_out(0));
-        assert_eq!(expected_block_height, key_event_id.start_block_id());
-        log!("{:?}", key_event_id);
-        let (seed2, uid2) = gen_seed_uid();
-        let context = VMContextBuilder::new()
-            .random_seed(seed2)
-            .block_height(expected_block_height + 1000)
-            .build();
-        testing_env!(context);
-        assert!(key_event_id.timed_out(999));
-        let key_event_id = KeyEventId::new(0, leader_account.clone());
-        assert_eq!(uid2, key_event_id.uid());
+        //let leader_account: AccountId = gen_account_id();
+        //let (seed1, uid1) = gen_seed_uid();
+        //let expected_block_height: u64 = 80;
+        //let context = VMContextBuilder::new()
+        //    .random_seed(seed1)
+        //    .block_height(expected_block_height)
+        //    .build();
+        //testing_env!(context);
+        let epoch_id = rand::thread_rng().gen();
+        let id = rand::thread_rng().gen();
+        let key_event_id = KeyEventId::new(epoch_id, id);
+        assert_eq!(id + 1, key_event_id.next_epoch_id());
+        assert_eq!(id, key_event_id.id());
+        //log!("{:?}", key_event_id);
+        //let (seed2, uid2) = gen_seed_uid();
+        //let context = VMContextBuilder::new()
+        //    .random_seed(seed2)
+        //    .block_height(expected_block_height + 1000)
+        //    .build();
+        //testing_env!(context);
+        //let key_event_id = KeyEventId::new(0, leader_account.clone());
+        //assert_eq!(uid2, key_event_id.uid());
         assert_eq!(KeyEventId::new_migrated_key(5).next_epoch_id(), 6);
+        assert_eq!(KeyEventId::new_migrated_key(5).id(), 0);
     }
 
     #[test]

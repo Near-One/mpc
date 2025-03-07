@@ -38,6 +38,11 @@ impl ReshareInstance {
 pub struct ResharingContractState {
     pub current_state: RunningContractState,
     pub proposed_key_state: KeyStateProposal,
+    pub key_id: KeyEventId,
+    // key id
+    // current key event instance
+    // - key id: epoch_id, attempt_id
+    //
     pub current_reshare: Option<ReshareInstance>,
 }
 
@@ -57,6 +62,12 @@ impl From<&legacy_contract::ResharingContractState> for ResharingContractState {
 }
 
 impl ResharingContractState {
+    // pub fn leader_order() -> Vector<ParticipantId>
+    // pub fn key_event_id() -> {epoch, attemp}
+    // pub fn current_key_event() -> KeyEvent
+    // pub fn last_vote_complete()
+    // pub fn vote_complete() --> might change (or not). Resolve promise when changing, reset
+    // timeout for each vote_complete.
     pub fn public_key(&self) -> &PublicKey {
         self.current_state.public_key()
     }
@@ -90,7 +101,7 @@ impl ResharingContractState {
         }
     }
     pub fn get_candidate_by_index(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
-        self.proposed_key_state.candidate_by_index(idx)
+        self.proposed_key_state.candidate(idx)
     }
     pub fn n_proposed_participants(&self) -> u64 {
         self.proposed_key_state.n_proposed_participants()
@@ -118,6 +129,8 @@ impl ResharingContractState {
     pub fn is_leader(&self, account_id: &AccountId) -> bool {
         *account_id != self.reshare_leader()
     }
+
+    //pub fn epoch_id() -> u64
 }
 
 /// Helper functions
