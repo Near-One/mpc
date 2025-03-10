@@ -5,11 +5,11 @@ pub mod running;
 #[cfg(test)]
 pub mod tests;
 
-use crate::errors::{Error, InvalidState, VoteError};
+use crate::errors::{Error, InvalidState};
 use crate::primitives::key_state::{KeyEventId, KeyStateProposal};
 use crate::primitives::thresholds::Threshold;
 use initializing::InitializingContractState;
-use near_sdk::{near, AccountId, PublicKey};
+use near_sdk::{near, PublicKey};
 use resharing::ResharingContractState;
 use running::RunningContractState;
 
@@ -32,9 +32,7 @@ impl ProtocolContractState {
     }
     pub fn threshold(&self) -> Result<Threshold, Error> {
         match self {
-            ProtocolContractState::Initializing(state) => {
-                Ok(state.proposed_key_state.proposed_threshold())
-            }
+            ProtocolContractState::Initializing(state) => Ok(state.keygen.proposed_threshold()),
             ProtocolContractState::Running(state) => Ok(state.key_state.threshold()),
             ProtocolContractState::Resharing(state) => {
                 Ok(state.current_state.key_state.threshold())
@@ -48,17 +46,13 @@ impl ProtocolContractState {
         let ProtocolContractState::Initializing(state) = self else {
             return Err(InvalidState::ProtocolStateNotInitializing.into());
         };
-        state.start_keygen_instance(dk_event_timeout_blocks)
+        state.start(dk_event_timeout_blocks)
     }
-    pub fn start_reshare_instance(
-        &mut self,
-        new_epoch_id: u64,
-        dk_event_timeout_blocks: u64,
-    ) -> Result<(), Error> {
+    pub fn start_reshare_instance(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
         let ProtocolContractState::Resharing(state) = self else {
             return Err(InvalidState::ProtocolStateNotResharing.into());
         };
-        state.start_reshare_instance(new_epoch_id, dk_event_timeout_blocks)
+        state.start(dk_event_timeout_blocks)
     }
     pub fn vote_reshared(
         &mut self,
@@ -139,27 +133,15 @@ impl ProtocolContractState {
         }
         false
     }
-    pub fn is_participant(&self, voter: AccountId) -> Result<AccountId, Error> {
-        match &self {
-            ProtocolContractState::Initializing(state) => {
-                if !state.proposed_key_state.is_proposed(&voter) {
-                    return Err(VoteError::VoterNotParticipant.into());
-                }
-            }
-            ProtocolContractState::Running(state) => {
-                if !state.key_state.is_participant(&voter) {
-                    return Err(VoteError::VoterNotParticipant.into());
-                }
-            }
-            ProtocolContractState::Resharing(state) => {
-                if !state.is_old_participant(&voter) {
-                    return Err(VoteError::VoterNotParticipant.into());
-                }
-            }
+    pub fn authenticate_update_vote(&self) -> Result<(), Error> {
+        let _ = match &self {
+            ProtocolContractState::Initializing(state) => state.authenticate_candidate()?.get(),
+            ProtocolContractState::Running(state) => state.authenticate_participant()?.get(),
+            ProtocolContractState::Resharing(state) => state.authenticate_participant()?.get(),
             ProtocolContractState::NotInitialized => {
                 return Err(InvalidState::UnexpectedProtocolState.message(self.name()));
             }
-        }
-        Ok(voter)
+        };
+        Ok(())
     }
 }

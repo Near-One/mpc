@@ -49,6 +49,8 @@ pub enum VoteError {
     InconsistentVotingState,
     #[error("Voter already aborted the current key event.")]
     VoterAlreadyAborted,
+    #[error("Vote already casted.")]
+    VoteAlreadySubmitted,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]

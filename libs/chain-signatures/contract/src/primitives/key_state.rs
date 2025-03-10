@@ -21,13 +21,13 @@ impl EpochId {
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct KeyEventAttempt(u64);
-impl KeyEventAttempt {
+pub struct AttemptId(u64);
+impl AttemptId {
     pub fn new() -> Self {
-        KeyEventAttempt(0)
+        AttemptId(0)
     }
     pub fn next(&self) -> Self {
-        KeyEventAttempt(&self.0 + 1)
+        AttemptId(&self.0 + 1)
     }
     pub fn get(&self) -> u64 {
         self.0
@@ -50,13 +50,12 @@ impl KeyEventAttempt {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KeyEventId {
     epoch_id: EpochId,
-    attempt: KeyEventAttempt,
+    attempt: AttemptId,
 }
-pub struct KeyId(u128);
 
 impl KeyEventId {
     /// Returns the unique id associated with this key event.
-    pub fn attempt(&self) -> KeyEventAttempt {
+    pub fn attempt(&self) -> AttemptId {
         self.attempt.clone()
     }
     /// Returns the unique id associated with this key event.
@@ -74,7 +73,7 @@ impl KeyEventId {
     //pub fn next_epoch(&self) -> Self {
     //    KeyEventId {
     //        epoch_id: self.epoch_id.next(),
-    //        attempt: KeyEventAttempt::new(),
+    //        attempt: AttemptId::new(),
     //    }
     //}
     //pub fn id(&self) -> KeyId {
@@ -85,7 +84,7 @@ impl KeyEventId {
     //    self.start_block_id + timeout_in_blocks < env::block_height()
     //}
     /// Construct a new KeyEventId for `epoch_id` and `leader`.
-    pub fn new(epoch_id: EpochId, attempt: KeyEventAttempt) -> Self {
+    pub fn new(epoch_id: EpochId, attempt: AttemptId) -> Self {
         KeyEventId { epoch_id, attempt }
     }
 
@@ -93,7 +92,7 @@ impl KeyEventId {
     pub fn new_migrated_key(epoch_id: u64) -> Self {
         KeyEventId {
             epoch_id: EpochId(epoch_id),
-            attempt: KeyEventAttempt::new(),
+            attempt: AttemptId::new(),
         }
     }
 }
@@ -111,6 +110,11 @@ pub struct DKState {
 }
 
 impl DKState {
+    pub fn authenticate(&self) -> Result<AuthenticatedParticipantId, Error> {
+        let signer = env::signer_account_id();
+        let id = self.threshold_parameters.participant_idx(&signer)?;
+        Ok(AuthenticatedParticipantId(id))
+    }
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
     }
@@ -163,6 +167,15 @@ pub struct KeyStateProposal {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AuthenticatedCandidateId(ParticipantId);
 impl AuthenticatedCandidateId {
+    pub fn get(&self) -> ParticipantId {
+        self.0.clone()
+    }
+}
+
+#[near(serializers=[borsh, json])]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AuthenticatedParticipantId(ParticipantId);
+impl AuthenticatedParticipantId {
     pub fn get(&self) -> ParticipantId {
         self.0.clone()
     }
@@ -267,8 +280,8 @@ impl From<&legacy_contract::InitializingContractState> for KeyStateProposal {
 #[cfg(test)]
 pub mod tests {
     use super::DKState;
+    use crate::primitives::key_state::AttemptId;
     use crate::primitives::key_state::EpochId;
-    use crate::primitives::key_state::KeyEventAttempt;
     use crate::primitives::key_state::KeyEventId;
     use crate::primitives::key_state::KeyStateProposal;
     use crate::primitives::participants::tests::assert_candidate_migration;
@@ -287,10 +300,10 @@ pub mod tests {
     fn test_key_event_id() {
         let id = rand::thread_rng().gen();
         let epoch_id = EpochId::new(id);
-        let key_event_id = KeyEventId::new(epoch_id.clone());
+        let key_event_id = KeyEventId::new(epoch_id.clone(), AttemptId::new());
         assert_eq!(epoch_id, key_event_id.epoch_id());
         assert_eq!(id, key_event_id.epoch_id().get());
-        assert_eq!(KeyEventAttempt::new(), key_event_id.attempt());
+        assert_eq!(AttemptId::new(), key_event_id.attempt());
         assert_eq!(0, key_event_id.attempt().get());
         assert_eq!(KeyEventId::new_migrated_key(5).epoch_id(), EpochId::new(5));
         assert_eq!(KeyEventId::new_migrated_key(5).attempt().get(), 0);

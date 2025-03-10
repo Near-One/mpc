@@ -1,3 +1,4 @@
+use crate::primitives::key_state::{AttemptId, EpochId};
 use crate::primitives::participants::{ParticipantInfo, Participants};
 use crate::primitives::thresholds::Threshold;
 use crate::primitives::{key_state::KeyEventId, thresholds::ThresholdParameters};
@@ -117,7 +118,7 @@ pub fn gen_seed_uid() -> ([u8; 32], u64) {
 
 pub fn gen_key_event_id() -> KeyEventId {
     let epoch_id: u64 = rand::thread_rng().gen();
-    let leader_account: AccountId = gen_account_id();
+    //let leader_account: AccountId = gen_account_id();
     let (seed, _) = gen_seed_uid();
     let expected_block_height: u64 = 80;
     let context = VMContextBuilder::new()
@@ -125,7 +126,7 @@ pub fn gen_key_event_id() -> KeyEventId {
         .block_height(expected_block_height)
         .build();
     testing_env!(context);
-    KeyEventId::new(epoch_id, leader_account.clone())
+    KeyEventId::new(EpochId::new(epoch_id), AttemptId::new())
 }
 
 pub fn gen_threshold_params(max_n: usize) -> ThresholdParameters {

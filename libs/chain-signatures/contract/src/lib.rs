@@ -23,11 +23,12 @@ use near_sdk::{
     env, log, near_bindgen, AccountId, CryptoHash, Gas, GasWeight, NearToken, Promise,
     PromiseError, PublicKey,
 };
-use primitives::key_state::{DKState, KeyEventId, KeyStateProposal};
+use primitives::key_state::{DKState, EpochId, KeyEventId, KeyStateProposal};
 use primitives::signature::{SignRequest, SignatureRequest, YieldIndex};
 use primitives::thresholds::Threshold;
 use primitives::votes::KeyStateVotes;
-use state::initializing::InitializingContractState;
+use state::initializing::{InitializingContractState, PkVotes};
+use state::key_event::KeyEventState;
 use state::running::RunningContractState;
 use state::ProtocolContractState;
 use std::cmp;
@@ -110,8 +111,8 @@ impl MpcContract {
         MpcContract {
             config: Config::from(init_config),
             protocol_state: ProtocolContractState::Initializing(InitializingContractState {
-                proposed_key_state,
-                current_keygen_instance: None,
+                keygen: KeyEventState::new(EpochId::new(0), proposed_key_state),
+                pk_votes: PkVotes::new(),
             }),
             pending_requests: LookupMap::new(StorageKey::PendingRequests),
             request_by_block_height: Vector::new(StorageKey::RequestsByTimestamp),
@@ -122,9 +123,9 @@ impl MpcContract {
         self.protocol_state
             .start_keygen_instance(self.config.dk_event_timeout_blocks)
     }
-    pub fn start_reshare_instance(&mut self, new_epoch_id: u64) -> Result<(), Error> {
+    pub fn start_reshare_instance(&mut self) -> Result<(), Error> {
         self.protocol_state
-            .start_reshare_instance(new_epoch_id, self.config.dk_event_timeout_blocks)
+            .start_reshare_instance(self.config.dk_event_timeout_blocks)
     }
     /// vote to conclude the resharing
     pub fn vote_reshared(
@@ -408,14 +409,13 @@ impl VersionedMpcContract {
         }
     }
     #[handle_result]
-    pub fn start_reshare_instance(&mut self, new_epoch_id: u64) -> Result<(), Error> {
+    pub fn start_reshare_instance(&mut self) -> Result<(), Error> {
         log!(
-            "start_reshare_instance: signer={}, new_epoch_id={}",
-            env::signer_account_id(),
-            new_epoch_id,
+            "start_reshare_instance: signer={}",
+            env::signer_account_id()
         );
         match self {
-            Self::V0(contract_state) => contract_state.start_reshare_instance(new_epoch_id),
+            Self::V0(contract_state) => contract_state.start_reshare_instance(),
         }
     }
 
@@ -644,8 +644,8 @@ impl VersionedMpcContract {
     fn voter_or_panic(&self) -> AccountId {
         let voter = env::signer_account_id();
         match self {
-            Self::V0(contract) => match contract.protocol_state.is_participant(voter) {
-                Ok(voter) => voter,
+            Self::V0(contract) => match contract.protocol_state.authenticate_update_vote() {
+                Ok(_) => voter,
                 Err(err) => {
                     env::panic_str(format!("not a voter, {:?}", err).as_str());
                 }

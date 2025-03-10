@@ -1,9 +1,11 @@
+use super::key_event::KeyEventState;
 use super::resharing::ResharingContractState;
-use crate::errors::VoteError;
 use crate::errors::{Error, InvalidCandidateSet};
-use crate::primitives::key_state::{DKState, KeyStateProposal};
+use crate::primitives::key_state::{
+    AuthenticatedParticipantId, DKState, EpochId, KeyStateProposal,
+};
 use crate::primitives::votes::KeyStateVotes;
-use near_sdk::{env, log, near, AccountId, PublicKey};
+use near_sdk::{log, near, AccountId, PublicKey};
 use std::collections::BTreeSet;
 
 #[near(serializers=[borsh, json])]
@@ -22,18 +24,21 @@ impl From<&legacy_contract::RunningContractState> for RunningContractState {
 }
 
 impl RunningContractState {
+    pub fn authenticate_participant(&self) -> Result<AuthenticatedParticipantId, Error> {
+        self.key_state.authenticate()
+    }
     pub fn public_key(&self) -> &PublicKey {
         self.key_state.public_key()
     }
-    pub fn epoch_id(&self) -> u64 {
+    pub fn epoch_id(&self) -> EpochId {
         self.key_state.epoch_id()
     }
-    pub fn next_epoch_id(&self) -> u64 {
-        self.key_state.next_epoch_id()
-    }
-    pub fn last_uid(&self) -> u64 {
-        self.key_state.uid()
-    }
+    //pub fn next_epoch_id(&self) -> EpochId {
+    //    self.key_state.epoch_id().next()
+    //}
+    //pub fn last_uid(&self) -> u64 {
+    //    self.key_state.uid()
+    //}
     /// returns true if `account_id` is in the participant set
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
         self.key_state.is_participant(account_id)
@@ -50,8 +55,7 @@ impl RunningContractState {
                     key_state: self.key_state.clone(),
                     key_state_votes: KeyStateVotes::default(),
                 },
-                proposed_key_state: proposal.clone(),
-                current_reshare: None,
+                event_state: KeyEventState::new(self.epoch_id().next(), proposal.clone()),
             }));
         }
         Ok(None)
@@ -61,13 +65,9 @@ impl RunningContractState {
     /// Returns true if the proposal reached `threshold` number of votes.
     pub fn vote_key_state_proposal(&mut self, proposal: &KeyStateProposal) -> Result<bool, Error> {
         // ensure the signer is a participant
-        let signer = env::signer_account_id();
-        if !self.is_participant(&signer) {
-            return Err(VoteError::VoterNotParticipant.into());
-        }
+        let participant = self.key_state.authenticate()?;
         // ensure the proposed threshold parameters are valid:
         proposal.validate()?;
-
         // ensure there are enough old participant in the new participant set:
         let new_participant_set: BTreeSet<AccountId> = proposal
             .candidates()
@@ -89,7 +89,6 @@ impl RunningContractState {
         if n_old < self.key_state.threshold().value() {
             return Err(InvalidCandidateSet::InsufficientOldParticipants.into());
         }
-
         // ensure that the participant id is preseved:
         for account_id in inter {
             let existing_id = self.key_state.participants().id(account_id)?;
@@ -98,14 +97,13 @@ impl RunningContractState {
                 return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
             }
         }
-
         // remove any previous votes submitted by the signer:
-        if self.key_state_votes.remove_vote(&signer) {
+        if self.key_state_votes.remove_vote(&participant) {
             log!("removed one vote for signer");
         }
 
         // finally, vote. Propagate any errors
-        let n_votes = self.key_state_votes.vote(proposal, &signer)?;
+        let n_votes = self.key_state_votes.vote(proposal, &participant)?;
         Ok(self.key_state.threshold().value() <= n_votes)
     }
 }
