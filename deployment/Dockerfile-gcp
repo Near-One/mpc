@@ -1,6 +1,5 @@
 FROM lukemathwalker/cargo-chef:latest AS chef
-RUN apt-get update -y && apt-get install -y --no-install-recommends clang openssl ca-certificates  # needed for rocksdb
-RUN update-ca-certificates
+RUN apt-get update -y && apt-get install -y --no-install-recommends clang  # needed for rocksdb
 WORKDIR /app
 
 FROM chef AS planner
@@ -26,18 +25,11 @@ COPY node node
 COPY Cargo.lock Cargo.lock
 COPY Cargo.toml Cargo.toml
 
-# Set SSL environment variables for Rust
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-ENV SSL_CERT_DIR=/etc/ssl/certs
-
 RUN cargo build --release
 
 FROM google/cloud-sdk:debian_component_based AS runtime
 RUN apt-get update -y \
-    && apt-get install -y --no-install-recommends openssl ca-certificates \
-    && update-ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends openssl ca-certificates && update-ca-certificates
 
 # Set SSL environment variables for the runtime
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
@@ -45,7 +37,6 @@ ENV SSL_CERT_DIR=/etc/ssl/certs
 
 WORKDIR /app
 COPY --from=builder /app/target/release/mpc-node mpc-node
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY deployment/gcp-start.sh /app/gcp-start.sh
 RUN chmod +x /app/gcp-start.sh
 CMD [ "/app/gcp-start.sh" ]
