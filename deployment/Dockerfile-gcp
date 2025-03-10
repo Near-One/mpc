@@ -31,9 +31,7 @@ FROM google/cloud-sdk:debian_component_based AS runtime
 RUN apt-get update -y \
     && apt-get install -y --no-install-recommends openssl ca-certificates
 
-# Set SSL environment variables for the runtime
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-ENV SSL_CERT_DIR=/etc/ssl/certs
 
 WORKDIR /app
 COPY --from=builder /app/target/release/mpc-node mpc-node
