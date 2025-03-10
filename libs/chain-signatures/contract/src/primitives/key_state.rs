@@ -328,8 +328,9 @@ pub mod tests {
             assert!(dk_state.authenticate().is_err());
         }
     }
-    pub fn gen_key_state_proposal() -> KeyStateProposal {
-        let proposed_threshold_parameters = gen_threshold_params(MAX_N);
+    pub fn gen_key_state_proposal(max_n: Option<usize>) -> KeyStateProposal {
+        let max_n = max_n.unwrap_or(MAX_N);
+        let proposed_threshold_parameters = gen_threshold_params(max_n);
         let key_event_threshold =
             DKGThreshold::new(proposed_threshold_parameters.threshold().value());
         KeyStateProposal::new(

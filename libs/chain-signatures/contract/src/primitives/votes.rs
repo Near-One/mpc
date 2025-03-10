@@ -76,7 +76,7 @@ mod tests {
         let id: u64 = rand::thread_rng().gen();
         let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&id) };
         let mut ksv = KeyStateVotes::new();
-        let ksp = gen_key_state_proposal();
+        let ksp = gen_key_state_proposal(None);
         assert!(!ksv.remove_vote(&participant));
         assert_eq!(ksv.vote(&ksp, &participant).unwrap(), 1);
         assert!(ksv.vote(&ksp, &participant).is_err());

@@ -107,25 +107,15 @@ pub fn gen_legacy_candidates(n: usize) -> legacy_contract::primitives::Candidate
     }
 }
 
-pub fn gen_seed_uid() -> ([u8; 32], u64) {
+pub fn gen_seed() -> [u8; 32] {
     let mut rng = rand::thread_rng();
     let mut seed = [0u8; 32];
     rng.fill(&mut seed);
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&seed[..8]);
-    (seed, u64::from_le_bytes(bytes))
+    seed
 }
 
 pub fn gen_key_event_id() -> KeyEventId {
     let epoch_id: u64 = rand::thread_rng().gen();
-    //let leader_account: AccountId = gen_account_id();
-    let (seed, _) = gen_seed_uid();
-    let expected_block_height: u64 = 80;
-    let context = VMContextBuilder::new()
-        .random_seed(seed)
-        .block_height(expected_block_height)
-        .build();
-    testing_env!(context);
     KeyEventId::new(EpochId::new(epoch_id), AttemptId::new())
 }
 
