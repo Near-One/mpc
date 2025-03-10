@@ -29,7 +29,7 @@ RUN cargo build --release
 
 FROM google/cloud-sdk:debian_component_based AS runtime
 RUN apt-get update -y \
-    && apt-get install -y --no-install-recommends openssl ca-certificates
+    && apt-get install -y --no-install-recommends openssl ca-certificates && update-ca-certificates
 WORKDIR /app
 COPY --from=builder /app/target/release/mpc-node mpc-node
 COPY deployment/gcp-start.sh /app/gcp-start.sh
