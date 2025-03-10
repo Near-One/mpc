@@ -1,14 +1,38 @@
 use super::participants::{ParticipantId, Participants};
 use super::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 use crate::errors::Error;
-use near_sdk::{near, AccountId, PublicKey};
+use near_sdk::{env, near, AccountId, PublicKey};
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EpochId(u64);
+
+impl EpochId {
+    pub fn next(&self) -> Self {
+        EpochId(self.0 + 1)
+    }
+    pub fn new(epoch_id: u64) -> Self {
+        EpochId(epoch_id)
+    }
+    pub fn get(&self) -> u64 {
+        self.0
+    }
+}
+
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KeyEventAttempt(u64);
+impl KeyEventAttempt {
+    pub fn new() -> Self {
+        KeyEventAttempt(0)
+    }
+    pub fn next(&self) -> Self {
+        KeyEventAttempt(&self.0 + 1)
+    }
+    pub fn get(&self) -> u64 {
+        self.0
+    }
+}
 /// Identifier for a key event:
 /// `epoch_id` the epoch for which the key is supposed to be active
 /// `start_block_id`: the block during which the key event startet
@@ -32,21 +56,27 @@ pub struct KeyId(u128);
 
 impl KeyEventId {
     /// Returns the unique id associated with this key event.
-    pub fn attempt(&self) -> u64 {
-        self.attempt.0
+    pub fn attempt(&self) -> KeyEventAttempt {
+        self.attempt.clone()
     }
     /// Returns the unique id associated with this key event.
-    pub fn next_attempt(&self) -> u64 {
-        self.attempt.0 + 1
+    //pub fn next_attempt(&self) -> Self {
+    //    KeyEventId {
+    //        epoch_id: self.epoch_id.clone(),
+    //        attempt: self.attempt.next(),
+    //    }
+    //}
+    /// Returns self.epoch_id + 1.
+    pub fn epoch_id(&self) -> EpochId {
+        self.epoch_id.clone()
     }
     /// Returns self.epoch_id + 1.
-    pub fn epoch_id(&self) -> u64 {
-        self.epoch_id.0
-    }
-    /// Returns self.epoch_id + 1.
-    pub fn next_epoch_id(&self) -> u64 {
-        self.epoch_id.0 + 1
-    }
+    //pub fn next_epoch(&self) -> Self {
+    //    KeyEventId {
+    //        epoch_id: self.epoch_id.next(),
+    //        attempt: KeyEventAttempt::new(),
+    //    }
+    //}
     //pub fn id(&self) -> KeyId {
     //    KeyId(((self.epoch_id.0 as u128) << 64) ^ (self.attempt.0 as u128))
     //}
@@ -54,16 +84,16 @@ impl KeyEventId {
     //pub fn timed_out(&self, timeout_in_blocks: u64) -> bool {
     //    self.start_block_id + timeout_in_blocks < env::block_height()
     //}
-    // Construct a new KeyEventId for `epoch_id` and `leader`.
-    //pub fn next_event(epoch_id: EpochId, attempt: AttemptId) -> Self {
-    //    KeyEventId { epoch_id, attempt }
-    //}
+    /// Construct a new KeyEventId for `epoch_id` and `leader`.
+    pub fn new(epoch_id: EpochId, attempt: KeyEventAttempt) -> Self {
+        KeyEventId { epoch_id, attempt }
+    }
 
     // for migrating from V1 to V2
     pub fn new_migrated_key(epoch_id: u64) -> Self {
         KeyEventId {
             epoch_id: EpochId(epoch_id),
-            attempt: KeyEventAttempt(0),
+            attempt: KeyEventAttempt::new(),
         }
     }
 }
@@ -85,20 +115,20 @@ impl DKState {
         &self.public_key
     }
     pub fn epoch_id(&self) -> EpochId {
-        self.key_event_id.epoch_id
+        self.key_event_id.epoch_id.clone()
     }
-    pub fn next_epoch_id(&self) -> u64 {
-        self.key_event_id.next_epoch_id()
-    }
+    //pub fn next_epoch_id(&self) -> u64 {
+    //    self.key_event_id.next_epoch_id()
+    //}
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
         self.threshold_parameters.is_participant(account_id)
     }
     pub fn threshold(&self) -> Threshold {
         self.threshold_parameters.threshold()
     }
-    pub fn id(&self) -> u64 {
-        self.key_event_id.id
-    }
+    //pub fn id(&self) -> u64 {
+    //    self.key_event_id.id
+    //}
     pub fn participants(&self) -> &Participants {
         self.threshold_parameters.participants()
     }
@@ -129,7 +159,21 @@ pub struct KeyStateProposal {
     key_event_threshold: DKGThreshold,
 }
 
+#[near(serializers=[borsh, json])]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AuthenticatedCandidateId(ParticipantId);
+impl AuthenticatedCandidateId {
+    pub fn get(&self) -> ParticipantId {
+        self.0.clone()
+    }
+}
+
 impl KeyStateProposal {
+    pub fn authenticate(&self) -> Result<AuthenticatedCandidateId, Error> {
+        let signer = env::signer_account_id();
+        let id = self.candidates().id(&signer)?;
+        Ok(AuthenticatedCandidateId(id))
+    }
     pub fn proposed_threshold_parameters(&self) -> &ThresholdParameters {
         &self.proposed_threshold_parameters
     }
@@ -223,6 +267,8 @@ impl From<&legacy_contract::InitializingContractState> for KeyStateProposal {
 #[cfg(test)]
 pub mod tests {
     use super::DKState;
+    use crate::primitives::key_state::EpochId;
+    use crate::primitives::key_state::KeyEventAttempt;
     use crate::primitives::key_state::KeyEventId;
     use crate::primitives::key_state::KeyStateProposal;
     use crate::primitives::participants::tests::assert_candidate_migration;
@@ -239,30 +285,15 @@ pub mod tests {
 
     #[test]
     fn test_key_event_id() {
-        //let leader_account: AccountId = gen_account_id();
-        //let (seed1, uid1) = gen_seed_uid();
-        //let expected_block_height: u64 = 80;
-        //let context = VMContextBuilder::new()
-        //    .random_seed(seed1)
-        //    .block_height(expected_block_height)
-        //    .build();
-        //testing_env!(context);
-        let epoch_id = rand::thread_rng().gen();
         let id = rand::thread_rng().gen();
-        let key_event_id = KeyEventId::new(epoch_id, id);
-        assert_eq!(id + 1, key_event_id.next_epoch_id());
-        assert_eq!(id, key_event_id.id());
-        //log!("{:?}", key_event_id);
-        //let (seed2, uid2) = gen_seed_uid();
-        //let context = VMContextBuilder::new()
-        //    .random_seed(seed2)
-        //    .block_height(expected_block_height + 1000)
-        //    .build();
-        //testing_env!(context);
-        //let key_event_id = KeyEventId::new(0, leader_account.clone());
-        //assert_eq!(uid2, key_event_id.uid());
-        assert_eq!(KeyEventId::new_migrated_key(5).next_epoch_id(), 6);
-        assert_eq!(KeyEventId::new_migrated_key(5).id(), 0);
+        let epoch_id = EpochId::new(id);
+        let key_event_id = KeyEventId::new(epoch_id.clone());
+        assert_eq!(epoch_id, key_event_id.epoch_id());
+        assert_eq!(id, key_event_id.epoch_id().get());
+        assert_eq!(KeyEventAttempt::new(), key_event_id.attempt());
+        assert_eq!(0, key_event_id.attempt().get());
+        assert_eq!(KeyEventId::new_migrated_key(5).epoch_id(), EpochId::new(5));
+        assert_eq!(KeyEventId::new_migrated_key(5).attempt().get(), 0);
     }
 
     #[test]
@@ -337,7 +368,7 @@ pub mod tests {
             let migrated_dkg: DKState = (&legacy_state).into();
             assert_eq!(migrated_dkg.threshold().value(), k as u64);
             assert_eq!(*migrated_dkg.public_key(), legacy_state.public_key);
-            assert_eq!(migrated_dkg.epoch_id(), legacy_state.epoch);
+            assert_eq!(migrated_dkg.epoch_id().get(), legacy_state.epoch);
             assert_participant_migration(&legacy_state.participants, migrated_dkg.participants());
         }
     }
@@ -354,7 +385,7 @@ pub mod tests {
             let migrated_dkg: DKState = (&legacy_state).into();
             assert_eq!(migrated_dkg.threshold().value(), k as u64);
             assert_eq!(*migrated_dkg.public_key(), legacy_state.public_key);
-            assert_eq!(migrated_dkg.epoch_id(), legacy_state.old_epoch);
+            assert_eq!(migrated_dkg.epoch_id().get(), legacy_state.old_epoch);
             assert_participant_migration(
                 &legacy_state.old_participants,
                 migrated_dkg.participants(),
