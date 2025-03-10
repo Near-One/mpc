@@ -29,7 +29,7 @@ RUN cargo build --release
 
 FROM google/cloud-sdk:debian_component_based AS runtime
 RUN apt-get update -y \
-    && apt-get install -y --no-install-recommends openssl ca-certificates && update-ca-certificates
+    && apt-get install -y --no-install-recommends openssl ca-certificates
 
 # Set SSL environment variables for the runtime
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
