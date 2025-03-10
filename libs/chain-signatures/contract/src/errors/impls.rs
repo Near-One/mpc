@@ -122,14 +122,14 @@ impl From<KeyEventError> for Error {
         Self::simple(ErrorKind::KeyEventError(code))
     }
 }
-impl KeyEventError {
-    pub(crate) fn message<T>(self, msg: T) -> Error
-    where
-        T: Into<Cow<'static, str>>,
-    {
-        Error::message(ErrorKind::KeyEventError(self), msg)
-    }
-}
+//impl KeyEventError {
+//    pub(crate) fn message<T>(self, msg: T) -> Error
+//    where
+//        T: Into<Cow<'static, str>>,
+//    {
+//        Error::message(ErrorKind::KeyEventError(self), msg)
+//    }
+//}
 
 impl InvalidThreshold {
     pub(crate) fn message<T>(self, msg: T) -> Error

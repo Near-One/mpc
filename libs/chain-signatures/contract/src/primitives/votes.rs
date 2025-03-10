@@ -1,9 +1,8 @@
+use super::key_state::AuthenticatedParticipantId;
 use crate::errors::{Error, VoteError};
 use crate::primitives::key_state::KeyStateProposal;
 use near_sdk::near;
 use std::collections::{BTreeMap, BTreeSet};
-
-use super::key_state::AuthenticatedParticipantId;
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Default)]
@@ -66,23 +65,23 @@ impl KeyStateVotes {
 
 #[cfg(test)]
 mod tests {
-    use std::mem;
-
-    use crate::primitives::key_state::{tests::gen_key_state_proposal, AuthenticatedParticipantId};
-
     use super::KeyStateVotes;
+    use crate::primitives::key_state::{tests::gen_key_state_proposal, AuthenticatedParticipantId};
+    use rand::Rng;
+    use std::mem;
 
     #[test]
     fn test_voting_and_removal() {
         //let account_id = gen_account_id();
-        let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&0u64) };
+        let id: u64 = rand::thread_rng().gen();
+        let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&id) };
         let mut ksv = KeyStateVotes::new();
         let ksp = gen_key_state_proposal();
         assert!(!ksv.remove_vote(&participant));
         assert_eq!(ksv.vote(&ksp, &participant).unwrap(), 1);
         assert!(ksv.vote(&ksp, &participant).is_err());
         assert!(ksv.remove_vote(&participant));
-        let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&1u64) };
+        let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&(id + 1)) };
         assert_eq!(ksv.vote(&ksp, &participant).unwrap(), 1);
     }
 }

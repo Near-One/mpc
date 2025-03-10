@@ -204,7 +204,9 @@ pub mod tests {
         let expected = gen_accounts_and_info(n);
         let mut participants = Participants::new();
         for (idx, (account_id, info)) in expected.iter().enumerate() {
-            let _ = participants.insert(account_id.clone(), info.clone());
+            participants
+                .insert(account_id.clone(), info.clone())
+                .unwrap();
             assert_eq!(*participants.info(account_id).unwrap(), info.clone());
             assert_eq!(
                 participants.account_id(&ParticipantId(idx as u32)).unwrap(),

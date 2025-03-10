@@ -33,12 +33,6 @@ impl RunningContractState {
     pub fn epoch_id(&self) -> EpochId {
         self.key_state.epoch_id()
     }
-    //pub fn next_epoch_id(&self) -> EpochId {
-    //    self.key_state.epoch_id().next()
-    //}
-    //pub fn last_uid(&self) -> u64 {
-    //    self.key_state.uid()
-    //}
     /// returns true if `account_id` is in the participant set
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
         self.key_state.is_participant(account_id)

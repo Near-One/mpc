@@ -22,6 +22,7 @@ impl EpochId {
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AttemptId(u64);
+
 impl AttemptId {
     pub fn new() -> Self {
         AttemptId(0)
@@ -31,6 +32,12 @@ impl AttemptId {
     }
     pub fn get(&self) -> u64 {
         self.0
+    }
+}
+
+impl Default for AttemptId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 /// Identifier for a key event:
@@ -58,36 +65,14 @@ impl KeyEventId {
     pub fn attempt(&self) -> AttemptId {
         self.attempt.clone()
     }
-    /// Returns the unique id associated with this key event.
-    //pub fn next_attempt(&self) -> Self {
-    //    KeyEventId {
-    //        epoch_id: self.epoch_id.clone(),
-    //        attempt: self.attempt.next(),
-    //    }
-    //}
     /// Returns self.epoch_id + 1.
     pub fn epoch_id(&self) -> EpochId {
         self.epoch_id.clone()
     }
-    /// Returns self.epoch_id + 1.
-    //pub fn next_epoch(&self) -> Self {
-    //    KeyEventId {
-    //        epoch_id: self.epoch_id.next(),
-    //        attempt: AttemptId::new(),
-    //    }
-    //}
-    //pub fn id(&self) -> KeyId {
-    //    KeyId(((self.epoch_id.0 as u128) << 64) ^ (self.attempt.0 as u128))
-    //}
-    ///// Returns true if `timeout_in_blocks` blocks have passed since the start of this key event.
-    //pub fn timed_out(&self, timeout_in_blocks: u64) -> bool {
-    //    self.start_block_id + timeout_in_blocks < env::block_height()
-    //}
     /// Construct a new KeyEventId for `epoch_id` and `leader`.
     pub fn new(epoch_id: EpochId, attempt: AttemptId) -> Self {
         KeyEventId { epoch_id, attempt }
     }
-
     // for migrating from V1 to V2
     pub fn new_migrated_key(epoch_id: u64) -> Self {
         KeyEventId {
@@ -121,18 +106,12 @@ impl DKState {
     pub fn epoch_id(&self) -> EpochId {
         self.key_event_id.epoch_id.clone()
     }
-    //pub fn next_epoch_id(&self) -> u64 {
-    //    self.key_event_id.next_epoch_id()
-    //}
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
         self.threshold_parameters.is_participant(account_id)
     }
     pub fn threshold(&self) -> Threshold {
         self.threshold_parameters.threshold()
     }
-    //pub fn id(&self) -> u64 {
-    //    self.key_event_id.id
-    //}
     pub fn participants(&self) -> &Participants {
         self.threshold_parameters.participants()
     }
@@ -287,14 +266,31 @@ pub mod tests {
     use crate::primitives::participants::tests::assert_candidate_migration;
     use crate::primitives::participants::tests::assert_participant_migration;
     use crate::primitives::thresholds::DKGThreshold;
+    use crate::state::tests::test_utils::gen_account_id;
     use crate::state::tests::test_utils::gen_legacy_initializing_state;
     use crate::state::tests::test_utils::gen_legacy_resharing_state;
     use crate::state::tests::test_utils::gen_legacy_running_state;
     use crate::state::tests::test_utils::min_thrershold;
     use crate::state::tests::test_utils::{gen_key_event_id, gen_pk, gen_threshold_params};
+    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::testing_env;
     use rand::Rng;
 
     const MAX_N: usize = 900;
+    #[test]
+    fn test_epoch_id() {
+        let id = rand::thread_rng().gen();
+        let epoch_id = EpochId::new(id);
+        assert_eq!(epoch_id.get(), id);
+        assert_eq!(epoch_id.next().get(), id + 1);
+    }
+
+    #[test]
+    fn test_attempt_id() {
+        let attempt_id = AttemptId::new();
+        assert_eq!(attempt_id.get(), 0);
+        assert_eq!(attempt_id.next().get(), 1);
+    }
 
     #[test]
     fn test_key_event_id() {
@@ -314,9 +310,23 @@ pub mod tests {
         let public_key = gen_pk();
         let key_event_id = gen_key_event_id();
         let threshold_params = gen_threshold_params(MAX_N);
+        let participants = threshold_params.participants().clone();
         let dk_state = DKState::new(public_key.clone(), key_event_id, threshold_params).unwrap();
         assert_eq!(*dk_state.public_key(), public_key);
         assert!(dk_state.validate().is_ok());
+        for account_id in participants.participants().keys() {
+            let mut context = VMContextBuilder::new();
+            context.signer_account_id(account_id.clone());
+            testing_env!(context.build());
+            assert_eq!(
+                participants.id(account_id).unwrap(),
+                dk_state.authenticate().unwrap().get()
+            );
+            let mut context = VMContextBuilder::new();
+            context.signer_account_id(gen_account_id());
+            testing_env!(context.build());
+            assert!(dk_state.authenticate().is_err());
+        }
     }
     pub fn gen_key_state_proposal() -> KeyStateProposal {
         let proposed_threshold_parameters = gen_threshold_params(MAX_N);
@@ -339,6 +349,7 @@ pub mod tests {
             )
             .is_err());
         }
+        let candidates = proposed_threshold_parameters.participants();
         for i in proposed_threshold_parameters.threshold().value()
             ..proposed_threshold_parameters.n_participants() + 1
         {
@@ -349,6 +360,25 @@ pub mod tests {
             let ksp = ksp.unwrap();
             assert!(ksp.validate().is_ok());
             assert_eq!(ksp.key_event_threshold().value(), i);
+            // test authentication:
+        }
+        let ksp = KeyStateProposal::new(
+            proposed_threshold_parameters.clone(),
+            DKGThreshold::new(proposed_threshold_parameters.threshold().value()),
+        )
+        .unwrap();
+        for account_id in candidates.participants().keys() {
+            let mut context = VMContextBuilder::new();
+            context.signer_account_id(account_id.clone());
+            testing_env!(context.build());
+            assert_eq!(
+                candidates.id(account_id).unwrap(),
+                ksp.authenticate().unwrap().get()
+            );
+            let mut context = VMContextBuilder::new();
+            context.signer_account_id(gen_account_id());
+            testing_env!(context.build());
+            assert!(ksp.authenticate().is_err());
         }
     }
 

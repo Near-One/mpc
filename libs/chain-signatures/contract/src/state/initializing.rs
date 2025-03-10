@@ -34,90 +34,6 @@ impl PkVotes {
     }
 }
 
-//#[near(serializers=[borsh, json])]
-//#[derive(Debug)]
-//pub struct KeygenInstance {
-//    key_event_instance: KeyEventAttempt,
-//    pk_votes: PkVotes,
-//    completed: BTreeMap<AuthenticatedCandidateId, PublicKey>,
-//    aborted: BTreeSet<AuthenticatedCandidateId>,
-//    started: Option<AuthenticatedLeader>, // indicates if the leader started the computation
-//}
-//
-//impl KeygenInstance {
-//    pub fn activate(&mut self, leader: AuthenticatedLeader) {
-//        if self.started.is_none() {
-//            self.key_event_instance.vote_alive();
-//        }
-//        self.started = Some(leader);
-//    }
-//    pub fn timed_out(&self, timeout_in_blocks: u64) -> bool {
-//        self.key_event_instance.timed_out(timeout_in_blocks)
-//    }
-//    pub fn new() -> Self {
-//        KeygenInstance {
-//            key_event_instance: KeyEventAttempt::new(),
-//            pk_votes: PkVotes::new(),
-//            completed: BTreeMap::new(),
-//            aborted: BTreeSet::new(),
-//            started: None,
-//        }
-//    }
-//    pub fn next(&mut self) -> Self {
-//        KeygenInstance {
-//            key_event_instance: self.key_event_instance.next(),
-//            pk_votes: PkVotes::new(),
-//            completed: BTreeMap::new(),
-//            aborted: BTreeSet::new(),
-//            started: None,
-//        }
-//    }
-//    /// Commits the vote of `candidate_id` to `public_key`, returning the total number of votes for `public_key`.
-//    /// Fails if the candidate already submitted a vote.
-//    pub fn vote_pk(
-//        &mut self,
-//        candidate: AuthenticatedCandidateId,
-//        public_key: PublicKey,
-//    ) -> Result<u64, Error> {
-//        // if candidate already aborted, then exit with error
-//        if self.aborted.contains(&candidate) {
-//            return Err(VoteError::VoterAlreadyAborted.into());
-//        }
-//        // return error if the candidate alredy submitted a vote.
-//        if self.completed.contains_key(&candidate) {
-//            return Err(VoteError::VoteAlreadySubmitted.into());
-//        }
-//        // label candidate as complete
-//        self.completed.insert(candidate.clone(), public_key.clone());
-//        // vote for public_key
-//        self.pk_votes.entry(public_key.clone()).insert(candidate);
-//        Ok(self.pk_votes.entry(public_key).len() as u64)
-//    }
-//
-//    /// Returns the total number of votes for `public_key`
-//    pub fn n_votes(&self, public_key: &PublicKey) -> u64 {
-//        self.pk_votes.n_votes(public_key) as u64
-//    }
-//
-//    pub fn n_aborts(&self) -> u64 {
-//        self.aborted.len() as u64
-//    }
-//    /// Casts a vote from `candidate_id` to abort the current instance.
-//    /// Removes any previous votes by `candidate_id`.
-//    /// Returns the number of votes received to abort.
-//    pub fn vote_abort(&mut self, candidate_id: AuthenticatedCandidateId) -> u64 {
-//        // remove any existing votes
-//        if let Some(pk) = self.completed.remove(&candidate_id) {
-//            self.pk_votes.entry(pk).remove(&candidate_id);
-//        }
-//        self.aborted.insert(candidate_id);
-//        self.n_aborts()
-//    }
-//    pub fn current_attempt(&self) -> AttemptId {
-//        self.key_event_instance.current_attempt()
-//    }
-//}
-
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
 pub struct InitializingContractState {
@@ -132,21 +48,7 @@ impl InitializingContractState {
     /// Returns an Error if the signer is not the leader of the current keygen.
     pub fn start(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
         self.keygen.start(dk_event_timeout_blocks)
-        //// update the current instance if required:
-        //if self.instance.timed_out(dk_event_timeout_blocks) {
-        //    self.instance = self.instance.next();
-        //}
-        //// check that the signer is the current leader:
-        //let leader = self
-        //    .event
-        //    .authenticate_leader(self.instance.current_attempt())?;
-        //// set the instance as active:
-        //self.instance.activate(leader);
-        //Ok(())
     }
-    //pub fn current_key_event_id(&self) -> KeyEventId {
-    //    KeyEventId::new(self.event.epoch_id(), self.instance.current_attempt())
-    //}
     /// Casts a vote for `public_key` in `key_event_id`.
     /// Fails if `signer` is not a candidate, if the candidate already voted or if there is no active key event.
     /// Returns `RunningContractState` if `public_key` reaches the required votes.
@@ -184,25 +86,6 @@ impl InitializingContractState {
         self.keygen
             .vote_abort(key_event_id, dk_event_timeout_blocks)
     }
-    ///// Ensures the signer of the transaction is a candidate, that the current reshare is active
-    ///// and matches `key_event_id`.
-    //fn verify_vote(
-    //    &self,
-    //    key_event_id: &KeyEventId,
-    //    dk_event_timeout_blocks: u64,
-    //) -> Result<AuthenticatedCandidateId, Error> {
-    //    // ensure the signer is a candidate
-    //    let candidate_id = self.event.authenticate_candidate()?;
-    //    // ensure the instance was started and is active
-    //    if !self.instance.started.is_some() || self.instance.timed_out(dk_event_timeout_blocks) {
-    //        return Err(KeyEventError::NoActiveKeyEvent.into());
-    //    }
-    //    // Ensure the key_event_id matches
-    //    if self.current_key_event_id() != *key_event_id {
-    //        return Err(KeyEventError::KeyEventIdMismatch.into());
-    //    }
-    //    Ok(candidate_id)
-    //}
 }
 
 impl From<&legacy_contract::InitializingContractState> for InitializingContractState {
