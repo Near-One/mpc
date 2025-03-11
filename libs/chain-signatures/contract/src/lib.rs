@@ -53,8 +53,8 @@ const RETURN_SIGNATURE_ON_FINISH_CALL_GAS: Gas = Gas::from_tgas(5);
 // Prepaid gas for a `update_config` call
 const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
 
-#[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
+#[cfg_attr(not(feature = "legacy"), near_bindgen)]
 pub enum VersionedMpcContract {
     V0(MpcContract),
     V1(MpcContractV1),
@@ -68,11 +68,11 @@ impl Default for VersionedMpcContract {
 
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
 pub struct MpcContractV1 {
-    protocol_state: ProtocolContractState,
-    pending_requests: LookupMap<SignatureRequest, YieldIndex>,
-    request_by_block_height: Vector<(u64, SignatureRequest)>,
-    proposed_updates: ProposedUpdates,
-    config: ConfigV1,
+    pub protocol_state: ProtocolContractState,
+    pub pending_requests: LookupMap<SignatureRequest, YieldIndex>,
+    pub request_by_block_height: Vector<(u64, SignatureRequest)>,
+    pub proposed_updates: ProposedUpdates,
+    pub config: ConfigV1,
 }
 
 impl MpcContractV1 {
@@ -175,7 +175,8 @@ impl MpcContract {
 }
 
 // User contract API
-#[near_bindgen]
+#[cfg(not(feature = "legacy"))]
+#[cfg_attr(not(feature = "legacy"), near_bindgen)]
 impl VersionedMpcContract {
     pub fn remove_timed_out_requests(&mut self, max_num_to_remove: Option<u32>) -> u32 {
         match self {
@@ -378,7 +379,8 @@ impl VersionedMpcContract {
 }
 
 // Node API
-#[near_bindgen]
+#[cfg(not(feature = "legacy"))]
+#[cfg_attr(not(feature = "legacy"), near_bindgen)]
 impl VersionedMpcContract {
     #[handle_result]
     pub fn respond(
@@ -730,6 +732,7 @@ impl VersionedMpcContract {
 }
 
 // Contract developer helper API
+#[cfg(not(feature = "legacy"))]
 #[near_bindgen]
 impl VersionedMpcContract {
     #[handle_result]
