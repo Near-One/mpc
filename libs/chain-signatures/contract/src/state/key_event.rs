@@ -14,7 +14,7 @@ use near_sdk::{env, near};
 use std::collections::BTreeSet;
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyEventState {
     event: KeyEvent,
     instance: KeyEventInstance,
@@ -26,6 +26,9 @@ impl KeyEventState {
     }
     pub fn proposed_threshold(&self) -> Threshold {
         self.event.proposed_key_state.proposed_threshold()
+    }
+    pub fn event_threshold(&self) -> DKGThreshold {
+        self.event.threshold()
     }
     pub fn proposed_threshold_parameters(&self) -> ThresholdParameters {
         self.event
@@ -111,7 +114,7 @@ impl KeyEventState {
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyEventInstance {
     key_event_instance: KeyEventAttempt,
     completed: BTreeSet<AuthenticatedCandidateId>,
@@ -195,7 +198,7 @@ impl Default for KeyEventInstance {
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyEventAttempt {
     attempt: AttemptId,
     last_vote: BlockHeight,
@@ -232,11 +235,11 @@ impl Default for KeyEventAttempt {
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AuthenticatedLeader(ParticipantId);
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyEvent {
     epoch_id: EpochId,
     leader_order: Vec<ParticipantId>,
@@ -285,7 +288,7 @@ impl KeyEvent {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{AuthenticatedLeader, KeyEvent, KeyEventAttempt};
     use crate::primitives::key_state::tests::gen_key_state_proposal;
     use crate::primitives::key_state::{
@@ -298,13 +301,13 @@ mod tests {
     use rand::Rng;
     use std::{cell::RefCell, collections::BTreeSet, mem};
 
-    struct EnvVars {
-        block_height: BlockHeight,
-        seed: [u8; 32],
+    pub struct EnvVars {
+        pub block_height: BlockHeight,
+        pub seed: [u8; 32],
     }
     /// Sets environment variables `block_height`, `random_seed` and `signer_account_id`.
     /// Generates pseudo-random values if none are provided.
-    fn set_env(
+    pub fn set_env(
         block_height: Option<BlockHeight>,
         signer: Option<AccountId>,
         seed: Option<[u8; 32]>,
@@ -358,7 +361,7 @@ mod tests {
         let candidate: AuthenticatedCandidateId = unsafe { mem::transmute(id) };
         assert_eq!(kei.vote_abort(candidate).unwrap(), 2);
     }
-    fn find_leader(
+    pub fn find_leader(
         proposed: &KeyStateProposal,
         attempt: &AttemptId,
         ke: &KeyEvent,

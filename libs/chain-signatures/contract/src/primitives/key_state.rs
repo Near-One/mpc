@@ -106,6 +106,9 @@ impl DKState {
     pub fn epoch_id(&self) -> EpochId {
         self.key_event_id.epoch_id.clone()
     }
+    pub fn key_event_id(&self) -> KeyEventId {
+        self.key_event_id.clone()
+    }
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
         self.threshold_parameters.is_participant(account_id)
     }

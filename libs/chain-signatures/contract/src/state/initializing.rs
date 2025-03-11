@@ -61,9 +61,12 @@ impl InitializingContractState {
         let callback = Some(|candidate_id: AuthenticatedCandidateId| {
             self.pk_votes.entry(public_key.clone()).insert(candidate_id);
         });
-        if self
+        let reached = self
             .keygen
-            .vote_success(&key_event_id, dk_event_timeout_blocks, callback)?
+            .vote_success(&key_event_id, dk_event_timeout_blocks, callback)?;
+        if reached
+            && ((self.pk_votes.entry(public_key.clone()).len() as u64)
+                >= self.keygen.event_threshold().value())
         {
             return Ok(Some(RunningContractState {
                 key_state: DKState::new(
@@ -99,42 +102,189 @@ impl From<&legacy_contract::InitializingContractState> for InitializingContractS
 
 #[cfg(test)]
 mod tests {
-    //
-    //pub fn start_keygen_instance(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
-    //
-    //pub fn vote_pk(
-    //pub fn has_active_keygen(&self, dk_event_timeout_blocks: u64) -> bool {
-    //pub fn keygen_leader(&self) -> AccountId {
-    //pub fn abort()
-    //migrating
-    //use super::*;
-    //use crate::state::tests::test_utils::gen_account_id;
-    //use crate::state::tests::test_utils::gen_pk;
-    //use near_sdk::{AccountId, PublicKey};
+    use std::collections::BTreeSet;
 
-    //#[test]
-    //fn test_keygen_instance() {
-    //    let leader_account: AccountId = gen_account_id();
-    //    //let key_event_id = KeyEventId::new(1, leader_account.clone());
-    //    let mut instance = Keygen::new(key_event_id);
-    //    let account_id = gen_account_id();
-    //    let pk1: PublicKey = gen_pk();
-    //    let votes = instance.vote_pk(account_id.clone(), pk1.clone()).unwrap();
-    //    assert_eq!(votes, 1);
-    //    assert_eq!(instance.n_votes(&pk1), 1);
+    use crate::primitives::key_state::{tests::gen_key_state_proposal, EpochId};
+    use crate::primitives::key_state::{AttemptId, KeyEventId};
+    use crate::primitives::votes::KeyStateVotes;
+    use crate::state::key_event::tests::{set_env, EnvVars};
+    use crate::state::key_event::KeyEventState;
+    use crate::state::running::RunningContractState;
+    use crate::state::tests::test_utils::gen_pk;
+    use near_sdk::AccountId;
+    use rand::Rng;
 
-    //    let pk2: PublicKey = gen_pk();
-    //    let votes = instance.vote_pk(account_id.clone(), pk2.clone()).unwrap();
-    //    assert_eq!(votes, 1);
-    //    assert_eq!(instance.n_votes(&pk1), 0);
-    //    assert_eq!(instance.n_votes(&pk2), 1);
-    //    assert!(instance.remove_vote(&account_id));
-    //    assert_eq!(instance.abort(account_id.clone()), 1);
-    //    assert!(instance.vote_pk(account_id.clone(), pk1.clone()).is_err());
-    //    let account_id = gen_account_id();
-    //    let votes = instance.vote_pk(account_id.clone(), pk1.clone()).unwrap();
-    //    assert_eq!(votes, 1);
-    //    assert_eq!(instance.n_votes(&pk1), 1);
-    //    assert_eq!(instance.n_votes(&pk2), 0);
-    //}
+    use super::InitializingContractState;
+    #[test]
+    fn test_initializing_contract_state() {
+        let epoch_id = rand::thread_rng().gen();
+        let epoch_id = EpochId::new(epoch_id);
+        let proposed = gen_key_state_proposal(Some(30));
+        let EnvVars { block_height, seed } = set_env(None, None, None);
+        let ke = KeyEventState::new(epoch_id.clone(), proposed.clone());
+        let mut state = InitializingContractState {
+            keygen: ke.clone(),
+            pk_votes: super::PkVotes::new(),
+        };
+        let key_event = KeyEventId::new(epoch_id.clone(), AttemptId::new());
+        let candidates: BTreeSet<AccountId> = ke
+            .proposed_threshold_parameters()
+            .participants()
+            .participants()
+            .keys()
+            .cloned()
+            .collect();
+        for c in &candidates {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            // verify that each candidate is authorized
+            assert!(state.authenticate_candidate().is_ok());
+            // verify that no votes are casted before the kegen started.
+            assert!(state.vote_pk(key_event.clone(), gen_pk(), 100).is_err());
+            assert!(state.vote_abort(key_event.clone(), 100).is_err());
+        }
+        // check that some randos can't vote
+        for _ in 0..20 {
+            set_env(Some(block_height), None, Some(seed));
+            assert!(state.authenticate_candidate().is_err());
+            assert!(state.vote_pk(key_event.clone(), gen_pk(), 100).is_err());
+            assert!(state.vote_abort(key_event.clone(), 100).is_err());
+        }
+
+        // start the keygen:
+        let mut leader = None;
+        for c in &candidates {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            if state.start(0).is_ok() {
+                assert!(leader.is_none());
+                leader = Some(c);
+            }
+        }
+        assert!(leader.is_some());
+
+        // assert that timed out votes do not count
+        for c in &candidates {
+            set_env(Some(block_height + 1), Some(c.clone()), Some(seed));
+            assert!(state.vote_pk(key_event.clone(), gen_pk(), 0).is_err());
+            assert!(state.vote_abort(key_event.clone(), 0).is_err());
+        }
+
+        // check that some randos can't vote
+        for _ in 0..20 {
+            set_env(Some(block_height), None, Some(seed));
+            assert!(state.authenticate_candidate().is_err());
+            assert!(state.vote_pk(key_event.clone(), gen_pk(), 100).is_err());
+            assert!(state.vote_abort(key_event.clone(), 100).is_err());
+        }
+
+        // assert that votes for a different keygen do not count
+        let ke = KeyEventId::new(epoch_id.next(), key_event.attempt().next());
+        for c in &candidates {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            assert!(state.vote_pk(ke.clone(), gen_pk(), 10).is_err());
+            assert!(state.vote_abort(ke.clone(), 10).is_err());
+        }
+        // assert that valid votes do count
+        for c in &candidates {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            let x = state.vote_pk(key_event.clone(), gen_pk(), 0).unwrap();
+            // everybody voting for a random key
+            assert!(x.is_none());
+            // assert we can't abort after voting
+            assert!(state.vote_abort(key_event.clone(), 0).is_err());
+            // assert we can't vote after voting
+            assert!(state.vote_pk(key_event.clone(), gen_pk(), 0).is_err());
+        }
+
+        // reset the keygen
+        let block_height = block_height + 100;
+        let mut leader = None;
+        for c in &candidates {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            if state.start(0).is_ok() {
+                assert!(leader.is_none());
+                leader = Some(c);
+            }
+        }
+        assert!(leader.is_some());
+        let key_event = KeyEventId::new(epoch_id.clone(), key_event.attempt().next());
+        assert_eq!(key_event, state.keygen.current_key_event_id());
+
+        // assert that valid votes get counted correctly:
+        let pk = gen_pk();
+        let mut res: Option<RunningContractState> = None;
+        for (i, c) in candidates.clone().into_iter().enumerate() {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            res = state.vote_pk(key_event.clone(), pk.clone(), 0).unwrap();
+            // everybody voting for the same key
+            if ((i + 1) as u64) < proposed.key_event_threshold().value() {
+                assert!(res.is_none());
+            } else {
+                assert!(res.is_some());
+                break;
+            }
+            // assert we can't abort after voting
+            assert!(state.vote_abort(key_event.clone(), 0).is_err());
+        }
+        // assert running state is correct
+        let running_state = res.unwrap();
+        assert_eq!(
+            running_state.key_state.threshold(),
+            proposed.proposed_threshold()
+        );
+        assert_eq!(
+            *running_state.key_state.participants(),
+            *proposed.candidates()
+        );
+        assert_eq!(*running_state.public_key(), pk);
+        assert_eq!(running_state.key_state.key_event_id(), key_event);
+        assert_eq!(running_state.key_state_votes, KeyStateVotes::new());
+
+        // assert that the instance resets after a timeout
+        // reset the keygen
+        let block_height = block_height + 100;
+        let mut leader = None;
+        for c in &candidates {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            if state.start(0).is_ok() {
+                assert!(leader.is_none());
+                leader = Some(c);
+            }
+        }
+        assert!(leader.is_some());
+        let key_event = KeyEventId::new(epoch_id, key_event.attempt().next());
+        assert_eq!(key_event, state.keygen.current_key_event_id());
+        // assert that valid aborts get counted correctly:
+        //let mut res: Option<RunningContractState> = None;
+        for (i, c) in candidates.clone().into_iter().enumerate() {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            // assert we can abort
+            let x = state.vote_abort(key_event.clone(), 0).unwrap();
+            if proposed.n_proposed_participants() - ((i + 1) as u64)
+                < proposed.key_event_threshold().value()
+            {
+                assert!(x);
+                break;
+            } else {
+                assert!(!x);
+            }
+            // assert we can't abort after aborting
+            assert!(state.vote_abort(key_event.clone(), 0).is_err());
+            // assert we can't vote after aborting
+            assert!(state.vote_pk(key_event.clone(), gen_pk(), 0).is_err());
+            //res = state.vote_pk(key_event.clone(), pk.clone(), 0).unwrap();
+            // everybody voting for the same key
+        }
+        // assert that we can start anew:
+        // assert that the instance resets after a timeout
+        // reset the keygen
+        let block_height = block_height + 100;
+        let mut leader = None;
+        for c in &candidates {
+            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            if state.start(0).is_ok() {
+                assert!(leader.is_none());
+                leader = Some(c);
+            }
+        }
+    }
 }

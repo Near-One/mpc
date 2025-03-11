@@ -3,7 +3,6 @@ use crate::primitives::participants::{ParticipantInfo, Participants};
 use crate::primitives::thresholds::Threshold;
 use crate::primitives::{key_state::KeyEventId, thresholds::ThresholdParameters};
 use legacy_contract::primitives::CandidateInfo;
-use near_sdk::{test_utils::VMContextBuilder, testing_env};
 use near_sdk::{AccountId, CurveType, PublicKey};
 use rand::{distributions::Uniform, Rng};
 use std::collections::{BTreeMap, HashSet};

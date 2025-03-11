@@ -5,7 +5,7 @@ use near_sdk::near;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct KeyStateVotes {
     votes_by_proposal: BTreeMap<KeyStateProposal, BTreeSet<AuthenticatedParticipantId>>,
     proposal_by_account: BTreeMap<AuthenticatedParticipantId, KeyStateProposal>,
