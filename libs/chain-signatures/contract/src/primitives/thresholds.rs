@@ -7,7 +7,7 @@ const MIN_THRESHOLD_ABSOLUTE: u64 = 2;
 
 /// Stores the cryptographig threshold for a distributed key.
 /// ```
-/// use mpc_contract::state::key_state::Threshold;
+/// use mpc_contract::primitives::thresholds::Threshold;
 /// let dt = Threshold::new(8);
 /// assert!(dt.value() == 8);
 /// ```
@@ -25,7 +25,7 @@ impl Threshold {
 
 /// Stores the success threshold for distributed key generation and resharing.
 /// ```
-/// use mpc_contract::state::key_state::DKGThreshold;
+/// use mpc_contract::primitives::thresholds::DKGThreshold;
 /// let dt = DKGThreshold::new(8);
 /// assert!(dt.value() == 8);
 /// ```

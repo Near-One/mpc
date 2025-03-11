@@ -45,14 +45,6 @@ impl Default for AttemptId {
 /// `start_block_id`: the block during which the key event startet
 /// `uid`: a random u64 generated via env::random_seed() during `start_block_id`
 /// `leader`: the leader for this key event.
-///
-/// # Example usage:
-/// ```
-/// use mpc_contract::state::key_state::KeyEventId;
-/// let ke = KeyEventId::new(0, "leader.account.near".parse().unwrap());
-/// assert!(ke.next_epoch_id() == 1);
-/// assert!(ke.leader() == "leader.account.near");
-/// ```
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KeyEventId {
