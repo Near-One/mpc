@@ -13,10 +13,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "0.8"
 k256 = { version = "0.13.4", features = ["sha256", "ecdsa", "serde", "arithmetic", "expose-field"] }
-crypto-shared = { path = "../crypto-shared" }
+# todo: merge crypto-shared to main and then take it from there. This will break.
+crypto-shared = { git= "https://github.com/near-one/mpc", branch= "kd/contract-coordinated-key-resharing", package = "crypto-shared"}
+#crypto-shared = { path = "../crypto-shared" }
 near-gas = { version = "0.2.5", features = ["serde", "borsh", "schemars"] }
 thiserror = "1"
-legacy_contract = {git = "https://github.com/Near-One/mpc", rev = "53f549cf5a58b9072b2f5a13d2e96c78e70ebc7d", package = "mpc-contract"}
+#legacy_contract = {git = "https://github.com/Near-One/mpc", rev = "53f549cf5a58b9072b2f5a13d2e96c78e70ebc7d", package = "mpc-contract", default-features=false}
+legacy_contract = {git = "https://github.com/Near-One/mpc", rev = "72ffae1be79f60511b80f43bb2c89cfc78569a51", package = "mpc-contract", default-features=false, features = ["legacy"]}
 
 [dev-dependencies]
 anyhow = "1"

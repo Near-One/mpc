@@ -594,24 +594,8 @@ dependencies = [
 
 [[package]]
 name = "crypto-shared"
-version = "0.1.0"
-source = "git+https://github.com/Near-One/mpc?rev=53f549cf5a58b9072b2f5a13d2e96c78e70ebc7d#53f549cf5a58b9072b2f5a13d2e96c78e70ebc7d"
-dependencies = [
- "anyhow",
- "borsh",
- "getrandom 0.2.15",
- "k256",
- "near-account-id",
- "near-sdk",
- "serde",
- "serde_json",
- "sha3",
- "subtle",
-]
-
-[[package]]
-name = "crypto-shared"
 version = "0.1.1"
+source = "git+https://github.com/near-one/mpc?branch=kd%2Fcontract-coordinated-key-resharing#75d101e4fc43b45cb3152b98ec97467b167d64ce"
 dependencies = [
  "anyhow",
  "borsh",
@@ -1894,10 +1878,10 @@ dependencies = [
 [[package]]
 name = "mpc-contract"
 version = "1.0.1"
-source = "git+https://github.com/Near-One/mpc?rev=53f549cf5a58b9072b2f5a13d2e96c78e70ebc7d#53f549cf5a58b9072b2f5a13d2e96c78e70ebc7d"
+source = "git+https://github.com/Near-One/mpc?rev=72ffae1be79f60511b80f43bb2c89cfc78569a51#72ffae1be79f60511b80f43bb2c89cfc78569a51"
 dependencies = [
  "borsh",
- "crypto-shared 0.1.0",
+ "crypto-shared",
  "k256",
  "near-gas 0.2.5",
  "near-sdk",
@@ -1913,7 +1897,7 @@ version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "borsh",
- "crypto-shared 0.1.1",
+ "crypto-shared",
  "digest",
  "ecdsa",
  "k256",

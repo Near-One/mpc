@@ -102,19 +102,36 @@ impl From<&legacy_contract::InitializingContractState> for InitializingContractS
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
+    use super::InitializingContractState;
     use crate::primitives::key_state::{tests::gen_key_state_proposal, EpochId};
     use crate::primitives::key_state::{AttemptId, KeyEventId};
     use crate::primitives::votes::KeyStateVotes;
     use crate::state::key_event::tests::{set_env, EnvVars};
     use crate::state::key_event::KeyEventState;
     use crate::state::running::RunningContractState;
-    use crate::state::tests::test_utils::gen_pk;
+    use crate::state::tests::test_utils::{gen_legacy_initializing_state, gen_pk};
     use near_sdk::AccountId;
     use rand::Rng;
+    use std::collections::BTreeSet;
 
-    use super::InitializingContractState;
+    #[test]
+    fn test_migration() {
+        let n = 200;
+        let k = 2;
+        let legacy_state = gen_legacy_initializing_state(n, k);
+        let state: InitializingContractState = (&legacy_state).into();
+        assert_eq!(
+            state
+                .keygen
+                .proposed_threshold_parameters()
+                .threshold()
+                .value(),
+            k as u64
+        );
+        assert_eq!(state.keygen.event_threshold().value(), k as u64);
+        assert_eq!(state.keygen.current_key_event_id().epoch_id().get(), 0u64);
+        assert_eq!(state.keygen.current_key_event_id().attempt().get(), 0u64);
+    }
     #[test]
     fn test_initializing_contract_state() {
         let epoch_id = rand::thread_rng().gen();

@@ -307,7 +307,6 @@ pub mod tests {
         assert_eq!(KeyEventId::new_migrated_key(5).epoch_id(), EpochId::new(5));
         assert_eq!(KeyEventId::new_migrated_key(5).attempt().get(), 0);
     }
-
     #[test]
     fn test_dk_state() {
         let public_key = gen_pk();

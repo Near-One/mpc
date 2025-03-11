@@ -7,6 +7,7 @@ pub mod update;
 use crate::errors::Error;
 use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
 use config::{Config, InitConfig};
+use crypto_shared::SerializableScalar;
 use crypto_shared::{
     derive_epsilon, derive_key, kdf::check_ec_signature, near_public_key_to_affine_point,
     types::SignatureResponse, ScalarExt as _,
@@ -17,10 +18,9 @@ use errors::{
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::Scalar;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LookupMap;
-use near_sdk::store::Vector;
+use near_sdk::store::{LookupMap, Vector};
 use near_sdk::{
-    env, log, near_bindgen, AccountId, CryptoHash, Gas, GasWeight, NearToken, Promise,
+    env, log, near_bindgen, AccountId, BlockHeight, CryptoHash, Gas, GasWeight, NearToken, Promise,
     PromiseError, PublicKey,
 };
 use primitives::key_state::{DKState, EpochId, KeyEventId, KeyStateProposal};
@@ -91,13 +91,13 @@ impl MpcContract {
         self.request_by_block_height
             .push((env::block_height(), request.clone()));
         self.pending_requests
-            .insert(request, &YieldIndex { data_id });
+            .insert(request.clone(), YieldIndex { data_id });
         // todo: improve this logic.
         // If a user submits a request at t0 and submits the same request at t1 > t0,
         // then the request might get removed from the state when cleaning up t0.
     }
     fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
-        self.pending_requests.get(request)
+        self.pending_requests.get(request).cloned()
     }
 
     pub fn init(proposed_key_state: KeyStateProposal, init_config: Option<InitConfig>) -> Self {
@@ -568,13 +568,44 @@ impl VersionedMpcContract {
     #[init(ignore_state)]
     #[handle_result]
     pub fn migrate() -> Result<Self, Error> {
-        if let Some(old) = env::state_read::<legacy_contract::VersionedMpcContract>() {
+        if let Some(legacy_contract::VersionedMpcContract::V1(state)) =
+            env::state_read::<legacy_contract::VersionedMpcContract>()
+        {
+            // migrate config
+            let mut config = Config::default();
+            config.request_timeout_blocks = state.config.request_timeout_blocks;
+            config.max_num_requests_to_remove = state.config.max_num_requests_to_remove;
+            // migrate signature requests:
+            let mut request_by_block_height: Vector<(BlockHeight, SignatureRequest)> =
+                Vector::new(StorageKey::RequestsByTimestamp);
+            let mut pending_requests: LookupMap<SignatureRequest, YieldIndex> =
+                LookupMap::new(StorageKey::PendingRequests);
+            for (created, request) in &state.request_by_block_height {
+                // check if request is still valid:
+                if created + config.request_timeout_blocks > env::block_height() {
+                    // check if request is still pending:
+                    if let Some(data_id) = state.pending_requests.get(request) {
+                        let data_id = YieldIndex {
+                            data_id: data_id.data_id,
+                        };
+                        let request = SignatureRequest {
+                            epsilon: SerializableScalar {
+                                scalar: request.epsilon.scalar,
+                            },
+                            payload_hash: SerializableScalar {
+                                scalar: request.payload_hash.scalar,
+                            },
+                        };
+                        request_by_block_height.push((*created, request.clone()));
+                        pending_requests.insert(request, data_id);
+                    }
+                }
+            }
             return Ok(VersionedMpcContract::V0(MpcContract {
-                config: Config::default(), //todo
-                protocol_state: old.state().into(),
-                pending_requests: LookupMap::new(StorageKey::PendingRequests), // most fields are private, so lets just
-                // leave it at that and abandon them.
-                request_by_block_height: Vector::new(StorageKey::RequestsByTimestamp),
+                config,
+                protocol_state: (&state.protocol_state).into(),
+                pending_requests,
+                request_by_block_height,
                 proposed_updates: ProposedUpdates::default(),
             }));
         }
@@ -610,11 +641,25 @@ impl VersionedMpcContract {
     /// Upon success, removes the signature from state and returns it.
     /// Returns an Error if the signature timed out.
     /// Note that timed out signatures will need to be cleaned up from the state by a different function.
+    ///
+    /// Note: compared to V1 and V1, the argument types for this function are changed (simply
+    /// `SignatureRequest` now, no longer `ContractSignatureRequest`.
+    /// This _should_ in theory be fine, as the callback result is passed by the `respond`
+    /// function, which is part of V2. Only very few signatures are expected to break, that is:
+    /// Block N:
+    /// 1. response submitted, triggers `return_signature_and_clean_state_on_success` with
+    ///    `ContractSignatureRequest`
+    /// 2. contract code updated
+    /// Block N+1:
+    /// 1. any calls to the contract get rejected
+    /// 2. migration function called
+    /// 3. `return_signature_and_clean_state_on_success` fails with `ContractSignatureRequest`
+    ///    argument.
     #[private]
-    #[handle_result] // question: is this bad? should we remove this?
+    #[handle_result]
     pub fn return_signature_and_clean_state_on_success(
         &mut self,
-        request: SignatureRequest, // BREAKING CHANGE!!!
+        request: SignatureRequest, // this change here should actually be ok.
         #[callback_result] signature: Result<SignatureResponse, PromiseError>,
     ) -> Result<SignatureResponse, Error> {
         let Self::V0(mpc_contract) = self;
