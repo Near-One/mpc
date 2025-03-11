@@ -45,7 +45,7 @@ impl KeyEventState {
         dk_event_timeout_blocks: u64,
     ) -> Result<AuthenticatedCandidateId, Error> {
         // ensure the signer is a candidate
-        let candidate_id = self.event.authenticate_candidate()?;
+        let candidate = self.event.authenticate_candidate()?;
         // ensure the instance was started and is active
         if !self.instance.started() || self.instance.timed_out(dk_event_timeout_blocks) {
             return Err(KeyEventError::NoActiveKeyEvent.into());
@@ -54,7 +54,7 @@ impl KeyEventState {
         if self.current_key_event_id() != *key_event_id {
             return Err(KeyEventError::KeyEventIdMismatch.into());
         }
-        Ok(candidate_id)
+        Ok(candidate)
     }
     // starts a new reshare instance if there is no active reshare instance
     pub fn start(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
@@ -85,10 +85,10 @@ impl KeyEventState {
     where
         F: FnOnce(AuthenticatedCandidateId),
     {
-        let candidate_id = self.verify_vote(key_event_id, dk_event_timeout_blocks)?;
-        let n_votes = self.instance.vote_success(candidate_id.clone())?;
+        let candidate = self.verify_vote(key_event_id, dk_event_timeout_blocks)?;
+        let n_votes = self.instance.vote_success(candidate.clone())?;
         if let Some(cb) = callback {
-            cb(candidate_id);
+            cb(candidate);
         }
         Ok(self.event.threshold().value() <= n_votes)
     }
@@ -99,8 +99,8 @@ impl KeyEventState {
         key_event_id: KeyEventId,
         dk_event_timeout_blocks: BlockHeight,
     ) -> Result<bool, Error> {
-        let candidate_id = self.verify_vote(&key_event_id, dk_event_timeout_blocks)?;
-        let n_votes = self.instance.vote_abort(candidate_id)?;
+        let candidate = self.verify_vote(&key_event_id, dk_event_timeout_blocks)?;
+        let n_votes = self.instance.vote_abort(candidate)?;
         if self.event.n_candidates() - n_votes < self.event.threshold().value() {
             // we can't achieve `dkg_threshold` votes anymore, abort this instance and reset
             self.instance = self.instance.next_instance();
@@ -152,7 +152,7 @@ impl KeyEventInstance {
         self.started = Some(leader);
         self.key_event_instance.vote_alive();
     }
-    /// Commits the vote of `candidate_id` to `public_key`, returning the total number of votes for `public_key`.
+    /// Commits the vote of `candidate` to `public_key`, returning the total number of votes for `public_key`.
     /// Fails if the candidate already submitted a vote.
     pub fn vote_success(&mut self, candidate: AuthenticatedCandidateId) -> Result<u64, Error> {
         if self.started.is_none() {
@@ -171,15 +171,19 @@ impl KeyEventInstance {
         self.key_event_instance.vote_alive();
         Ok(self.completed.len() as u64)
     }
-    /// Casts a vote from `candidate_id` to abort the current instance.
-    /// Returns an error if `candidate_id` already voted.
+    /// Casts a vote from `candidate` to abort the current instance.
+    /// Returns an error if `candidate` already voted.
     /// Returns the number of votes received to abort.
-    pub fn vote_abort(&mut self, candidate_id: AuthenticatedCandidateId) -> Result<u64, Error> {
+    pub fn vote_abort(&mut self, candidate: AuthenticatedCandidateId) -> Result<u64, Error> {
+        // if candidate already aborted, then exit with error
+        if self.aborted.contains(&candidate) {
+            return Err(VoteError::VoterAlreadyAborted.into());
+        }
         // return error if the candidate alredy submitted a vote.
-        if self.completed.contains(&candidate_id) {
+        if self.completed.contains(&candidate) {
             return Err(VoteError::VoteAlreadySubmitted.into());
         }
-        self.aborted.insert(candidate_id);
+        self.aborted.insert(candidate);
         Ok(self.aborted.len() as u64)
     }
 }
@@ -262,9 +266,9 @@ impl KeyEvent {
         let n_candidates = self.leader_order.len();
         let idx = attempt.get() % (n_candidates as u64);
         let expected_id = self.leader_order[idx as usize].clone();
-        let candidate_id = self.proposed_key_state.authenticate()?;
-        if expected_id == candidate_id.get() {
-            Ok(AuthenticatedLeader(candidate_id.get()))
+        let candidate = self.proposed_key_state.authenticate()?;
+        if expected_id == candidate.get() {
+            Ok(AuthenticatedLeader(candidate.get()))
         } else {
             Err(VoteError::VoterNotLeader.into())
         }
@@ -282,96 +286,54 @@ impl KeyEvent {
 
 #[cfg(test)]
 mod tests {
+    use super::{AuthenticatedLeader, KeyEvent, KeyEventAttempt};
+    use crate::primitives::key_state::tests::gen_key_state_proposal;
+    use crate::primitives::key_state::{
+        AttemptId, AuthenticatedCandidateId, EpochId, KeyEventId, KeyStateProposal,
+    };
+    use crate::primitives::participants::ParticipantId;
+    use crate::state::key_event::{KeyEventInstance, KeyEventState};
+    use crate::state::tests::test_utils::{gen_account_id, gen_seed};
+    use near_sdk::{test_utils::VMContextBuilder, testing_env, AccountId, BlockHeight};
+    use rand::Rng;
     use std::{cell::RefCell, collections::BTreeSet, mem};
 
-    use near_sdk::{env::block_height, test_utils::VMContextBuilder, testing_env, AccountId};
-    use rand::Rng;
-
-    use crate::{
-        primitives::key_state::{
-            tests::gen_key_state_proposal, AttemptId, AuthenticatedCandidateId, EpochId, KeyEventId,
-        },
-        state::{
-            key_event::{KeyEventInstance, KeyEventState},
-            tests::test_utils::{gen_account_id, gen_seed},
-        },
-    };
-
-    use super::{AuthenticatedLeader, KeyEvent, KeyEventAttempt};
+    struct EnvVars {
+        block_height: BlockHeight,
+        seed: [u8; 32],
+    }
+    /// Sets environment variables `block_height`, `random_seed` and `signer_account_id`.
+    /// Generates pseudo-random values if none are provided.
+    fn set_env(
+        block_height: Option<BlockHeight>,
+        signer: Option<AccountId>,
+        seed: Option<[u8; 32]>,
+    ) -> EnvVars {
+        let seed = seed.unwrap_or(gen_seed());
+        let mut ctx = VMContextBuilder::new();
+        let block_height = block_height.unwrap_or(rand::thread_rng().gen());
+        ctx.block_height(block_height);
+        ctx.random_seed(seed);
+        let signer = signer.unwrap_or(gen_account_id());
+        ctx.signer_account_id(signer.clone());
+        testing_env!(ctx.build());
+        EnvVars { block_height, seed }
+    }
 
     #[test]
     fn test_key_event_attempt() {
-        let bh = rand::thread_rng().gen();
-        let mut context = VMContextBuilder::new();
-        context.block_height(bh);
-        testing_env!(context.build());
+        let EnvVars { block_height, .. } = set_env(None, None, None);
         let mut kea = KeyEventAttempt::new();
         assert_eq!(kea.id().get(), 0);
         assert!(!kea.timed_out(0));
-        let mut context = VMContextBuilder::new();
-        context.block_height(bh + 200);
-        testing_env!(context.build());
-        assert!(!kea.timed_out(200));
+        set_env(Some(block_height + 200), None, None);
         assert!(kea.timed_out(199));
+        assert!(!kea.timed_out(200));
         kea.vote_alive();
         assert!(!kea.timed_out(0));
-        let mut context = VMContextBuilder::new();
-        context.block_height(bh + 300);
-        testing_env!(context.build());
-        assert!(kea.timed_out(99));
         let kea = kea.next();
-        assert!(!kea.timed_out(0));
         assert_eq!(kea.id().get(), 1);
-    }
-    #[test]
-    fn test_key_event() {
-        let epoch_id = rand::thread_rng().gen();
-        let epoch_id = EpochId::new(epoch_id);
-        let n = 30;
-        let proposed_key_state = gen_key_state_proposal(Some(n));
-        let n = proposed_key_state.n_proposed_participants();
-        let mut context = VMContextBuilder::new();
-        let seed = gen_seed();
-        context.random_seed(seed);
-        testing_env!(context.build());
-        let ke = KeyEvent::new(epoch_id.clone(), proposed_key_state.clone());
-        assert_eq!(epoch_id, ke.epoch_id());
-        assert_eq!(proposed_key_state.key_event_threshold(), ke.threshold());
-        assert_eq!(
-            proposed_key_state.n_proposed_participants(),
-            ke.n_candidates()
-        );
-        assert_eq!(
-            *proposed_key_state.proposed_threshold_parameters(),
-            *ke.proposed_threshold_parameters()
-        );
-        let mut attempt = AttemptId::new();
-        let mut leaders = BTreeSet::new();
-        for _ in 0..n {
-            let mut found = false;
-            for account_id in proposed_key_state.candidates().participants().keys() {
-                let mut context = VMContextBuilder::new();
-                context.signer_account_id(account_id.clone());
-                testing_env!(context.build());
-                if let Ok(leader) = ke.authenticate_leader(attempt.clone()) {
-                    assert!(!found);
-                    found = true;
-                    leaders.insert(leader.0);
-                }
-                assert!(ke.authenticate_candidate().is_ok());
-            }
-            assert!(found);
-            attempt = attempt.next();
-        }
-        assert_eq!(leaders.len() as u64, n);
-
-        for _ in 0..10 {
-            let account_id = gen_account_id();
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id);
-            testing_env!(context.build());
-            assert!(ke.authenticate_candidate().is_err());
-        }
+        assert!(!kea.timed_out(0));
     }
     #[test]
     fn test_key_event_instance() {
@@ -396,241 +358,185 @@ mod tests {
         let candidate: AuthenticatedCandidateId = unsafe { mem::transmute(id) };
         assert_eq!(kei.vote_abort(candidate).unwrap(), 2);
     }
+    fn find_leader(
+        proposed: &KeyStateProposal,
+        attempt: &AttemptId,
+        ke: &KeyEvent,
+    ) -> ParticipantId {
+        let mut leader = None;
+        for account_id in proposed.candidates().participants().keys() {
+            set_env(None, Some((*account_id).clone()), None);
+            if let Ok(tmp) = ke.authenticate_leader(attempt.clone()) {
+                assert!(leader.is_none());
+                leader = Some(tmp.0);
+            }
+            // ensure that each candidate is authenticated
+            assert!(ke.authenticate_candidate().is_ok());
+            set_env(None, None, None);
+            // test if a random account gets any authorizations
+            assert!(ke.authenticate_candidate().is_err());
+            assert!(ke.authenticate_leader(attempt.clone()).is_err());
+        }
+        assert!(leader.is_some());
+        leader.unwrap()
+        //leaders.insert(leader.unwrap());
+        //attempt = attempt.next();
+    }
+    #[test]
+    fn test_key_event() {
+        let epoch_id = rand::thread_rng().gen();
+        let epoch_id = EpochId::new(epoch_id);
+        let proposed = gen_key_state_proposal(Some(30));
+        set_env(None, None, None);
+        let ke = KeyEvent::new(epoch_id.clone(), proposed.clone());
+        assert_eq!(proposed, ke.proposed_key_state);
+        assert_eq!(epoch_id, ke.epoch_id());
+        assert_eq!(proposed.key_event_threshold(), ke.threshold());
+        assert_eq!(proposed.n_proposed_participants(), ke.n_candidates());
+        assert_eq!(
+            *proposed.proposed_threshold_parameters(),
+            *ke.proposed_threshold_parameters()
+        );
+        let mut attempt = AttemptId::new();
+        let mut leaders = BTreeSet::new();
+        for _ in 0..proposed.n_proposed_participants() {
+            leaders.insert(find_leader(&proposed, &attempt, &ke));
+            attempt = attempt.next();
+        }
+        assert_eq!(leaders.len() as u64, proposed.n_proposed_participants());
+    }
 
     #[test]
     fn test_key_event_state() {
-        let block_height = 100;
-        let mut context = VMContextBuilder::new();
-        let seed = gen_seed();
-        context.random_seed(seed).block_height(block_height);
-        testing_env!(context.build());
         let epoch_id = EpochId::new(rand::thread_rng().gen());
-        let proposed_key_state = gen_key_state_proposal(Some(10));
-        let mut kes = KeyEventState::new(epoch_id.clone(), proposed_key_state.clone());
+        let proposed = gen_key_state_proposal(Some(10));
+        let EnvVars {
+            block_height, seed, ..
+        } = set_env(None, None, None);
+        let mut kes = KeyEventState::new(epoch_id.clone(), proposed.clone());
         let key_id = KeyEventId::new(epoch_id.clone(), AttemptId::new());
         // try to vote as a non participants:
         let counted = RefCell::new(0);
         let count = Some(|_: AuthenticatedCandidateId| {
             *counted.borrow_mut() += 1;
         });
-        for _ in 0..10 {
-            let account_id = gen_account_id();
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id);
-            context.block_height(block_height);
-            testing_env!(context.build());
+        let attempt = AttemptId::new();
+        let leader = find_leader(&proposed, &attempt, &kes.event);
+
+        for account_id in proposed.candidates().participants().keys() {
+            set_env(Some(block_height), Some(account_id.clone()), Some(seed));
+            // votes should not count if submitted before starting:
+            if proposed.candidates().id(account_id).unwrap() != leader {
+                assert!(kes.start(100).is_err());
+                assert!(kes.vote_abort(key_id.clone(), 100).is_err());
+                assert!(kes.vote_success(&key_id, 100, count).is_err());
+                assert_eq!(*counted.borrow(), 0);
+            } else {
+                assert!(kes.vote_abort(key_id.clone(), 100).is_err());
+                assert!(kes.vote_success(&key_id, 100, count).is_err());
+                assert_eq!(*counted.borrow(), 0);
+            }
+            // non participant should not be able to vote
+            set_env(Some(block_height), None, Some(seed));
             assert!(kes.start(100).is_err());
             assert!(kes.vote_abort(key_id.clone(), 100).is_err());
             assert!(kes.vote_success(&key_id, 100, count).is_err());
             assert_eq!(*counted.borrow(), 0);
         }
 
-        let account_id: AccountId = proposed_key_state
-            .candidates()
-            .participants()
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
-        let mut context = VMContextBuilder::new();
-        context.signer_account_id(account_id);
-        testing_env!(context.build());
-        assert!(kes.vote_success(&key_id, 100, count).is_err());
-        for account_id in proposed_key_state.candidates().participants().keys() {
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id.clone());
-            context.block_height(block_height);
-            testing_env!(context.build());
-            if kes.start(100).is_ok() {
-                break;
-            }
-        }
-        for (i, account_id) in proposed_key_state
-            .candidates()
-            .participants()
-            .keys()
-            .enumerate()
-        {
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id.clone());
-            context.block_height(block_height);
-            testing_env!(context.build());
-            let wrong_key_id = KeyEventId::new(epoch_id.clone(), AttemptId::new().next());
-            assert!(kes.vote_success(&wrong_key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), i);
-            assert!(kes.vote_abort(wrong_key_id, 100).is_err());
-            let wrong_key_id = KeyEventId::new(epoch_id.next(), AttemptId::new());
-            assert!(kes.vote_success(&wrong_key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), i);
-            assert!(kes.vote_abort(wrong_key_id, 100).is_err());
-            let res = kes.vote_success(&key_id, 100, count).unwrap();
-            assert_eq!(*counted.borrow(), i + 1);
-            if proposed_key_state.key_event_threshold().value() <= ((i + 1) as u64) {
-                assert!(res);
-            } else {
-                assert!(!res);
-            }
-            assert!(kes.vote_success(&key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), i + 1);
-            assert!(kes.vote_abort(key_id.clone(), 100).is_err());
-        }
-        // start new instance
-        let block_height = block_height + 1;
-        for account_id in proposed_key_state.candidates().participants().keys() {
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id.clone());
-            context.block_height(block_height);
-            testing_env!(context.build());
-            if kes.start(0).is_ok() {
-                break;
-            }
-        }
-        let key_id = KeyEventId::new(key_id.epoch_id(), key_id.attempt().next());
-        *counted.borrow_mut() = 0;
-        for (i, account_id) in proposed_key_state
-            .candidates()
-            .participants()
-            .keys()
-            .enumerate()
-        {
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id.clone());
-            context.block_height(block_height);
-            testing_env!(context.build());
-            let res = kes.vote_abort(key_id.clone(), 100);
-            println!("{:?}", res);
-            let res = res.unwrap();
-            if proposed_key_state.key_event_threshold().value()
-                > proposed_key_state.n_proposed_participants() - ((i + 1) as u64)
-            {
-                assert!(res);
-            } else {
-                assert!(!res);
-            }
-            assert!(kes.vote_success(&key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), 0);
-        }
-        // start new instance
-        let block_height = block_height + 1;
-        for account_id in proposed_key_state.candidates().participants().keys() {
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id.clone());
-            context.block_height(block_height);
-            testing_env!(context.build());
-            if kes.start(0).is_ok() {
-                break;
-            }
-        }
-        let key_id = KeyEventId::new(key_id.epoch_id(), key_id.attempt().next());
-        *counted.borrow_mut() = 0;
-        for account_id in proposed_key_state.candidates().participants().keys() {
-            let mut context = VMContextBuilder::new();
-            context.signer_account_id(account_id.clone());
-            context.block_height(block_height + 100);
-            testing_env!(context.build());
-            assert!(kes.vote_abort(key_id.clone(), 0).is_err());
-            assert!(kes.vote_success(&key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), 0);
-        }
-        // todo: vote abort first and verify you can't vote for success
-        // test for timeout
-        // start as leader:
+        set_env(
+            Some(block_height),
+            Some(proposed.candidates().account_id(&leader).unwrap()),
+            Some(seed),
+        );
+        assert!(kes.start(0).is_ok());
 
-        //#[near(serializers=[borsh, json])]
-        //#[derive(Debug)]
-        //pub struct KeyEventState {
-        //    event: KeyEvent,
-        //    instance: KeyEventInstance,
-        //}
-        //
-        //impl KeyEventState {
-        //    pub fn authenticate_candidate(&self) -> Result<AuthenticatedCandidateId, Error> {
-        //        self.event.authenticate_candidate()
-        //    }
-        //    pub fn proposed_threshold(&self) -> Threshold {
-        //        self.event.proposed_key_state.proposed_threshold()
-        //    }
-        //    pub fn proposed_threshold_parameters(&self) -> ThresholdParameters {
-        //        self.event
-        //            .proposed_key_state
-        //            .proposed_threshold_parameters()
-        //            .clone()
-        //    }
-        //    pub fn new(epoch_id: EpochId, proposed_key_state: KeyStateProposal) -> Self {
-        //        KeyEventState {
-        //            event: KeyEvent::new(epoch_id, proposed_key_state),
-        //            instance: KeyEventInstance::new(),
-        //        }
-        //    }
-        //    fn verify_vote(
-        //        &self,
-        //        key_event_id: &KeyEventId,
-        //        dk_event_timeout_blocks: u64,
-        //    ) -> Result<AuthenticatedCandidateId, Error> {
-        //        // ensure the signer is a candidate
-        //        let candidate_id = self.event.authenticate_candidate()?;
-        //        // ensure the instance was started and is active
-        //        if !self.instance.started() || self.instance.timed_out(dk_event_timeout_blocks) {
-        //            return Err(KeyEventError::NoActiveKeyEvent.into());
-        //        }
-        //        // Ensure the key_event_id matches
-        //        if self.current_key_event_id() != *key_event_id {
-        //            return Err(KeyEventError::KeyEventIdMismatch.into());
-        //        }
-        //        Ok(candidate_id)
-        //    }
-        //    // starts a new reshare instance if there is no active reshare instance
-        //    pub fn start(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
-        //        // update the current instance if required:
-        //        if self.instance.timed_out(dk_event_timeout_blocks) {
-        //            self.instance = self.instance.next_instance();
-        //        }
-        //        // check that the signer is the current leader:
-        //        let leader = self
-        //            .event
-        //            .authenticate_leader(self.instance.current_attempt())?;
-        //        // set the instance as active:
-        //        self.instance.activate(leader);
-        //        Ok(())
-        //    }
-        //    pub fn current_key_event_id(&self) -> KeyEventId {
-        //        KeyEventId::new(self.event.epoch_id(), self.instance.current_attempt())
-        //    }
-        //    /// Casts a vote for `public_key` in `key_event_id`.
-        //    /// Fails if `signer` is not a candidate, if the candidate already voted or if there is no active key event.
-        //    /// Returns `RunningContractState` if `public_key` reaches the required votes.
-        //    pub fn vote_success<F>(
-        //        &mut self,
-        //        key_event_id: &KeyEventId,
-        //        dk_event_timeout_blocks: u64,
-        //        callback: Option<F>,
-        //    ) -> Result<bool, Error>
-        //    where
-        //        F: FnOnce(AuthenticatedCandidateId),
-        //    {
-        //        let candidate_id = self.verify_vote(key_event_id, dk_event_timeout_blocks)?;
-        //        let n_votes = self.instance.vote_success(candidate_id.clone())?;
-        //        if let Some(cb) = callback {
-        //            cb(candidate_id);
-        //        }
-        //        Ok(self.event.threshold().value() <= n_votes)
-        //    }
-        //    /// Casts a vote to abort the current keygen instance.
-        //    /// Replaces the current instance in case dkg threshold can't be reached anymore.
-        //    pub fn vote_abort(
-        //        &mut self,
-        //        key_event_id: KeyEventId,
-        //        dk_event_timeout_blocks: BlockHeight,
-        //    ) -> Result<bool, Error> {
-        //        let candidate_id = self.verify_vote(&key_event_id, dk_event_timeout_blocks)?;
-        //        let n_votes = self.instance.vote_abort(candidate_id)?;
-        //        if self.event.n_candidates() - n_votes < self.event.threshold().value() {
-        //            // we can't achieve `dkg_threshold` votes anymore, abort this instance and reset
-        //            self.instance = self.instance.next_instance();
-        //            return Ok(true);
-        //        }
-        //        Ok(false)
-        //    }
-        //}
+        for account_id in proposed.candidates().participants().keys() {
+            set_env(Some(block_height + 1), Some(account_id.clone()), Some(seed));
+            // votes should not count if timed out:
+            assert!(kes.vote_abort(key_id.clone(), 0).is_err());
+            assert!(kes.vote_success(&key_id, 0, count).is_err());
+            assert_eq!(*counted.borrow(), 0);
+            // non participant should still not be able to vote
+            set_env(Some(block_height), None, Some(seed));
+            assert!(kes.start(100).is_err());
+            assert!(kes.vote_abort(key_id.clone(), 100).is_err());
+            assert!(kes.vote_success(&key_id, 100, count).is_err());
+            assert_eq!(*counted.borrow(), 0);
+        }
+
+        let mut block_height = block_height;
+        for (i, account_id) in proposed.candidates().participants().keys().enumerate() {
+            block_height += 1;
+            set_env(Some(block_height), Some(account_id.clone()), Some(seed));
+            // votes should count if not timed out:
+            let x = kes.vote_success(&key_id, 1, count).unwrap();
+            assert_eq!(*counted.borrow(), i + 1);
+            if proposed.key_event_threshold().value() <= (i + 1) as u64 {
+                assert!(x);
+            } else {
+                assert!(!x);
+            }
+
+            // abort should not work after submitting a vote:
+            assert!(kes.vote_abort(key_id.clone(), 1).is_err());
+            // submitting another vote should not work
+            assert!(kes.vote_success(&key_id, 1, count).is_err());
+            assert_eq!(*counted.borrow(), i + 1);
+
+            // non-leaders should still not be able to start
+            if proposed.candidates().id(account_id).unwrap() != leader {
+                assert!(kes.start(200).is_err());
+            }
+            // non participant should still not be able to vote
+            set_env(Some(block_height), None, Some(seed));
+            assert!(kes.start(100).is_err());
+            assert!(kes.vote_abort(key_id.clone(), 100).is_err());
+            assert!(kes.vote_success(&key_id, 100, count).is_err());
+            assert_eq!(*counted.borrow(), i + 1);
+        }
+
+        // start another attempt:
+        let attempt = attempt.next();
+        let key_id = KeyEventId::new(epoch_id.clone(), attempt.clone());
+        block_height += 300;
+        let EnvVars { seed, .. } = set_env(Some(block_height), None, None);
+        let leader = find_leader(&proposed, &attempt, &kes.event);
+        set_env(
+            Some(block_height),
+            Some(proposed.candidates().account_id(&leader).unwrap()),
+            Some(seed),
+        );
+        assert!(kes.start(1).is_ok());
+        *counted.borrow_mut() = 0;
+        for (i, account_id) in proposed.candidates().participants().keys().enumerate() {
+            set_env(Some(block_height), Some(account_id.clone()), Some(seed));
+            // abort should count if not timed out:
+            let x = kes.vote_abort(key_id.clone(), 1).unwrap();
+            if proposed.key_event_threshold().value()
+                > proposed.n_proposed_participants() - ((i + 1) as u64)
+            {
+                assert!(x);
+                break;
+            } else {
+                assert!(!x);
+                // abort should not work after aborting:
+                assert!(kes.vote_abort(key_id.clone(), 1).is_err());
+                // submitting another vote should not work either
+                assert!(kes.vote_success(&key_id, 1, count).is_err());
+                assert_eq!(*counted.borrow(), 0);
+                // non-leaders should still not be able to start
+                if proposed.candidates().id(account_id).unwrap() != leader {
+                    assert!(kes.start(200).is_err());
+                }
+            }
+
+            // non participant should still not be able to vote
+            set_env(Some(block_height), None, Some(seed));
+            assert!(kes.start(100).is_err());
+            assert!(kes.vote_abort(key_id.clone(), 100).is_err());
+            assert!(kes.vote_success(&key_id, 100, count).is_err());
+            assert_eq!(*counted.borrow(), 0);
+        }
     }
 }

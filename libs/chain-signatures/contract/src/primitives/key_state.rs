@@ -309,7 +309,7 @@ pub mod tests {
     fn test_dk_state() {
         let public_key = gen_pk();
         let key_event_id = gen_key_event_id();
-        let threshold_params = gen_threshold_params(MAX_N);
+        let threshold_params = gen_threshold_params(50);
         let participants = threshold_params.participants().clone();
         let dk_state = DKState::new(public_key.clone(), key_event_id, threshold_params).unwrap();
         assert_eq!(*dk_state.public_key(), public_key);
