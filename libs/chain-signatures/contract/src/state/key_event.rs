@@ -264,7 +264,7 @@ pub struct AuthenticatedLeader(ParticipantId);
 pub mod tests {
     use super::AuthenticatedLeader;
     use crate::primitives::key_state::tests::gen_key_state_proposal;
-    use crate::primitives::key_state::{AttemptId, EpochId, KeyEventId, KeyStateProposal};
+    use crate::primitives::key_state::{AttemptId, EpochId, KeyEventId};
     use crate::primitives::participants::{AuthenticatedCandidateId, ParticipantId};
     use crate::state::key_event::{KeyEvent, KeyEventInstance};
     use crate::state::tests::test_utils::{gen_account_id, gen_seed};
@@ -428,16 +428,17 @@ pub mod tests {
         assert!(kei.vote_abort(candidate.clone()).is_err());
         assert_last_vote_eq_block(&env, &kei, env.block_height - 10);
     }
-    pub fn find_leader(
-        proposed: &KeyStateProposal,
-        attempt: &AttemptId,
-        kes: &KeyEvent,
-    ) -> (AccountId, ParticipantId) {
+    pub fn find_leader(attempt: &AttemptId, kes: &KeyEvent) -> (AccountId, ParticipantId) {
         let mut env = Environment::new(None, None, None);
         let mut leader = None;
-        for account_id in proposed.candidates().participants().keys() {
+        for account_id in kes
+            .proposed_threshold_parameters()
+            .participants()
+            .participants()
+            .keys()
+        {
             env.set_signer(account_id);
-            Environment::new(None, Some(account_id.clone()), None);
+            //Environment::new(None, Some(account_id.clone()), None);
             if let Ok(tmp) = kes.authenticate_leader(attempt.clone()) {
                 assert!(leader.is_none());
                 leader = Some((account_id.clone(), tmp.0));
@@ -468,7 +469,7 @@ pub mod tests {
         let mut attempt = AttemptId::new();
         let mut leaders = BTreeSet::new();
         for _ in 0..proposed.n_proposed_participants() {
-            leaders.insert(find_leader(&proposed, &attempt, &kes));
+            leaders.insert(find_leader(&attempt, &kes));
             attempt = attempt.next();
         }
         assert_eq!(leaders.len() as u64, proposed.n_proposed_participants());
@@ -485,7 +486,7 @@ pub mod tests {
             *counted.borrow_mut() += 1;
         });
         let attempt = AttemptId::new();
-        let (leader_account, _) = find_leader(&proposed, &attempt, &kes);
+        let (leader_account, _) = find_leader(&attempt, &kes);
 
         // participants should not be able to vote before starting the event
         for account_id in proposed.candidates().participants().keys() {
@@ -564,7 +565,7 @@ pub mod tests {
         let attempt = attempt.next();
         let key_id = KeyEventId::new(epoch_id.clone(), attempt.clone());
         env.advance_block_height(300);
-        let (leader_account, _) = find_leader(&proposed, &attempt, &kes);
+        let (leader_account, _) = find_leader(&attempt, &kes);
         env.set_signer(&leader_account);
         assert!(kes.start(1).is_ok());
         *counted.borrow_mut() = 0;
