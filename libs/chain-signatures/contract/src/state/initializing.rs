@@ -167,6 +167,9 @@ mod tests {
             // verify that no votes are casted before the kegen started.
             assert!(state.vote_pk(key_event.clone(), gen_pk(), 100).is_err());
             assert!(state.vote_abort(key_event.clone(), 100).is_err());
+            if *c != leader.0 {
+                assert!(state.start(1).is_err());
+            }
         }
         // check that some randos can't vote
         for _ in 0..20 {
