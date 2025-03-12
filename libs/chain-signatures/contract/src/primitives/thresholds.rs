@@ -56,7 +56,7 @@ impl DKGThreshold {
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct ThresholdParameters {
-    participants: Participants, //      BTreeMap<AccountId, ParticipantInfo>,
+    participants: Participants,
     threshold: Threshold,
 }
 
@@ -222,7 +222,7 @@ mod tests {
     fn test_migration_candidates() {
         let n: usize = rand::thread_rng().gen_range(2..600);
         let candidates = gen_legacy_candidates(n);
-        // migratin has to work for now invalid thresholds as well.
+        // migration has to work for now invalid thresholds as well.
         let threshold = Threshold::new(rand::thread_rng().gen::<u64>());
         let tp: ThresholdParameters = (threshold.clone(), candidates.clone()).into();
         assert_eq!(threshold, tp.threshold());
@@ -234,7 +234,7 @@ mod tests {
     fn test_migration_participants() {
         let n: usize = rand::thread_rng().gen_range(2..600);
         let legacy_participants = gen_legacy_participants(n);
-        // migratin has to work for now invalid thresholds as well.
+        // migration has to work for now invalid thresholds as well.
         let threshold = Threshold::new(rand::thread_rng().gen::<u64>());
         let tp: ThresholdParameters = (threshold.clone(), legacy_participants.clone()).into();
         assert_eq!(threshold, tp.threshold());

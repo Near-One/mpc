@@ -26,14 +26,6 @@ impl From<&legacy_contract::primitives::ParticipantInfo> for ParticipantInfo {
     }
 }
 
-//pub mod candidate_id {
-//    use near_sdk::{env, near};
-//
-//    use crate::{
-//        errors::Error,
-//        primitives::participants::{ParticipantId, Participants},
-//    };
-//
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AuthenticatedCandidateId(ParticipantId);
@@ -102,17 +94,28 @@ impl Participants {
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
         self.participants.contains_key(account_id)
     }
-    pub fn insert(&mut self, account_id: AccountId, info: ParticipantInfo) -> Result<(), Error> {
+    pub fn insert_with_id(
+        &mut self,
+        account_id: AccountId,
+        info: ParticipantInfo,
+        id: ParticipantId,
+    ) -> Result<(), Error> {
         if self.participants.contains_key(&account_id) {
             return Err(InvalidParameters::ParticipantAlreadyInSet.into());
         }
+        if id < self.next_id() {
+            return Err(InvalidParameters::ParticipantAlreadyUsed.into());
+        }
         self.participants.insert(account_id.clone(), info);
         self.participant_by_id
-            .insert(self.next_id.clone(), account_id.clone());
+            .insert(id.clone(), account_id.clone());
         self.id_by_participant
-            .insert(account_id.clone(), self.next_id.clone());
-        self.next_id.0 += 1;
+            .insert(account_id.clone(), id.clone());
+        self.next_id.0 = id.0 + 1;
         Ok(())
+    }
+    pub fn insert(&mut self, account_id: AccountId, info: ParticipantInfo) -> Result<(), Error> {
+        self.insert_with_id(account_id, info, self.next_id.clone())
     }
     pub fn participants(&self) -> &BTreeMap<AccountId, ParticipantInfo> {
         &self.participants

@@ -67,6 +67,8 @@ pub enum InvalidParameters {
     UpdateNotFound,
     #[error("Participant already in set.")]
     ParticipantAlreadyInSet,
+    #[error("Participant id already used.")]
+    ParticipantAlreadyUsed,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]

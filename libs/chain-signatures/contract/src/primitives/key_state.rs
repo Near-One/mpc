@@ -79,7 +79,7 @@ impl KeyEventId {
 /// - the key event that resulted in the key shares
 /// - threshold parameters
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DKState {
     public_key: PublicKey,
     key_event_id: KeyEventId,
@@ -153,11 +153,6 @@ pub struct KeyStateProposal {
     key_event_threshold: DKGThreshold,
 }
 impl KeyStateProposal {
-    //pub fn authenticate(&self) -> Result<AuthenticatedCandidateId, Error> {
-    //    let signer = env::signer_account_id();
-    //    let id = self.candidates().id(&signer)?;
-    //    Ok(AuthenticatedCandidateId(id))
-    //}
     pub fn proposed_threshold_parameters(&self) -> &ThresholdParameters {
         &self.proposed_threshold_parameters
     }
@@ -174,16 +169,9 @@ impl KeyStateProposal {
             key_event_threshold,
         })
     }
-    //pub fn is_proposed(&self, account_id: &AccountId) -> bool {
-    //    self.proposed_threshold_parameters
-    //        .is_participant(account_id)
-    //}
     pub fn candidates(&self) -> &Participants {
         self.proposed_threshold_parameters.participants()
     }
-    //pub fn candidate(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
-    //    self.proposed_threshold_parameters.participant_by_idx(idx)
-    //}
     pub fn proposed_threshold(&self) -> Threshold {
         self.proposed_threshold_parameters.threshold()
     }
@@ -354,7 +342,7 @@ pub mod tests {
             assert_eq!(ksp.key_event_threshold().value(), i);
             // test authentication:
         }
-        let ksp = KeyStateProposal::new(
+        KeyStateProposal::new(
             proposed_threshold_parameters.clone(),
             DKGThreshold::new(proposed_threshold_parameters.threshold().value()),
         )
