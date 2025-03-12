@@ -27,7 +27,7 @@ fn leader_selection_hash(participant_id: &ParticipantId, uid: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::primitives::participants::ParticipantId;
-    use crate::state::tests::test_utils::gen_participants;
+    use crate::primitives::test_utils::gen_participants;
     use rand::{thread_rng, Rng};
     use std::collections::BTreeSet;
 

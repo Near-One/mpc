@@ -99,14 +99,14 @@ impl ResharingContractState {
 #[cfg(test)]
 mod tests {
     use crate::primitives::key_state::{AttemptId, KeyEventId};
+    use crate::primitives::test_utils::gen_account_id;
+    use crate::primitives::test_utils::gen_legacy_resharing_state;
     use crate::primitives::votes::KeyStateVotes;
     use crate::state::key_event::tests::{find_leader, Environment};
     use crate::state::key_event::KeyEvent;
     use crate::state::resharing::ResharingContractState;
     use crate::state::running::running_tests::{gen_running_state, gen_valid_ksp};
     use crate::state::running::RunningContractState;
-    use crate::state::tests::test_utils::gen_account_id;
-    use crate::state::tests::test_utils::gen_legacy_resharing_state;
     use near_sdk::AccountId;
     use std::collections::BTreeSet;
 

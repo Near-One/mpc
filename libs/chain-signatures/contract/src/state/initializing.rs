@@ -106,11 +106,11 @@ mod tests {
     use super::InitializingContractState;
     use crate::primitives::key_state::KeyEventId;
     use crate::primitives::key_state::{tests::gen_key_state_proposal, EpochId};
+    use crate::primitives::test_utils::{gen_account_id, gen_legacy_initializing_state, gen_pk};
     use crate::primitives::votes::KeyStateVotes;
     use crate::state::key_event::tests::{find_leader, Environment};
     use crate::state::key_event::KeyEvent;
     use crate::state::running::RunningContractState;
-    use crate::state::tests::test_utils::{gen_account_id, gen_legacy_initializing_state, gen_pk};
     use near_sdk::AccountId;
     use rand::Rng;
     use std::collections::BTreeSet;

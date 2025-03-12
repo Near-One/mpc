@@ -152,10 +152,10 @@ mod tests {
     use crate::primitives::participants::tests::{
         assert_candidate_migration, assert_participant_migration,
     };
-    use crate::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
-    use crate::state::tests::test_utils::{
+    use crate::primitives::test_utils::{
         gen_legacy_candidates, gen_legacy_participants, gen_participants,
     };
+    use crate::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
     use rand::Rng;
 
     #[test]

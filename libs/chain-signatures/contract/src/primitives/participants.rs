@@ -219,7 +219,7 @@ pub mod tests {
     use std::collections::BTreeSet;
 
     use crate::primitives::participants::{ParticipantId, Participants};
-    use crate::state::tests::test_utils::{
+    use crate::primitives::test_utils::{
         gen_accounts_and_info, gen_legacy_candidates, gen_legacy_participants,
     };
     use rand::Rng;

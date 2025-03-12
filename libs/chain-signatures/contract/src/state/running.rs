@@ -109,10 +109,10 @@ pub mod running_tests {
     use crate::primitives::key_state::tests::gen_key_state_proposal;
     use crate::primitives::key_state::{AttemptId, DKState, EpochId, KeyEventId, KeyStateProposal};
     use crate::primitives::participants::Participants;
+    use crate::primitives::test_utils::{gen_participant, gen_pk, gen_threshold_params};
     use crate::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
     use crate::primitives::votes::KeyStateVotes;
     use crate::state::key_event::tests::Environment;
-    use crate::state::tests::test_utils::{gen_participant, gen_pk, gen_threshold_params};
     use rand::Rng;
 
     pub fn gen_running_state() -> RunningContractState {

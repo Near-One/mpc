@@ -266,8 +266,8 @@ pub mod tests {
     use crate::primitives::key_state::tests::gen_key_state_proposal;
     use crate::primitives::key_state::{AttemptId, EpochId, KeyEventId};
     use crate::primitives::participants::{AuthenticatedCandidateId, ParticipantId};
+    use crate::primitives::test_utils::{gen_account_id, gen_seed};
     use crate::state::key_event::{KeyEvent, KeyEventInstance};
-    use crate::state::tests::test_utils::{gen_account_id, gen_seed};
     use near_sdk::{test_utils::VMContextBuilder, testing_env, AccountId, BlockHeight};
     use rand::Rng;
     use std::collections::BTreeSet;
