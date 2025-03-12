@@ -1,10 +1,10 @@
-use super::key_event::KeyEventState;
+use super::key_event::KeyEvent;
 use super::running::RunningContractState;
 use crate::errors::Error;
 use crate::primitives::key_state::{
-    AuthenticatedCandidateId, AuthenticatedParticipantId, DKState, EpochId, KeyEventId,
-    KeyStateProposal,
+    AuthenticatedParticipantId, DKState, EpochId, KeyEventId, KeyStateProposal,
 };
+use crate::primitives::participants::AuthenticatedCandidateId;
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::{near, BlockHeight, PublicKey};
 
@@ -12,7 +12,7 @@ use near_sdk::{near, BlockHeight, PublicKey};
 #[derive(Debug)]
 pub struct ResharingContractState {
     pub current_state: RunningContractState,
-    pub event_state: KeyEventState,
+    pub event_state: KeyEvent,
 }
 
 impl From<&legacy_contract::ResharingContractState> for ResharingContractState {
@@ -23,7 +23,7 @@ impl From<&legacy_contract::ResharingContractState> for ResharingContractState {
                 key_state: state.into(),
                 key_state_votes: KeyStateVotes::default(),
             },
-            event_state: KeyEventState::new(EpochId::new(state.old_epoch + 1), state.into()),
+            event_state: KeyEvent::new(EpochId::new(state.old_epoch + 1), state.into()),
         }
     }
 }
@@ -48,10 +48,7 @@ impl ResharingContractState {
                     key_state: self.current_state.key_state.clone(),
                     key_state_votes: KeyStateVotes::default(),
                 },
-                event_state: KeyEventState::new(
-                    self.current_state.epoch_id().next(),
-                    proposal.clone(),
-                ),
+                event_state: KeyEvent::new(self.current_state.epoch_id().next(), proposal.clone()),
             }));
         }
         Ok(None)
@@ -105,7 +102,7 @@ mod tests {
     //use crate::primitives::key_state::{DKState, EpochId};
     //use crate::primitives::votes::KeyStateVotes;
     //use crate::state::key_event::tests::{set_env, EnvVars};
-    //use crate::state::key_event::KeyEventState;
+    //use crate::state::key_event::KeyEvent;
     //use crate::state::resharing::ResharingContractState;
     //use crate::state::running::RunningContractState;
     //use crate::state::tests::test_utils::{
@@ -145,7 +142,7 @@ mod tests {
     //    //let epoch_id = EpochId::new(epoch_id);
     //    //let proposed = gen_key_state_proposal(Some(30));
     //    //let EnvVars { block_height, seed } = set_env(None, None, None);
-    //    //let ke = KeyEventState::new(epoch_id.clone(), proposed.clone());
+    //    //let ke = KeyEvent::new(epoch_id.clone(), proposed.clone());
     //    //let public_key = gen_pk();
     //    //let key_event_id = gen_key_event_id();
     //    //let threshold_params = gen_threshold_params(50);
@@ -157,7 +154,7 @@ mod tests {
     //    //    key_state_votes: KeyStateVotes::default(),
     //    //};
     //    //gen_key_e(max_n)
-    //    //let event_state = KeyEventState{};
+    //    //let event_state = KeyEvent{};
     //    //let mut state = ResharingContractState {
     //    //    current_state,
     //    //    event_state:

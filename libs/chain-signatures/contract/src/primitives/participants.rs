@@ -1,5 +1,5 @@
 use crate::errors::{Error, InvalidCandidateSet, InvalidParameters, InvalidState};
-use near_sdk::{log, near, AccountId, PublicKey};
+use near_sdk::{env, log, near, AccountId, PublicKey};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub mod hpke {
@@ -26,6 +26,28 @@ impl From<&legacy_contract::primitives::ParticipantInfo> for ParticipantInfo {
     }
 }
 
+//pub mod candidate_id {
+//    use near_sdk::{env, near};
+//
+//    use crate::{
+//        errors::Error,
+//        primitives::participants::{ParticipantId, Participants},
+//    };
+//
+#[near(serializers=[borsh, json])]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AuthenticatedCandidateId(ParticipantId);
+impl AuthenticatedCandidateId {
+    pub fn get(&self) -> ParticipantId {
+        self.0.clone()
+    }
+    pub fn new(candidates: &Participants) -> Result<Self, Error> {
+        let signer = env::signer_account_id();
+        let id = candidates.id(&signer)?;
+        Ok(AuthenticatedCandidateId(id))
+    }
+}
+//}
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct ParticipantId(u32);

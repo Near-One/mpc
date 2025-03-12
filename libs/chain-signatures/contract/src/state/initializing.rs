@@ -1,7 +1,8 @@
-use super::key_event::KeyEventState;
+use super::key_event::KeyEvent;
 use super::running::RunningContractState;
 use crate::errors::Error;
-use crate::primitives::key_state::{AuthenticatedCandidateId, DKState, EpochId, KeyEventId};
+use crate::primitives::key_state::{DKState, EpochId, KeyEventId};
+use crate::primitives::participants::AuthenticatedCandidateId;
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::BlockHeight;
 use near_sdk::{near, PublicKey};
@@ -37,7 +38,7 @@ impl PkVotes {
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
 pub struct InitializingContractState {
-    pub keygen: KeyEventState,
+    pub keygen: KeyEvent,
     pub pk_votes: PkVotes,
 }
 impl InitializingContractState {
@@ -94,7 +95,7 @@ impl InitializingContractState {
 impl From<&legacy_contract::InitializingContractState> for InitializingContractState {
     fn from(state: &legacy_contract::InitializingContractState) -> Self {
         InitializingContractState {
-            keygen: KeyEventState::new(EpochId::new(0), state.into()),
+            keygen: KeyEvent::new(EpochId::new(0), state.into()),
             pk_votes: PkVotes::default(),
         }
     }
@@ -106,10 +107,10 @@ mod tests {
     use crate::primitives::key_state::{tests::gen_key_state_proposal, EpochId};
     use crate::primitives::key_state::{AttemptId, KeyEventId};
     use crate::primitives::votes::KeyStateVotes;
-    use crate::state::key_event::tests::{set_env, EnvVars};
-    use crate::state::key_event::KeyEventState;
+    use crate::state::key_event::tests::Environment;
+    use crate::state::key_event::KeyEvent;
     use crate::state::running::RunningContractState;
-    use crate::state::tests::test_utils::{gen_legacy_initializing_state, gen_pk};
+    use crate::state::tests::test_utils::{gen_account_id, gen_legacy_initializing_state, gen_pk};
     use near_sdk::AccountId;
     use rand::Rng;
     use std::collections::BTreeSet;
@@ -134,11 +135,11 @@ mod tests {
     }
     #[test]
     fn test_initializing_contract_state() {
+        let mut env = Environment::new(None, None, None);
         let epoch_id = rand::thread_rng().gen();
         let epoch_id = EpochId::new(epoch_id);
         let proposed = gen_key_state_proposal(Some(30));
-        let EnvVars { block_height, seed } = set_env(None, None, None);
-        let ke = KeyEventState::new(epoch_id.clone(), proposed.clone());
+        let ke = KeyEvent::new(epoch_id.clone(), proposed.clone());
         let mut state = InitializingContractState {
             keygen: ke.clone(),
             pk_votes: super::PkVotes::new(),
@@ -152,7 +153,7 @@ mod tests {
             .cloned()
             .collect();
         for c in &candidates {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             // verify that each candidate is authorized
             assert!(state.authenticate_candidate().is_ok());
             // verify that no votes are casted before the kegen started.
@@ -161,7 +162,7 @@ mod tests {
         }
         // check that some randos can't vote
         for _ in 0..20 {
-            set_env(Some(block_height), None, Some(seed));
+            env.set_signer(&gen_account_id());
             assert!(state.authenticate_candidate().is_err());
             assert!(state.vote_pk(key_event.clone(), gen_pk(), 100).is_err());
             assert!(state.vote_abort(key_event.clone(), 100).is_err());
@@ -170,7 +171,7 @@ mod tests {
         // start the keygen:
         let mut leader = None;
         for c in &candidates {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             if state.start(0).is_ok() {
                 assert!(leader.is_none());
                 leader = Some(c);
@@ -179,15 +180,18 @@ mod tests {
         assert!(leader.is_some());
 
         // assert that timed out votes do not count
+        env.advance_block_height(1);
         for c in &candidates {
-            set_env(Some(block_height + 1), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             assert!(state.vote_pk(key_event.clone(), gen_pk(), 0).is_err());
             assert!(state.vote_abort(key_event.clone(), 0).is_err());
         }
 
         // check that some randos can't vote
+        env.block_height -= 1;
+        env.set();
         for _ in 0..20 {
-            set_env(Some(block_height), None, Some(seed));
+            env.set_signer(&gen_account_id());
             assert!(state.authenticate_candidate().is_err());
             assert!(state.vote_pk(key_event.clone(), gen_pk(), 100).is_err());
             assert!(state.vote_abort(key_event.clone(), 100).is_err());
@@ -196,13 +200,13 @@ mod tests {
         // assert that votes for a different keygen do not count
         let ke = KeyEventId::new(epoch_id.next(), key_event.attempt().next());
         for c in &candidates {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             assert!(state.vote_pk(ke.clone(), gen_pk(), 10).is_err());
             assert!(state.vote_abort(ke.clone(), 10).is_err());
         }
         // assert that valid votes do count
         for c in &candidates {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             let x = state.vote_pk(key_event.clone(), gen_pk(), 0).unwrap();
             // everybody voting for a random key
             assert!(x.is_none());
@@ -213,10 +217,10 @@ mod tests {
         }
 
         // reset the keygen
-        let block_height = block_height + 100;
+        env.advance_block_height(100);
         let mut leader = None;
         for c in &candidates {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             if state.start(0).is_ok() {
                 assert!(leader.is_none());
                 leader = Some(c);
@@ -230,7 +234,7 @@ mod tests {
         let pk = gen_pk();
         let mut res: Option<RunningContractState> = None;
         for (i, c) in candidates.clone().into_iter().enumerate() {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(&c);
             res = state.vote_pk(key_event.clone(), pk.clone(), 0).unwrap();
             // everybody voting for the same key
             if ((i + 1) as u64) < proposed.key_event_threshold().value() {
@@ -258,10 +262,10 @@ mod tests {
 
         // assert that the instance resets after a timeout
         // reset the keygen
-        let block_height = block_height + 100;
+        env.advance_block_height(100);
         let mut leader = None;
         for c in &candidates {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             if state.start(0).is_ok() {
                 assert!(leader.is_none());
                 leader = Some(c);
@@ -273,7 +277,7 @@ mod tests {
         // assert that valid aborts get counted correctly:
         //let mut res: Option<RunningContractState> = None;
         for (i, c) in candidates.clone().into_iter().enumerate() {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(&c);
             // assert we can abort
             let x = state.vote_abort(key_event.clone(), 0).unwrap();
             if proposed.n_proposed_participants() - ((i + 1) as u64)
@@ -294,10 +298,10 @@ mod tests {
         // assert that we can start anew:
         // assert that the instance resets after a timeout
         // reset the keygen
-        let block_height = block_height + 100;
+        env.advance_block_height(100);
         let mut leader = None;
         for c in &candidates {
-            set_env(Some(block_height), Some(c.clone()), Some(seed));
+            env.set_signer(c);
             if state.start(0).is_ok() {
                 assert!(leader.is_none());
                 leader = Some(c);

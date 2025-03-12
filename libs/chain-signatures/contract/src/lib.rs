@@ -28,7 +28,7 @@ use primitives::signature::{SignRequest, SignatureRequest, YieldIndex};
 use primitives::thresholds::Threshold;
 use primitives::votes::KeyStateVotes;
 use state::initializing::{InitializingContractState, PkVotes};
-use state::key_event::KeyEventState;
+use state::key_event::KeyEvent;
 use state::running::RunningContractState;
 use state::ProtocolContractState;
 use std::cmp;
@@ -111,7 +111,7 @@ impl MpcContract {
         MpcContract {
             config: Config::from(init_config),
             protocol_state: ProtocolContractState::Initializing(InitializingContractState {
-                keygen: KeyEventState::new(EpochId::new(0), proposed_key_state),
+                keygen: KeyEvent::new(EpochId::new(0), proposed_key_state),
                 pk_votes: PkVotes::new(),
             }),
             pending_requests: LookupMap::new(StorageKey::PendingRequests),

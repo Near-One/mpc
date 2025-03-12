@@ -1,4 +1,4 @@
-use super::key_event::KeyEventState;
+use super::key_event::KeyEvent;
 use super::resharing::ResharingContractState;
 use crate::errors::{Error, InvalidCandidateSet};
 use crate::primitives::key_state::{
@@ -49,7 +49,7 @@ impl RunningContractState {
                     key_state: self.key_state.clone(),
                     key_state_votes: KeyStateVotes::default(),
                 },
-                event_state: KeyEventState::new(self.epoch_id().next(), proposal.clone()),
+                event_state: KeyEvent::new(self.epoch_id().next(), proposal.clone()),
             }));
         }
         Ok(None)

@@ -127,24 +127,14 @@ impl DKState {
     }
 }
 
-/// Proposal for changing the Key state.
-/// The proposal specifies the desired key state and the threshold that must be reached in order to
-/// initiate the resharing / keygen process.
-#[near(serializers=[borsh, json])]
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct KeyStateProposal {
-    proposed_threshold_parameters: ThresholdParameters,
-    key_event_threshold: DKGThreshold,
-}
-
-#[near(serializers=[borsh, json])]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct AuthenticatedCandidateId(ParticipantId);
-impl AuthenticatedCandidateId {
-    pub fn get(&self) -> ParticipantId {
-        self.0.clone()
-    }
-}
+//#[near(serializers=[borsh, json])]
+//#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+//pub struct AuthenticatedCandidateId(ParticipantId);
+//impl AuthenticatedCandidateId {
+//    pub fn get(&self) -> ParticipantId {
+//        self.0.clone()
+//    }
+//}
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -155,12 +145,19 @@ impl AuthenticatedParticipantId {
     }
 }
 
+/// Proposal for a new key state, specifying the threshold for the key event.
+#[near(serializers=[borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct KeyStateProposal {
+    proposed_threshold_parameters: ThresholdParameters,
+    key_event_threshold: DKGThreshold,
+}
 impl KeyStateProposal {
-    pub fn authenticate(&self) -> Result<AuthenticatedCandidateId, Error> {
-        let signer = env::signer_account_id();
-        let id = self.candidates().id(&signer)?;
-        Ok(AuthenticatedCandidateId(id))
-    }
+    //pub fn authenticate(&self) -> Result<AuthenticatedCandidateId, Error> {
+    //    let signer = env::signer_account_id();
+    //    let id = self.candidates().id(&signer)?;
+    //    Ok(AuthenticatedCandidateId(id))
+    //}
     pub fn proposed_threshold_parameters(&self) -> &ThresholdParameters {
         &self.proposed_threshold_parameters
     }
@@ -177,16 +174,16 @@ impl KeyStateProposal {
             key_event_threshold,
         })
     }
-    pub fn is_proposed(&self, account_id: &AccountId) -> bool {
-        self.proposed_threshold_parameters
-            .is_participant(account_id)
-    }
+    //pub fn is_proposed(&self, account_id: &AccountId) -> bool {
+    //    self.proposed_threshold_parameters
+    //        .is_participant(account_id)
+    //}
     pub fn candidates(&self) -> &Participants {
         self.proposed_threshold_parameters.participants()
     }
-    pub fn candidate(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
-        self.proposed_threshold_parameters.participant_by_idx(idx)
-    }
+    //pub fn candidate(&self, idx: &ParticipantId) -> Result<AccountId, Error> {
+    //    self.proposed_threshold_parameters.participant_by_idx(idx)
+    //}
     pub fn proposed_threshold(&self) -> Threshold {
         self.proposed_threshold_parameters.threshold()
     }
@@ -366,14 +363,14 @@ pub mod tests {
             let mut context = VMContextBuilder::new();
             context.signer_account_id(account_id.clone());
             testing_env!(context.build());
-            assert_eq!(
-                candidates.id(account_id).unwrap(),
-                ksp.authenticate().unwrap().get()
-            );
+            //assert_eq!(
+            //    candidates.id(account_id).unwrap(),
+            //    ksp.authenticate().unwrap().get()
+            //);
             let mut context = VMContextBuilder::new();
             context.signer_account_id(gen_account_id());
             testing_env!(context.build());
-            assert!(ksp.authenticate().is_err());
+            //assert!(ksp.authenticate().is_err());
         }
     }
 
