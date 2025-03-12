@@ -40,11 +40,11 @@ impl Default for AttemptId {
         Self::new()
     }
 }
-/// Identifier for a key event:
-/// `epoch_id` the epoch for which the key is supposed to be active
-/// `start_block_id`: the block during which the key event startet
-/// `uid`: a random u64 generated via env::random_seed() during `start_block_id`
-/// `leader`: the leader for this key event.
+
+/// A unique identifier for a key event:
+/// `epoch_id` the epoch for which the key is supposed to be active.
+/// `attempt`: an identifier for the attempt during the epoch.
+/// Note: `attempt` is just a counter.
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KeyEventId {
@@ -53,7 +53,7 @@ pub struct KeyEventId {
 }
 
 impl KeyEventId {
-    /// Returns the unique id associated with this key event.
+    /// Returns the id associated with this key event.
     pub fn attempt(&self) -> AttemptId {
         self.attempt.clone()
     }
@@ -127,15 +127,8 @@ impl DKState {
     }
 }
 
-//#[near(serializers=[borsh, json])]
-//#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-//pub struct AuthenticatedCandidateId(ParticipantId);
-//impl AuthenticatedCandidateId {
-//    pub fn get(&self) -> ParticipantId {
-//        self.0.clone()
-//    }
-//}
-
+/// This struct is supposed to contain the participant id associated to the account `env::signer_account_id()`
+/// It is supposed to be constructed only by DKState.
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AuthenticatedParticipantId(ParticipantId);
@@ -152,6 +145,7 @@ pub struct KeyStateProposal {
     proposed_threshold_parameters: ThresholdParameters,
     key_event_threshold: DKGThreshold,
 }
+
 impl KeyStateProposal {
     pub fn proposed_threshold_parameters(&self) -> &ThresholdParameters {
         &self.proposed_threshold_parameters
@@ -188,7 +182,7 @@ impl KeyStateProposal {
     }
 }
 
-/* Migration helpers. Test it. Or delete it and ensure migrate() is never called while in resharing */
+/* Migration helpers. Though ideally, we don't reshare and update at the same time. */
 impl From<&legacy_contract::ResharingContractState> for DKState {
     fn from(state: &legacy_contract::ResharingContractState) -> Self {
         DKState {
@@ -351,14 +345,9 @@ pub mod tests {
             let mut context = VMContextBuilder::new();
             context.signer_account_id(account_id.clone());
             testing_env!(context.build());
-            //assert_eq!(
-            //    candidates.id(account_id).unwrap(),
-            //    ksp.authenticate().unwrap().get()
-            //);
             let mut context = VMContextBuilder::new();
             context.signer_account_id(gen_account_id());
             testing_env!(context.build());
-            //assert!(ksp.authenticate().is_err());
         }
     }
 
@@ -366,7 +355,7 @@ pub mod tests {
     fn test_key_state_proposal_migration_initializing() {
         let n = rand::thread_rng().gen_range(2..MAX_N);
         let min_k = min_thrershold(n);
-        // we must allow previously invalid paramters as well
+        // we must allow previously invalid parameters as well
         let k_invalid = rand::thread_rng().gen_range(1..min_k);
         let k_valid = rand::thread_rng().gen_range(min_k..n + 1);
         for k in [k_invalid, k_valid] {
@@ -383,7 +372,7 @@ pub mod tests {
     fn test_dkstate_migration_running() {
         let n = rand::thread_rng().gen_range(2..MAX_N);
         let min_k = min_thrershold(n);
-        // we must allow previously invalid paramters as well
+        // we must allow previously invalid parameters as well
         let k_invalid = rand::thread_rng().gen_range(1..min_k);
         let k_valid = rand::thread_rng().gen_range(min_k..n + 1);
         for k in [k_invalid, k_valid] {

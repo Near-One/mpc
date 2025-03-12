@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 mod impls;
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SignError {
     #[error("Signature request has timed out.")]
@@ -35,6 +36,7 @@ pub enum KeyEventError {
     #[error("Expected ongoing reshare")]
     NoActiveKeyEvent,
 }
+
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum VoteError {
     #[error("Voting account is not a participant.")]
@@ -90,6 +92,7 @@ pub enum InvalidState {
     #[error("Not a participant")]
     NotParticipant,
 }
+
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum InvalidThreshold {
     #[error("Threshold does not meet the minimum absolute requirement")]
@@ -103,6 +106,7 @@ pub enum InvalidThreshold {
     #[error("Key event threshold must not exceeed number of participants")]
     MaxDKGThresholdFailed,
 }
+
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum InvalidCandidateSet {
     #[error("Set of proposed participants must contain at least `threshold` old participants.")]
@@ -110,6 +114,7 @@ pub enum InvalidCandidateSet {
     #[error("Participant ids are not coherent.")]
     IncoherentParticipantIds,
 }
+
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum ConversionError {
     #[error("Data conversion error.")]

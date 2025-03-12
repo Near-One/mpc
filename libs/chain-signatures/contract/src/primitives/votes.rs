@@ -72,7 +72,6 @@ mod tests {
 
     #[test]
     fn test_voting_and_removal() {
-        //let account_id = gen_account_id();
         let id: u64 = rand::thread_rng().gen();
         let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&id) };
         let mut ksv = KeyStateVotes::new();

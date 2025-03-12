@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub mod hpke {
     pub type PublicKey = [u8; 32];
 }
+
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct ParticipantInfo {
@@ -39,7 +40,7 @@ impl AuthenticatedCandidateId {
         Ok(AuthenticatedCandidateId(id))
     }
 }
-//}
+
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct ParticipantId(u32);

@@ -108,6 +108,7 @@ impl From<ConversionError> for Error {
         Self::simple(ErrorKind::ConversionError(code))
     }
 }
+
 impl ConversionError {
     pub(crate) fn message<T>(self, msg: T) -> Error
     where
@@ -122,14 +123,6 @@ impl From<KeyEventError> for Error {
         Self::simple(ErrorKind::KeyEventError(code))
     }
 }
-//impl KeyEventError {
-//    pub(crate) fn message<T>(self, msg: T) -> Error
-//    where
-//        T: Into<Cow<'static, str>>,
-//    {
-//        Error::message(ErrorKind::KeyEventError(self), msg)
-//    }
-//}
 
 impl InvalidThreshold {
     pub(crate) fn message<T>(self, msg: T) -> Error
@@ -139,11 +132,13 @@ impl InvalidThreshold {
         Error::message(ErrorKind::InvalidThreshold(self), msg)
     }
 }
+
 impl From<InvalidThreshold> for Error {
     fn from(code: InvalidThreshold) -> Self {
         Self::simple(ErrorKind::InvalidThreshold(code))
     }
 }
+
 impl From<InvalidCandidateSet> for Error {
     fn from(code: InvalidCandidateSet) -> Self {
         Self::simple(ErrorKind::InvalidCandidateSet(code))
