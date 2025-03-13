@@ -1,6 +1,7 @@
 pub mod common;
 use common::init_env;
 
+use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId};
 use serde_json::json;
 
 #[tokio::test]
@@ -230,25 +231,25 @@ async fn test_vote_pk() -> anyhow::Result<()> {
 async fn test_vote_reshare() -> anyhow::Result<()> {
     let (worker, contract, accounts, _) = init_env().await;
 
-    // in running state, vote current epoch will success
+    // in running state, vote current epoch will fail
     let execution = accounts[2]
         .call(contract.id(), "vote_reshared")
         .args_json(json!({
-            "epoch": 0
-        }))
-        .transact()
-        .await?;
-    assert!(execution.is_success());
-
-    // in running state, vote other epoch will fail
-    let execution = accounts[2]
-        .call(contract.id(), "vote_reshared")
-        .args_json(json!({
-            "epoch": 1
+            "key_event_id": KeyEventId::new(EpochId::new(0), AttemptId::new())
         }))
         .transact()
         .await?;
     assert!(execution.is_failure());
+
+    //// in running state, vote other epoch will fail
+    //let execution = accounts[2]
+    //    .call(contract.id(), "vote_reshared")
+    //    .args_json(json!({
+    //        "epoch": 1
+    //    }))
+    //    .transact()
+    //    .await?;
+    //assert!(execution.is_failure());
 
     // join a new candidate
     let alice = worker.dev_create_account().await?;

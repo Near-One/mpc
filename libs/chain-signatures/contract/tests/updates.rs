@@ -1,9 +1,9 @@
 pub mod common;
 use common::{init_env, vote_update_till_completion, CONTRACT_FILE_PATH, INVALID_CONTRACT};
 
-use legacy_contract::config::{ConfigV1, ProtocolConfig};
-use legacy_contract::errors;
-use legacy_contract::update::{ProposeUpdateArgs, UpdateId};
+use mpc_contract::config::Config;
+use mpc_contract::errors;
+use mpc_contract::update::{ProposeUpdateArgs, UpdateId};
 
 use near_workspaces::types::NearToken;
 
@@ -79,9 +79,10 @@ async fn test_propose_update_config() {
         .contains(&errors::VoteError::VoterNotParticipant.to_string()));
 
     // have each participant propose a new update:
-    let new_config = ConfigV1 {
+    let new_config = Config {
         max_num_requests_to_remove: 30,
         request_timeout_blocks: 200,
+        dk_event_timeout_blocks: 30,
     };
 
     let mut proposals = Vec::with_capacity(accounts.len());
