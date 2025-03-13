@@ -101,10 +101,8 @@ pub enum InvalidThreshold {
     MinRelRequirementFailed,
     #[error("Threshold must not exceed number of participants")]
     MaxRequirementFailed,
-    #[error("Key event threshold must not be less than voting threshold")]
-    MinDKGThresholdFailed,
-    #[error("Key event threshold must not exceeed number of participants")]
-    MaxDKGThresholdFailed,
+    #[error("Key event threshold must match the number of participants")]
+    DKGThresholdFailed,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]

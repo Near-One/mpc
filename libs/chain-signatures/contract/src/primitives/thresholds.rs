@@ -40,11 +40,8 @@ impl DKGThreshold {
         self.0
     }
     pub fn validate(&self, n_shares: u64, k: Threshold) -> Result<(), Error> {
-        if self.value() > n_shares {
-            return Err(InvalidThreshold::MaxDKGThresholdFailed.into());
-        }
-        if self.value() < k.value() {
-            return Err(InvalidThreshold::MinDKGThresholdFailed.into());
+        if self.value() != n_shares {
+            return Err(InvalidThreshold::DKGThresholdFailed.into());
         }
         ThresholdParameters::validate_threshold(n_shares, k)
     }

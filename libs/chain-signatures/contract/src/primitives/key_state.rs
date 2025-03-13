@@ -304,8 +304,7 @@ pub mod tests {
     pub fn gen_key_state_proposal(max_n: Option<usize>) -> KeyStateProposal {
         let max_n = max_n.unwrap_or(MAX_N);
         let proposed_threshold_parameters = gen_threshold_params(max_n);
-        let key_event_threshold =
-            DKGThreshold::new(proposed_threshold_parameters.threshold().value());
+        let key_event_threshold = DKGThreshold::new(proposed_threshold_parameters.n_participants());
         KeyStateProposal::new(
             proposed_threshold_parameters.clone(),
             key_event_threshold.clone(),
@@ -315,7 +314,7 @@ pub mod tests {
     #[test]
     fn test_key_state_proposal() {
         let proposed_threshold_parameters = gen_threshold_params(MAX_N);
-        for i in 0..proposed_threshold_parameters.threshold().value() {
+        for i in 0..proposed_threshold_parameters.n_participants() {
             let key_event_threshold = DKGThreshold::new(i);
             assert!(KeyStateProposal::new(
                 proposed_threshold_parameters.clone(),
@@ -324,21 +323,17 @@ pub mod tests {
             .is_err());
         }
         let candidates = proposed_threshold_parameters.participants();
-        for i in proposed_threshold_parameters.threshold().value()
-            ..proposed_threshold_parameters.n_participants() + 1
-        {
-            let key_event_threshold = DKGThreshold::new(i);
-            let ksp =
-                KeyStateProposal::new(proposed_threshold_parameters.clone(), key_event_threshold);
-            assert!(ksp.is_ok());
-            let ksp = ksp.unwrap();
-            assert!(ksp.validate().is_ok());
-            assert_eq!(ksp.key_event_threshold().value(), i);
-            // test authentication:
-        }
+        let i = proposed_threshold_parameters.n_participants();
+        let key_event_threshold = DKGThreshold::new(i);
+        let ksp = KeyStateProposal::new(proposed_threshold_parameters.clone(), key_event_threshold);
+        assert!(ksp.is_ok());
+        let ksp = ksp.unwrap();
+        assert!(ksp.validate().is_ok());
+        assert_eq!(ksp.key_event_threshold().value(), i);
+        // test authentication:
         KeyStateProposal::new(
             proposed_threshold_parameters.clone(),
-            DKGThreshold::new(proposed_threshold_parameters.threshold().value()),
+            DKGThreshold::new(proposed_threshold_parameters.n_participants()),
         )
         .unwrap();
         for account_id in candidates.participants().keys() {

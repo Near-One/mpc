@@ -213,7 +213,7 @@ async fn test_invalid_contract_deploy() {
     let state: legacy_contract::ProtocolContractState = execution.json().unwrap();
     dbg!(state);
 }
-
+// todo: fix this test
 #[tokio::test]
 async fn test_propose_update_contract_many() {
     let (_, contract, accounts, _) = init_env().await;

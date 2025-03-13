@@ -48,7 +48,10 @@ impl ResharingContractState {
                     key_state: self.current_state.key_state.clone(),
                     key_state_votes: KeyStateVotes::default(),
                 },
-                event_state: KeyEvent::new(self.current_state.epoch_id().next(), proposal.clone()),
+                event_state: KeyEvent::new(
+                    self.event_state.current_key_event_id().epoch_id().next(),
+                    proposal.clone(),
+                ),
             }));
         }
         Ok(None)
