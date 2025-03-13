@@ -595,7 +595,6 @@ dependencies = [
 [[package]]
 name = "crypto-shared"
 version = "0.1.1"
-source = "git+https://github.com/near-one/mpc?branch=kd%2Fcontract-coordinated-key-resharing#75d101e4fc43b45cb3152b98ec97467b167d64ce"
 dependencies = [
  "anyhow",
  "borsh",
@@ -1878,22 +1877,6 @@ dependencies = [
 [[package]]
 name = "mpc-contract"
 version = "1.0.1"
-source = "git+https://github.com/Near-One/mpc?rev=72ffae1be79f60511b80f43bb2c89cfc78569a51#72ffae1be79f60511b80f43bb2c89cfc78569a51"
-dependencies = [
- "borsh",
- "crypto-shared",
- "k256",
- "near-gas 0.2.5",
- "near-sdk",
- "schemars",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "mpc-contract"
-version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "borsh",
@@ -1901,7 +1884,6 @@ dependencies = [
  "digest",
  "ecdsa",
  "k256",
- "mpc-contract 1.0.1",
  "near-crypto 0.26.0",
  "near-gas 0.2.5",
  "near-sdk",
@@ -2329,7 +2311,6 @@ dependencies = [
  "serde_repr",
  "sha2",
  "thiserror",
- "syn 2.0.95",
 ]
 
 [[package]]
@@ -2341,17 +2322,6 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.99",
-]
-
-[[package]]
-name = "near-rpc-error-macro"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73c7f0f12f426792dd2c9d83df43d73c3b15d80f6e99e8d0e16ff3e024d0f9ba"
-dependencies = [
- "near-rpc-error-core 0.23.0",
- "serde",
- "syn 2.0.95",
 ]
 
 [[package]]
@@ -2389,22 +2359,6 @@ name = "near-schema-checker-lib"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa9050b0822d2c0dbd90d8c523fd74634f77c5be4ed3337e7010c0d986121982"
-dependencies = [
- "near-schema-checker-core",
- "near-schema-checker-macro",
-]
-
-[[package]]
-name = "near-schema-checker-macro"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1bca8c93ff0ad17138c147323a07f036d11c9e1602e3bc2ac9d29c3cf78b89d"
-
-[[package]]
-name = "near-sdk"
-version = "5.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "581c7e6b1962fca1637bf668c18b498328100f8974aa798ed44702ba77c3bdac"
 dependencies = [
  "near-schema-checker-core",
  "near-schema-checker-macro",
@@ -2460,15 +2414,9 @@ dependencies = [
 
 [[package]]
 name = "near-stdx"
-version = "0.23.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29e1897481272eb144328abd51ca9f59b5b558e7a6dc6e2177c8c9bb18fbd818"
-
-[[package]]
-name = "near-stdx"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "427b4e4af5e32f682064772da8b1a7558b3f090e6151c8804cff24ee6c5c4966"
+checksum = "6d5c43f6181873287ddaa25edcc2943d0f2d5da9588231516f2ed0549db1fbac"
 
 [[package]]
 name = "near-stdx"
@@ -3019,6 +2967,26 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.15",
  "serde",
+]
+
+[[package]]
+name = "rayon"
+version = "1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -3823,15 +3791,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "termcolor"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
-dependencies = [
- "winapi-util",
 ]
 
 [[package]]
