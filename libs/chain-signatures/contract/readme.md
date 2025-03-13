@@ -87,4 +87,4 @@ These functions require the caller to be a participant or candidate.
 
 
 ## Development
-Run tests with `cargo nextest run`
+Run tests with `cargo nextest run@2.0.0-alpha`
