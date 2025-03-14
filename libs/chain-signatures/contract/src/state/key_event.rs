@@ -137,7 +137,12 @@ impl KeyEvent {
         let seed = env::random_seed();
         let seed = u64::from_le_bytes(seed[..8].try_into().unwrap());
         let seed = seed ^ epoch_id.get();
-        let leader_order = leaders(proposed_key_state.candidates(), seed);
+        let leader_order = leaders(
+            proposed_key_state
+                .proposed_threshold_parameters()
+                .participants(),
+            seed,
+        );
         KeyEvent {
             epoch_id,
             leader_order,
@@ -480,18 +485,24 @@ pub mod tests {
         let key_id = KeyEventId::new(epoch_id.clone(), AttemptId::new());
         assert_eq!(kes.current_key_event_id(), key_id);
         assert_eq!(kes.event_threshold(), proposed.key_event_threshold());
-        assert_eq!(kes.proposed_threshold(), proposed.proposed_threshold());
+        assert_eq!(
+            kes.proposed_threshold(),
+            proposed.proposed_threshold_parameters().threshold()
+        );
         assert_eq!(
             kes.proposed_threshold_parameters(),
             *proposed.proposed_threshold_parameters()
         );
         let mut attempt = AttemptId::new();
         let mut leaders = BTreeSet::new();
-        for _ in 0..proposed.n_proposed_participants() {
+        for _ in 0..proposed.proposed_threshold_parameters().n_participants() {
             leaders.insert(find_leader(&attempt, &kes));
             attempt = attempt.next();
         }
-        assert_eq!(leaders.len() as u64, proposed.n_proposed_participants());
+        assert_eq!(
+            leaders.len() as u64,
+            proposed.proposed_threshold_parameters().n_participants()
+        );
     }
     #[test]
     fn test_key_event_state_vote() {
@@ -508,7 +519,12 @@ pub mod tests {
         let (leader_account, _) = find_leader(&attempt, &kes);
 
         // participants should not be able to vote before starting the event
-        for account_id in proposed.candidates().participants().keys() {
+        for account_id in proposed
+            .proposed_threshold_parameters()
+            .participants()
+            .participants()
+            .keys()
+        {
             env.set_signer(account_id);
             if *account_id != leader_account {
                 assert!(kes.start(100).is_err());
@@ -535,7 +551,12 @@ pub mod tests {
         assert!(kes.start(0).is_ok());
 
         // votes should not count if timed out:
-        for account_id in proposed.candidates().participants().keys() {
+        for account_id in proposed
+            .proposed_threshold_parameters()
+            .participants()
+            .participants()
+            .keys()
+        {
             Environment::new(Some(env.block_height + 1), Some(account_id.clone()), None);
             assert!(kes.vote_abort(key_id.clone(), 0).is_err());
             assert!(kes.vote_success(&key_id, 0, count).is_err());
@@ -552,7 +573,13 @@ pub mod tests {
         }
 
         // votes should count if not timed out:
-        for (i, account_id) in proposed.candidates().participants().keys().enumerate() {
+        for (i, account_id) in proposed
+            .proposed_threshold_parameters()
+            .participants()
+            .participants()
+            .keys()
+            .enumerate()
+        {
             env.advance_block_height(1);
             env.set_signer(account_id);
             let x = kes.vote_success(&key_id, 1, count).unwrap();
@@ -588,12 +615,18 @@ pub mod tests {
         env.set_signer(&leader_account);
         assert!(kes.start(1).is_ok());
         *counted.borrow_mut() = 0;
-        for (i, account_id) in proposed.candidates().participants().keys().enumerate() {
+        for (i, account_id) in proposed
+            .proposed_threshold_parameters()
+            .participants()
+            .participants()
+            .keys()
+            .enumerate()
+        {
             env.set_signer(account_id);
             // abort should count if not timed out:
             let x = kes.vote_abort(key_id.clone(), 1).unwrap();
             if proposed.key_event_threshold().value()
-                > proposed.n_proposed_participants() - ((i + 1) as u64)
+                > proposed.proposed_threshold_parameters().n_participants() - ((i + 1) as u64)
             {
                 assert_eq!(x, InstanceStatus::Replaced);
                 break;

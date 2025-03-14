@@ -163,22 +163,15 @@ impl KeyStateProposal {
             key_event_threshold,
         })
     }
-    pub fn candidates(&self) -> &Participants {
-        self.proposed_threshold_parameters.participants()
-    }
-    pub fn proposed_threshold(&self) -> Threshold {
-        self.proposed_threshold_parameters.threshold()
-    }
-    pub fn n_proposed_participants(&self) -> u64 {
-        self.proposed_threshold_parameters.n_participants()
-    }
     pub fn key_event_threshold(&self) -> DKGThreshold {
         self.key_event_threshold.clone()
     }
     pub fn validate(&self) -> Result<(), Error> {
-        self.key_event_threshold()
-            .validate(self.n_proposed_participants(), self.proposed_threshold())?;
-        self.candidates().validate()
+        self.key_event_threshold().validate(
+            self.proposed_threshold_parameters.n_participants(),
+            self.proposed_threshold_parameters.threshold(),
+        )?;
+        self.proposed_threshold_parameters.participants().validate()
     }
 }
 
@@ -357,9 +350,10 @@ pub mod tests {
             let legacy_state = gen_legacy_initializing_state(n, k);
             let migrated_ksp: KeyStateProposal = (&legacy_state).into();
             assert_eq!(migrated_ksp.key_event_threshold().value(), n as u64);
-            assert_eq!(migrated_ksp.proposed_threshold().value(), k as u64);
-            assert_eq!(migrated_ksp.n_proposed_participants(), n as u64);
-            assert_candidate_migration(&legacy_state.candidates, migrated_ksp.candidates());
+            let found = migrated_ksp.proposed_threshold_parameters();
+            assert_eq!(found.threshold().value(), k as u64);
+            assert_eq!(found.n_participants(), n as u64);
+            assert_candidate_migration(&legacy_state.candidates, found.participants());
         }
     }
 
@@ -398,10 +392,11 @@ pub mod tests {
                 migrated_dkg.participants(),
             );
             let migrated_ksp: KeyStateProposal = (&legacy_state).into();
-            assert_eq!(migrated_ksp.proposed_threshold().value(), k as u64);
+            let found = migrated_ksp.proposed_threshold_parameters();
+            assert_eq!(found.threshold().value(), k as u64);
             assert_eq!(migrated_ksp.key_event_threshold().value(), n as u64);
-            assert_eq!(migrated_ksp.n_proposed_participants(), n as u64);
-            assert_participant_migration(&legacy_state.new_participants, migrated_ksp.candidates());
+            assert_eq!(found.n_participants(), n as u64);
+            assert_participant_migration(&legacy_state.new_participants, found.participants());
         }
     }
 }

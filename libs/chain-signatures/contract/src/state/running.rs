@@ -64,7 +64,8 @@ impl RunningContractState {
         proposal.validate()?;
         // ensure there are enough old participant in the new participant set:
         let new_participant_set: BTreeSet<AccountId> = proposal
-            .candidates()
+            .proposed_threshold_parameters()
+            .participants()
             .participants()
             .keys()
             .cloned()
@@ -86,7 +87,10 @@ impl RunningContractState {
         // ensure that the participant id is preseved:
         for account_id in inter {
             let existing_id = self.key_state.participants().id(account_id)?;
-            let new_id = proposal.candidates().id(account_id)?;
+            let new_id = proposal
+                .proposed_threshold_parameters()
+                .participants()
+                .id(account_id)?;
             if existing_id != new_id {
                 return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
             }
