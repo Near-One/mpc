@@ -32,9 +32,9 @@ pub struct KeyEvent {
 // voting API
 impl KeyEvent {
     // starts a new reshare instance if there is no active reshare instance
-    pub fn start(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
+    pub fn start(&mut self, event_max_idle_blocks: u64) -> Result<(), Error> {
         // update the current instance if required:
-        if self.instance.timed_out(dk_event_timeout_blocks) {
+        if self.instance.timed_out(event_max_idle_blocks) {
             self.instance = self.instance.next_instance();
         }
         // check that the signer is the current leader:
@@ -51,13 +51,13 @@ impl KeyEvent {
     pub fn vote_success<F>(
         &mut self,
         key_event_id: &KeyEventId,
-        dk_event_timeout_blocks: u64,
+        event_max_idle_blocks: u64,
         callback: Option<F>,
     ) -> Result<bool, Error>
     where
         F: FnOnce(AuthenticatedCandidateId),
     {
-        let candidate = self.verify_vote(key_event_id, dk_event_timeout_blocks)?;
+        let candidate = self.verify_vote(key_event_id, event_max_idle_blocks)?;
         let n_votes = self.instance.vote_success(candidate.clone())?;
         if let Some(cb) = callback {
             cb(candidate);
@@ -69,9 +69,9 @@ impl KeyEvent {
     pub fn vote_abort(
         &mut self,
         key_event_id: KeyEventId,
-        dk_event_timeout_blocks: BlockHeight,
+        event_max_idle_blocks: BlockHeight,
     ) -> Result<bool, Error> {
-        let candidate = self.verify_vote(&key_event_id, dk_event_timeout_blocks)?;
+        let candidate = self.verify_vote(&key_event_id, event_max_idle_blocks)?;
         let n_votes = self.instance.vote_abort(candidate)?;
         if self.proposed_threshold_parameters().n_participants() - n_votes
             < self.event_threshold().value()
@@ -134,12 +134,12 @@ impl KeyEvent {
     fn verify_vote(
         &self,
         key_event_id: &KeyEventId,
-        dk_event_timeout_blocks: u64,
+        event_max_idle_blocks: u64,
     ) -> Result<AuthenticatedCandidateId, Error> {
         // ensure the signer is a candidate
         let candidate = self.authenticate_candidate()?;
         // ensure the instance was started and is active
-        if !self.instance.started() || self.instance.timed_out(dk_event_timeout_blocks) {
+        if !self.instance.started() || self.instance.timed_out(event_max_idle_blocks) {
             return Err(KeyEventError::NoActiveKeyEvent.into());
         }
         // Ensure the key_event_id matches

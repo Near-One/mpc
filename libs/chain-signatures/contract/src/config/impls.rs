@@ -1,5 +1,5 @@
 use super::consts::{
-    DEFAULT_REQUEST_TIMEOUT_BLOCKS, DEFAULT_RESHARE_TIMEOUT_BLOCKS, MAX_NUM_REQUESTS_TO_REMOVE,
+    DEFAULT_EVENT_MAX_IDLE_BLOCKS, DEFAULT_REQUEST_TIMEOUT_BLOCKS, MAX_NUM_REQUESTS_TO_REMOVE,
 };
 use super::{Config, InitConfig};
 impl Default for Config {
@@ -7,7 +7,7 @@ impl Default for Config {
         Config {
             max_num_requests_to_remove: MAX_NUM_REQUESTS_TO_REMOVE,
             request_timeout_blocks: DEFAULT_REQUEST_TIMEOUT_BLOCKS,
-            dk_event_timeout_blocks: DEFAULT_RESHARE_TIMEOUT_BLOCKS,
+            event_max_idle_blocks: DEFAULT_EVENT_MAX_IDLE_BLOCKS,
         }
     }
 }
@@ -23,9 +23,9 @@ impl From<Option<InitConfig>> for Config {
                 request_timeout_blocks: init_config
                     .request_timeout_blocks
                     .unwrap_or(DEFAULT_REQUEST_TIMEOUT_BLOCKS),
-                dk_event_timeout_blocks: init_config
-                    .dk_event_timeout_blocks
-                    .unwrap_or(DEFAULT_RESHARE_TIMEOUT_BLOCKS),
+                event_max_idle_blocks: init_config
+                    .event_max_idle_blocks
+                    .unwrap_or(DEFAULT_EVENT_MAX_IDLE_BLOCKS),
             },
         }
     }
@@ -35,7 +35,7 @@ impl From<&legacy_contract::config::ConfigV1> for Config {
         Config {
             max_num_requests_to_remove: config.max_num_requests_to_remove,
             request_timeout_blocks: config.request_timeout_blocks,
-            dk_event_timeout_blocks: DEFAULT_RESHARE_TIMEOUT_BLOCKS,
+            event_max_idle_blocks: DEFAULT_EVENT_MAX_IDLE_BLOCKS,
         }
     }
 }

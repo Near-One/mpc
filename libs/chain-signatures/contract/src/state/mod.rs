@@ -40,28 +40,28 @@ impl ProtocolContractState {
             }
         }
     }
-    pub fn start_keygen_instance(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
+    pub fn start_keygen_instance(&mut self, event_max_idle_blocks: u64) -> Result<(), Error> {
         let ProtocolContractState::Initializing(state) = self else {
             return Err(InvalidState::ProtocolStateNotInitializing.into());
         };
-        state.start(dk_event_timeout_blocks)
+        state.start(event_max_idle_blocks)
     }
-    pub fn start_reshare_instance(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
+    pub fn start_reshare_instance(&mut self, event_max_idle_blocks: u64) -> Result<(), Error> {
         let ProtocolContractState::Resharing(state) = self else {
             return Err(InvalidState::ProtocolStateNotResharing.into());
         };
-        state.start(dk_event_timeout_blocks)
+        state.start(event_max_idle_blocks)
     }
     pub fn vote_reshared(
         &mut self,
         key_event_id: KeyEventId,
-        dk_event_timeout_blocks: u64,
+        event_max_idle_blocks: u64,
     ) -> Result<Option<ProtocolContractState>, Error> {
         let ProtocolContractState::Resharing(state) = self else {
             return Err(InvalidState::ProtocolStateNotResharing.into());
         };
         state
-            .vote_reshared(key_event_id, dk_event_timeout_blocks)
+            .vote_reshared(key_event_id, event_max_idle_blocks)
             .map(|x| x.map(ProtocolContractState::Running))
     }
     /// Casts a vote for `public_key` in `key_event_id` during Initializtion.
@@ -71,13 +71,13 @@ impl ProtocolContractState {
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
-        dk_event_timeout_blocks: u64,
+        event_max_idle_blocks: u64,
     ) -> Result<Option<ProtocolContractState>, Error> {
         let ProtocolContractState::Initializing(state) = self else {
             return Err(InvalidState::ProtocolStateNotResharing.into());
         };
         state
-            .vote_pk(key_event_id, public_key, dk_event_timeout_blocks)
+            .vote_pk(key_event_id, public_key, event_max_idle_blocks)
             .map(|x| x.map(ProtocolContractState::Running))
     }
     /// Casts a vote for `proposed_key_state`, returning the new protocol state if the proposal is

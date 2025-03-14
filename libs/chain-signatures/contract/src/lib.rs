@@ -127,12 +127,12 @@ impl MpcContract {
 
     pub fn start_keygen_instance(&mut self) -> Result<(), Error> {
         self.protocol_state
-            .start_keygen_instance(self.config.dk_event_timeout_blocks)
+            .start_keygen_instance(self.config.event_max_idle_blocks)
     }
 
     pub fn start_reshare_instance(&mut self) -> Result<(), Error> {
         self.protocol_state
-            .start_reshare_instance(self.config.dk_event_timeout_blocks)
+            .start_reshare_instance(self.config.event_max_idle_blocks)
     }
 
     pub fn vote_reshared(
@@ -140,7 +140,7 @@ impl MpcContract {
         key_event_id: KeyEventId,
     ) -> Result<Option<ProtocolContractState>, Error> {
         self.protocol_state
-            .vote_reshared(key_event_id, self.config.dk_event_timeout_blocks)
+            .vote_reshared(key_event_id, self.config.event_max_idle_blocks)
     }
 
     pub fn vote_pk(
@@ -148,11 +148,8 @@ impl MpcContract {
         key_event_id: KeyEventId,
         public_key: PublicKey,
     ) -> Result<Option<ProtocolContractState>, Error> {
-        self.protocol_state.vote_pk(
-            key_event_id,
-            public_key,
-            self.config.dk_event_timeout_blocks,
-        )
+        self.protocol_state
+            .vote_pk(key_event_id, public_key, self.config.event_max_idle_blocks)
     }
 
     pub fn vote_new_key_state(

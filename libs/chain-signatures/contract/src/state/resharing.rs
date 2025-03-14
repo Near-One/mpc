@@ -61,8 +61,8 @@ impl ResharingContractState {
 // Leader API. Below functions shall only be called by a leader account
 impl ResharingContractState {
     // starts a new reshare instance if there is no active reshare instance
-    pub fn start(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
-        self.event_state.start(dk_event_timeout_blocks)
+    pub fn start(&mut self, event_max_idle_blocks: u64) -> Result<(), Error> {
+        self.event_state.start(event_max_idle_blocks)
     }
     /// Casts a vote for `public_key` in `key_event_id`.
     /// Fails if `signer` is not a candidate, if the candidate already voted or if there is no active key event.
@@ -70,11 +70,11 @@ impl ResharingContractState {
     pub fn vote_reshared(
         &mut self,
         key_event_id: KeyEventId,
-        dk_event_timeout_blocks: u64,
+        event_max_idle_blocks: u64,
     ) -> Result<Option<RunningContractState>, Error> {
         if self.event_state.vote_success(
             &key_event_id,
-            dk_event_timeout_blocks,
+            event_max_idle_blocks,
             None::<fn(AuthenticatedCandidateId)>,
         )? {
             return Ok(Some(RunningContractState {
@@ -93,10 +93,10 @@ impl ResharingContractState {
     pub fn vote_abort(
         &mut self,
         key_event_id: KeyEventId,
-        dk_event_timeout_blocks: BlockHeight,
+        event_max_idle_blocks: BlockHeight,
     ) -> Result<bool, Error> {
         self.event_state
-            .vote_abort(key_event_id, dk_event_timeout_blocks)
+            .vote_abort(key_event_id, event_max_idle_blocks)
     }
 }
 #[cfg(test)]

@@ -82,7 +82,7 @@ async fn test_propose_update_config() {
     let new_config = Config {
         max_num_requests_to_remove: 30,
         request_timeout_blocks: 200,
-        dk_event_timeout_blocks: 30,
+        event_max_idle_blocks: 30,
     };
 
     let mut proposals = Vec::with_capacity(accounts.len());

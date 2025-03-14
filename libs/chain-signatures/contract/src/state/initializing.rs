@@ -47,8 +47,8 @@ impl InitializingContractState {
     }
     /// Starts a new keygen instance.
     /// Returns an Error if the signer is not the leader of the current keygen.
-    pub fn start(&mut self, dk_event_timeout_blocks: u64) -> Result<(), Error> {
-        self.keygen.start(dk_event_timeout_blocks)
+    pub fn start(&mut self, event_max_idle_blocks: u64) -> Result<(), Error> {
+        self.keygen.start(event_max_idle_blocks)
     }
     /// Casts a vote for `public_key` in `key_event_id`.
     /// Fails if `signer` is not a candidate, if the candidate already voted or if there is no active key event.
@@ -57,14 +57,14 @@ impl InitializingContractState {
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
-        dk_event_timeout_blocks: u64,
+        event_max_idle_blocks: u64,
     ) -> Result<Option<RunningContractState>, Error> {
         let callback = Some(|candidate_id: AuthenticatedCandidateId| {
             self.pk_votes.entry(public_key.clone()).insert(candidate_id);
         });
         let reached = self
             .keygen
-            .vote_success(&key_event_id, dk_event_timeout_blocks, callback)?;
+            .vote_success(&key_event_id, event_max_idle_blocks, callback)?;
         if reached
             && ((self.pk_votes.entry(public_key.clone()).len() as u64)
                 >= self.keygen.event_threshold().value())
@@ -85,10 +85,9 @@ impl InitializingContractState {
     pub fn vote_abort(
         &mut self,
         key_event_id: KeyEventId,
-        dk_event_timeout_blocks: BlockHeight,
+        event_max_idle_blocks: BlockHeight,
     ) -> Result<bool, Error> {
-        self.keygen
-            .vote_abort(key_event_id, dk_event_timeout_blocks)
+        self.keygen.vote_abort(key_event_id, event_max_idle_blocks)
     }
 }
 
