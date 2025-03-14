@@ -1,8 +1,6 @@
 use super::key_state::AuthenticatedParticipantId;
-use crate::errors::{Error, VoteError};
 use crate::primitives::key_state::KeyStateProposal;
-use near_sdk::near;
-use std::collections::btree_map::Entry;
+use near_sdk::{log, near};
 use std::collections::BTreeMap;
 
 #[near(serializers=[borsh, json])]
@@ -17,32 +15,26 @@ impl KeyStateVotes {
             proposal_by_account: BTreeMap::new(),
         }
     }
-    /// Removes the vote submitted by `account_id` from the state.
-    /// Returns true if the vote was removed and false else.
-    pub fn remove_vote(&mut self, participant: &AuthenticatedParticipantId) -> bool {
-        self.proposal_by_account.remove(participant).is_some()
-    }
     /// Registers a vote by `participant` for `proposal` (inserts `proposal` if necessary).
+    /// Removes any existing votes by `participant`.
     /// Returns an Error if `participant` already registered a vote.
     /// Returns the number of votes for the current proposal.
     pub fn vote(
         &mut self,
         proposal: &KeyStateProposal,
         participant: &AuthenticatedParticipantId,
-    ) -> Result<u64, Error> {
-        match self.proposal_by_account.entry(participant.clone()) {
-            Entry::Vacant(entry) => {
-                entry.insert(proposal.clone());
-            }
-            Entry::Occupied(_) => {
-                return Err(VoteError::ParticipantVoteAlreadyRegistered.into());
-            }
-        };
-        Ok(self
+    ) -> u64 {
+        if self
             .proposal_by_account
+            .insert(participant.clone(), proposal.clone())
+            .is_some()
+        {
+            log!("removed one vote for signer");
+        }
+        self.proposal_by_account
             .values()
             .filter(|&prop| prop == proposal)
-            .count() as u64)
+            .count() as u64
     }
 }
 
@@ -59,11 +51,9 @@ mod tests {
         let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&id) };
         let mut ksv = KeyStateVotes::new();
         let ksp = gen_key_state_proposal(None);
-        assert!(!ksv.remove_vote(&participant));
-        assert_eq!(ksv.vote(&ksp, &participant).unwrap(), 1);
-        assert!(ksv.vote(&ksp, &participant).is_err());
-        assert!(ksv.remove_vote(&participant));
+        assert_eq!(ksv.vote(&ksp, &participant), 1);
+        assert_eq!(ksv.vote(&ksp, &participant), 1);
         let participant: AuthenticatedParticipantId = unsafe { mem::transmute_copy(&(id + 1)) };
-        assert_eq!(ksv.vote(&ksp, &participant).unwrap(), 1);
+        assert_eq!(ksv.vote(&ksp, &participant), 2);
     }
 }

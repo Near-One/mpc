@@ -5,7 +5,7 @@ use crate::primitives::key_state::{
     AuthenticatedParticipantId, DKState, EpochId, KeyStateProposal,
 };
 use crate::primitives::votes::KeyStateVotes;
-use near_sdk::{log, near, AccountId, PublicKey};
+use near_sdk::{near, AccountId, PublicKey};
 use std::collections::BTreeSet;
 
 #[near(serializers=[borsh, json])]
@@ -123,14 +123,8 @@ impl RunningContractState {
                 return Err(InvalidCandidateSet::NewParticipantIdsTooHigh.into());
             }
         }
-
-        // remove any previous votes submitted by the signer:
-        if self.key_state_votes.remove_vote(&participant) {
-            log!("removed one vote for signer");
-        }
-
         // finally, vote. Propagate any errors
-        let n_votes = self.key_state_votes.vote(proposal, &participant)?;
+        let n_votes = self.key_state_votes.vote(proposal, &participant);
         Ok(self.key_state.threshold().value() <= n_votes)
     }
 }
