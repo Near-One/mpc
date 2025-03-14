@@ -1,6 +1,6 @@
 use crate::errors::{Error, InvalidCandidateSet, InvalidParameters, InvalidState};
 use near_sdk::{env, log, near, AccountId, PublicKey};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 pub mod hpke {
     pub type PublicKey = [u8; 32];
@@ -36,8 +36,12 @@ impl AuthenticatedCandidateId {
     }
     pub fn new(candidates: &Participants) -> Result<Self, Error> {
         let signer = env::signer_account_id();
-        let id = candidates.id(&signer)?;
-        Ok(AuthenticatedCandidateId(id))
+        candidates
+            .participants()
+            .iter()
+            .find(|(a_id, _, _)| *a_id == signer)
+            .map(|(_, p_id, _)| AuthenticatedCandidateId(p_id.clone()))
+            .ok_or_else(|| InvalidState::NotParticipant.into())
     }
 }
 
@@ -57,9 +61,7 @@ impl ParticipantId {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Participants {
     next_id: ParticipantId,
-    participants: BTreeMap<AccountId, ParticipantInfo>,
-    id_by_participant: BTreeMap<AccountId, ParticipantId>,
-    participant_by_id: BTreeMap<ParticipantId, AccountId>,
+    participants: Vec<(AccountId, ParticipantId, ParticipantInfo)>,
 }
 
 impl Default for Participants {
@@ -67,36 +69,15 @@ impl Default for Participants {
         Self::new()
     }
 }
-
 impl Participants {
     pub fn new() -> Self {
         Participants {
             next_id: ParticipantId(0),
-            participants: BTreeMap::new(),
-            id_by_participant: BTreeMap::new(),
-            participant_by_id: BTreeMap::new(),
+            participants: Vec::new(),
         }
     }
     pub fn count(&self) -> u64 {
         self.participants.len() as u64
-    }
-    pub fn info(&self, account_id: &AccountId) -> Option<&ParticipantInfo> {
-        self.participants.get(account_id)
-    }
-    pub fn id(&self, account_id: &AccountId) -> Result<ParticipantId, Error> {
-        match self.id_by_participant.get(account_id) {
-            Some(id) => Ok(id.clone()),
-            None => Err(InvalidState::NotParticipant.into()),
-        }
-    }
-    pub fn account_id(&self, id: &ParticipantId) -> Result<AccountId, Error> {
-        match self.participant_by_id.get(id) {
-            Some(p) => Ok(p.clone()),
-            None => Err(InvalidState::ParticipantIndexOutOfRange.into()),
-        }
-    }
-    pub fn is_participant(&self, account_id: &AccountId) -> bool {
-        self.participants.contains_key(account_id)
     }
     pub fn insert_with_id(
         &mut self,
@@ -104,54 +85,75 @@ impl Participants {
         info: ParticipantInfo,
         id: ParticipantId,
     ) -> Result<(), Error> {
-        if self.participants.contains_key(&account_id) {
+        if self
+            .participants
+            .iter()
+            .any(|(a_id, p_id, _)| *a_id == account_id || *p_id == id)
+        {
             return Err(InvalidParameters::ParticipantAlreadyInSet.into());
         }
         if id < self.next_id() {
             return Err(InvalidParameters::ParticipantAlreadyUsed.into());
         }
-        self.participants.insert(account_id.clone(), info);
-        self.participant_by_id
-            .insert(id.clone(), account_id.clone());
-        self.id_by_participant
-            .insert(account_id.clone(), id.clone());
+        self.participants
+            .push((account_id.clone(), id.clone(), info));
         self.next_id.0 = id.0 + 1;
         Ok(())
     }
     pub fn insert(&mut self, account_id: AccountId, info: ParticipantInfo) -> Result<(), Error> {
         self.insert_with_id(account_id, info, self.next_id.clone())
     }
-    pub fn participants(&self) -> &BTreeMap<AccountId, ParticipantInfo> {
+    pub fn participants(&self) -> &Vec<(AccountId, ParticipantId, ParticipantInfo)> {
         &self.participants
-    }
-    pub fn ids(&self) -> BTreeSet<ParticipantId> {
-        self.participants
-            .keys()
-            .map(|account_id| self.id(account_id).unwrap())
-            .collect()
     }
     pub fn next_id(&self) -> ParticipantId {
         self.next_id.clone()
     }
     pub fn validate(&self) -> Result<(), Error> {
-        if self.participant_by_id.len() != self.id_by_participant.len() {
-            return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
-        }
-        for account_id in self.participants.keys() {
-            let Some(id) = self.id_by_participant.get(account_id) else {
-                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
-            };
-            if self.next_id.get() <= id.get() {
+        let mut ids: BTreeSet<ParticipantId> = BTreeSet::new();
+        let mut accounts: BTreeSet<AccountId> = BTreeSet::new();
+        for (acc_id, pid, _) in &self.participants {
+            accounts.insert(acc_id.clone());
+            ids.insert(pid.clone());
+            if self.next_id.get() <= pid.get() {
                 return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
             }
-            let Some(participant) = self.participant_by_id.get(id) else {
-                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
-            };
-            if *participant != *account_id {
-                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
-            };
+        }
+        if ids.len() as u64 != self.count() {
+            return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+        }
+        if accounts.len() as u64 != self.count() {
+            return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
         }
         Ok(())
+    }
+}
+#[cfg(test)]
+impl Participants {
+    pub fn id(&self, account_id: &AccountId) -> Result<ParticipantId, Error> {
+        self.participants
+            .iter()
+            .find(|(a_id, _, _)| a_id == account_id)
+            .map(|(_, p_id, _)| p_id.clone())
+            .ok_or_else(|| InvalidState::NotParticipant.into())
+    }
+    pub fn info(&self, account_id: &AccountId) -> Option<&ParticipantInfo> {
+        self.participants
+            .iter()
+            .find(|(a_id, _, _)| a_id == account_id)
+            .map(|(_, _, info)| info)
+    }
+    pub fn account_id(&self, id: &ParticipantId) -> Result<AccountId, Error> {
+        self.participants
+            .iter()
+            .find(|(_, p_id, _)| p_id == id)
+            .map(|(a_id, _, _)| a_id.clone())
+            .ok_or_else(|| InvalidState::ParticipantIndexOutOfRange.into())
+    }
+    pub fn is_participant(&self, account_id: &AccountId) -> bool {
+        self.participants
+            .iter()
+            .any(|(a_id, _, _)| a_id == account_id)
     }
 }
 
@@ -171,12 +173,10 @@ fn migrate_inconsistent_participants(
 
 impl From<legacy_contract::primitives::Participants> for Participants {
     fn from(legacy_participants: legacy_contract::primitives::Participants) -> Participants {
-        let mut participants: BTreeMap<AccountId, ParticipantInfo> = BTreeMap::new();
-        let mut id_by_participant: BTreeMap<AccountId, ParticipantId> = BTreeMap::new();
-        let mut participant_by_id: BTreeMap<ParticipantId, AccountId> = BTreeMap::new();
+        let mut participants: Vec<(AccountId, ParticipantId, ParticipantInfo)> = Vec::new();
+        let mut ids: BTreeSet<ParticipantId> = BTreeSet::new();
         let next_id = ParticipantId(legacy_participants.next_id);
         for (account_id, info) in &legacy_participants.participants {
-            participants.insert(account_id.clone(), info.into());
             let id = legacy_participants
                 .account_to_participant_id
                 .get(account_id);
@@ -188,24 +188,15 @@ impl From<legacy_contract::primitives::Participants> for Participants {
             if next_id.get() <= id.get() {
                 return migrate_inconsistent_participants(legacy_participants);
             }
-            if participant_by_id
-                .insert(id.clone(), account_id.clone())
-                .is_some()
-            {
+            if !ids.insert(id.clone()) {
                 return migrate_inconsistent_participants(legacy_participants);
             }
-            if id_by_participant
-                .insert(account_id.clone(), id.clone())
-                .is_some()
-            {
-                return migrate_inconsistent_participants(legacy_participants);
-            }
+
+            participants.push((account_id.clone(), id.clone(), info.into()));
         }
         Participants {
             next_id: ParticipantId(legacy_participants.next_id),
             participants,
-            id_by_participant,
-            participant_by_id,
         }
     }
 }
@@ -219,7 +210,6 @@ impl From<legacy_contract::primitives::Candidates> for Participants {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::BTreeSet;
 
     use crate::primitives::participants::{ParticipantId, Participants};
     use crate::primitives::test_utils::{
@@ -248,8 +238,9 @@ pub mod tests {
             assert!(participants.is_participant(account_id));
         }
         assert_eq!(participants.count(), n as u64);
-        let expected: BTreeSet<ParticipantId> = (0..n).map(|i| ParticipantId(i as u32)).collect();
-        assert_eq!(expected, participants.ids());
+        for i in 0..n {
+            assert!(participants.account_id(&ParticipantId(i as u32)).is_ok());
+        }
         assert!(participants.validate().is_ok());
     }
 
@@ -297,7 +288,7 @@ pub mod tests {
             legacy_participants.next_id,
             migrated_participants.next_id().get(),
         );
-        for (account_id, info) in migrated_participants.participants() {
+        for (account_id, _, info) in migrated_participants.participants() {
             let legacy_participant = legacy_participants.get(account_id);
             assert!(legacy_participant.is_some());
             let legacy_participant = legacy_participant.unwrap();

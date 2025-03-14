@@ -437,11 +437,10 @@ pub mod tests {
     pub fn find_leader(attempt: &AttemptId, kes: &KeyEvent) -> (AccountId, ParticipantId) {
         let mut env = Environment::new(None, None, None);
         let mut leader = None;
-        for account_id in kes
+        for (account_id, _, _) in kes
             .proposed_threshold_parameters()
             .participants()
             .participants()
-            .keys()
         {
             env.set_signer(account_id);
             if let Ok(tmp) = kes.authenticate_leader(attempt.clone()) {
@@ -503,11 +502,10 @@ pub mod tests {
         let (leader_account, _) = find_leader(&attempt, &kes);
 
         // participants should not be able to vote before starting the event
-        for account_id in proposed
+        for (account_id, _, _) in proposed
             .proposed_threshold_parameters()
             .participants()
             .participants()
-            .keys()
         {
             env.set_signer(account_id);
             if *account_id != leader_account {
@@ -532,11 +530,10 @@ pub mod tests {
         assert!(kes.start(0).is_ok());
 
         // votes should not count if timed out:
-        for account_id in proposed
+        for (account_id, _, _) in proposed
             .proposed_threshold_parameters()
             .participants()
             .participants()
-            .keys()
         {
             Environment::new(Some(env.block_height + 1), Some(account_id.clone()), None);
             assert!(kes.vote_abort(key_id.clone(), 0).is_err());
@@ -552,11 +549,11 @@ pub mod tests {
         }
 
         // votes should count if not timed out:
-        for (i, account_id) in proposed
+        for (i, (account_id, _, _)) in proposed
             .proposed_threshold_parameters()
             .participants()
             .participants()
-            .keys()
+            .iter()
             .enumerate()
         {
             env.advance_block_height(1);
@@ -590,11 +587,11 @@ pub mod tests {
         let (leader_account, _) = find_leader(&attempt, &kes);
         env.set_signer(&leader_account);
         assert!(kes.start(1).is_ok());
-        for (i, account_id) in proposed
+        for (i, (account_id, _, _)) in proposed
             .proposed_threshold_parameters()
             .participants()
             .participants()
-            .keys()
+            .iter()
             .enumerate()
         {
             env.set_signer(account_id);

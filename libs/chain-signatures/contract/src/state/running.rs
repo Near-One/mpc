@@ -4,9 +4,10 @@ use crate::errors::{Error, InvalidCandidateSet};
 use crate::primitives::key_state::{
     AuthenticatedParticipantId, DKState, EpochId, KeyStateProposal,
 };
+use crate::primitives::participants::{ParticipantId, ParticipantInfo};
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::{near, AccountId, PublicKey};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
@@ -33,10 +34,6 @@ impl RunningContractState {
     pub fn epoch_id(&self) -> EpochId {
         self.key_state.epoch_id()
     }
-    /// returns true if `account_id` is in the participant set
-    pub fn is_participant(&self, account_id: &AccountId) -> bool {
-        self.key_state.is_participant(account_id)
-    }
     /// Casts a vote for `proposal` to the current state, propagating any errors.
     /// Returns ResharingContract state if the proposal is accepted.
     pub fn vote_new_key_state(
@@ -61,39 +58,39 @@ impl RunningContractState {
         // ensure the signer is a participant
         let participant = self.key_state.authenticate()?;
         // ensure the proposed threshold parameters are valid:
+        // if performance issue, inline and merge with loop below
         proposal.validate()?;
-        let new_participant_set: BTreeSet<AccountId> = proposal
+        let mut old_by_id: BTreeMap<ParticipantId, AccountId> = BTreeMap::new();
+        let mut old_by_acc: BTreeMap<AccountId, (ParticipantId, ParticipantInfo)> = BTreeMap::new();
+        for (acc, id, info) in self.key_state.participants().participants() {
+            old_by_id.insert(id.clone(), acc.clone());
+            old_by_acc.insert(acc.clone(), (id.clone(), info.clone()));
+        }
+        let new_participants = proposal
             .proposed_threshold_parameters()
             .participants()
-            .participants()
-            .keys()
-            .cloned()
-            .collect();
-        let old_participant_set: BTreeSet<AccountId> = self
-            .key_state
-            .participants()
-            .participants()
-            .keys()
-            .cloned()
-            .collect();
+            .participants();
         let mut new_min_id = u32::MAX;
         let mut new_max_id = 0u32;
         let mut n_old = 0u64;
-        for account_id in new_participant_set {
-            let new_id = proposal
-                .proposed_threshold_parameters()
-                .participants()
-                .id(&account_id)?;
-            if old_participant_set.contains(&account_id) {
-                // ensure that the participant id is preseved
-                let existing_id = self.key_state.participants().id(&account_id)?;
-                if existing_id != new_id {
-                    return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+        for (new_account, new_id, new_info) in new_participants {
+            match old_by_acc.get(new_account) {
+                Some((old_id, old_info)) => {
+                    if new_id != old_id {
+                        return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+                    }
+                    if *new_info != *old_info {
+                        return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+                    }
+                    n_old += 1;
                 }
-                n_old += 1;
-            } else {
-                new_min_id = std::cmp::min(new_min_id, new_id.get());
-                new_max_id = std::cmp::max(new_max_id, new_id.get());
+                None => {
+                    if old_by_id.contains_key(new_id) {
+                        return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+                    }
+                    new_min_id = std::cmp::min(new_min_id, new_id.get());
+                    new_max_id = std::cmp::max(new_max_id, new_id.get());
+                }
             }
         }
         // assert there are enough old participants
@@ -135,7 +132,7 @@ pub mod running_tests {
     use super::RunningContractState;
     use crate::primitives::key_state::tests::gen_key_state_proposal;
     use crate::primitives::key_state::{AttemptId, DKState, EpochId, KeyEventId, KeyStateProposal};
-    use crate::primitives::participants::Participants;
+    use crate::primitives::participants::{ParticipantId, Participants};
     use crate::primitives::test_utils::{gen_participant, gen_pk, gen_threshold_params};
     use crate::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
     use crate::primitives::votes::KeyStateVotes;
@@ -167,7 +164,11 @@ pub mod running_tests {
         let current_n = dkg.participants().count() as usize;
         let n_old_participants: usize = rng.gen_range(current_k..current_n + 1);
         let current_participants = dkg.participants();
-        let mut old_ids = current_participants.ids();
+        let mut old_ids: BTreeSet<ParticipantId> = current_participants
+            .participants()
+            .iter()
+            .map(|(_, id, _)| id.clone())
+            .collect();
         let mut new_ids = BTreeSet::new();
         while new_ids.len() < (n_old_participants as usize) {
             let x: usize = rng.gen::<usize>() % old_ids.len();
@@ -202,19 +203,20 @@ pub mod running_tests {
         let mut env = Environment::new(None, None, None);
         let participants = state.key_state.participants().clone();
         // assert that random proposals fail:
-        for account_id in participants.participants().keys() {
+
+        for (account_id, _, _) in participants.participants() {
             let ksp = gen_key_state_proposal(None);
             env.set_signer(account_id);
             assert!(state.vote_key_state_proposal(&ksp).is_err());
         }
-        for account_id in participants.participants().keys() {
+        for (account_id, _, _) in participants.participants() {
             env.set_signer(account_id);
             let ksp = gen_valid_ksp(&state.key_state);
             assert!(!state.vote_key_state_proposal(&ksp).unwrap())
         }
         let ksp = gen_valid_ksp(&state.key_state);
 
-        for (i, account_id) in participants.participants().keys().enumerate() {
+        for (i, (account_id, _, _)) in participants.participants().iter().enumerate() {
             env.set_signer(account_id);
             let res = state.vote_key_state_proposal(&ksp).unwrap();
             if i + 1 < state.key_state.threshold().value() as usize {
@@ -223,7 +225,7 @@ pub mod running_tests {
                 assert!(res);
             }
         }
-        let account_id = participants.participants().keys().next().unwrap();
+        let (account_id, _, _) = &participants.participants()[0];
         env.set_signer(account_id);
         let resharing = state.vote_new_key_state(&ksp).unwrap().unwrap();
         assert_eq!(resharing.current_state.key_state, state.key_state);

@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Default, PartialEq)]
 pub struct KeyStateVotes {
-    proposal_by_account: BTreeMap<AuthenticatedParticipantId, KeyStateProposal>,
+    proposal_by_account: BTreeMap<AuthenticatedParticipantId, KeyStateProposal>, // use Hash of
+                                                                                 // KeyStateProposal?
 }
 
 impl KeyStateVotes {

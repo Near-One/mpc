@@ -190,7 +190,7 @@ mod tests {
             assert_eq!(tp.participants.count(), participants.count());
             assert_eq!(participants, *tp.participants());
             // porbably overkill to test below
-            for account_id in participants.participants().keys() {
+            for (account_id, _, _) in participants.participants() {
                 assert!(tp.participants.is_participant(account_id));
                 let expected_id = participants.id(account_id).unwrap();
                 assert_eq!(expected_id, tp.participants.id(account_id).unwrap());

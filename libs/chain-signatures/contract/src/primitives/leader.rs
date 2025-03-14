@@ -5,9 +5,9 @@ use k256::sha2::{Digest, Sha256};
 /// This will be a different pseudorandom order for each signature request.
 pub fn leaders(participants: &Participants, uid: u64) -> Vec<ParticipantId> {
     let mut leader_selection_hashes = participants
-        .ids()
+        .participants()
         .iter()
-        .map(|p| (leader_selection_hash(p, uid), p.clone()))
+        .map(|(_, pid, _)| (leader_selection_hash(pid, uid), pid.clone()))
         .collect::<Vec<_>>();
     leader_selection_hashes.sort();
     leader_selection_hashes

@@ -1,7 +1,7 @@
 use super::participants::{ParticipantId, Participants};
 use super::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
-use crate::errors::Error;
-use near_sdk::{env, near, AccountId, PublicKey};
+use crate::errors::{Error, InvalidState};
+use near_sdk::{env, near, PublicKey};
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -88,9 +88,7 @@ pub struct DKState {
 
 impl DKState {
     pub fn authenticate(&self) -> Result<AuthenticatedParticipantId, Error> {
-        let signer = env::signer_account_id();
-        let id = self.threshold_parameters.participants().id(&signer)?;
-        Ok(AuthenticatedParticipantId(id))
+        AuthenticatedParticipantId::new(self.threshold_parameters.participants())
     }
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
@@ -100,11 +98,6 @@ impl DKState {
     }
     pub fn key_event_id(&self) -> KeyEventId {
         self.key_event_id.clone()
-    }
-    pub fn is_participant(&self, account_id: &AccountId) -> bool {
-        self.threshold_parameters
-            .participants()
-            .is_participant(account_id)
     }
     pub fn threshold(&self) -> Threshold {
         self.threshold_parameters.threshold()
@@ -137,6 +130,15 @@ pub struct AuthenticatedParticipantId(ParticipantId);
 impl AuthenticatedParticipantId {
     pub fn get(&self) -> ParticipantId {
         self.0.clone()
+    }
+    pub fn new(participants: &Participants) -> Result<Self, Error> {
+        let signer = env::signer_account_id();
+        participants
+            .participants()
+            .iter()
+            .find(|(a_id, _, _)| *a_id == signer)
+            .map(|(_, p_id, _)| AuthenticatedParticipantId(p_id.clone()))
+            .ok_or_else(|| InvalidState::NotParticipant.into())
     }
 }
 
@@ -282,7 +284,7 @@ pub mod tests {
         let dk_state = DKState::new(public_key.clone(), key_event_id, threshold_params).unwrap();
         assert_eq!(*dk_state.public_key(), public_key);
         assert!(dk_state.validate().is_ok());
-        for account_id in participants.participants().keys() {
+        for (account_id, _, _) in participants.participants() {
             let mut context = VMContextBuilder::new();
             context.signer_account_id(account_id.clone());
             testing_env!(context.build());
@@ -332,7 +334,7 @@ pub mod tests {
             DKGThreshold::new(proposed_threshold_parameters.participants().count()),
         )
         .unwrap();
-        for account_id in candidates.participants().keys() {
+        for (account_id, _, _) in candidates.participants() {
             let mut context = VMContextBuilder::new();
             context.signer_account_id(account_id.clone());
             testing_env!(context.build());

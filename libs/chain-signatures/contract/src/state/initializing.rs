@@ -152,8 +152,8 @@ mod tests {
             .proposed_threshold_parameters()
             .participants()
             .participants()
-            .keys()
-            .cloned()
+            .iter()
+            .map(|(aid, _, _)| aid.clone())
             .collect();
         let key_event = state.keygen.current_key_event_id();
         let leader = find_leader(&key_event.attempt(), &state.keygen);
