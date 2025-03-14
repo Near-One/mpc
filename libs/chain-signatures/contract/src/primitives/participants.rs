@@ -48,6 +48,9 @@ impl ParticipantId {
     pub fn get(&self) -> u32 {
         self.0
     }
+    pub fn next(&self) -> Self {
+        ParticipantId(self.0 + 1)
+    }
 }
 
 #[near(serializers=[borsh, json])]

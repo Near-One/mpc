@@ -62,7 +62,6 @@ impl RunningContractState {
         let participant = self.key_state.authenticate()?;
         // ensure the proposed threshold parameters are valid:
         proposal.validate()?;
-        // ensure there are enough old participant in the new participant set:
         let new_participant_set: BTreeSet<AccountId> = proposal
             .proposed_threshold_parameters()
             .participants()
@@ -77,24 +76,54 @@ impl RunningContractState {
             .keys()
             .cloned()
             .collect();
-        let inter: BTreeSet<&AccountId> = new_participant_set
-            .intersection(&old_participant_set)
-            .collect();
-        let n_old = inter.len() as u64;
-        if n_old < self.key_state.threshold().value() {
-            return Err(InvalidCandidateSet::InsufficientOldParticipants.into());
-        }
-        // ensure that the participant id is preseved:
-        for account_id in inter {
-            let existing_id = self.key_state.participants().id(account_id)?;
+        let mut new_min_id = u32::MAX;
+        let mut new_max_id = 0u32;
+        let mut n_old = 0u64;
+        for account_id in new_participant_set {
             let new_id = proposal
                 .proposed_threshold_parameters()
                 .participants()
-                .id(account_id)?;
-            if existing_id != new_id {
-                return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+                .id(&account_id)?;
+            if old_participant_set.contains(&account_id) {
+                // ensure that the participant id is preseved
+                let existing_id = self.key_state.participants().id(&account_id)?;
+                if existing_id != new_id {
+                    return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+                }
+                n_old += 1;
+            } else {
+                new_min_id = std::cmp::min(new_min_id, new_id.get());
+                new_max_id = std::cmp::max(new_max_id, new_id.get());
             }
         }
+        // assert there are enough old participants
+        if n_old < self.key_state.threshold().value() {
+            return Err(InvalidCandidateSet::InsufficientOldParticipants.into());
+        }
+        // ensure the new ids are contiguous and unique
+        let n_new = proposal
+            .proposed_threshold_parameters()
+            .participants()
+            .count()
+            - n_old;
+        if n_new > 0 {
+            if n_new - 1 != (new_max_id - new_min_id) as u64 {
+                return Err(InvalidCandidateSet::NewParticipantIdsNotContiguous.into());
+            }
+            if new_min_id != self.key_state.participants().next_id().get() {
+                return Err(InvalidCandidateSet::NewParticipantIdsNotContiguous.into());
+            }
+            if new_max_id + 1
+                != proposal
+                    .proposed_threshold_parameters()
+                    .participants()
+                    .next_id()
+                    .get()
+            {
+                return Err(InvalidCandidateSet::NewParticipantIdsTooHigh.into());
+            }
+        }
+
         // remove any previous votes submitted by the signer:
         if self.key_state_votes.remove_vote(&participant) {
             log!("removed one vote for signer");
@@ -159,9 +188,11 @@ pub mod running_tests {
             let _ = new_participants.insert_with_id(account_id, info.clone(), id.clone());
         }
         let max_added: usize = rng.gen_range(0..10);
+        let mut next_id = current_participants.next_id();
         for i in 0..max_added {
             let (account_id, info) = gen_participant(i);
-            let _ = new_participants.insert(account_id, info);
+            let _ = new_participants.insert_with_id(account_id, info, next_id.clone());
+            next_id = next_id.next();
         }
 
         let threshold = ((new_participants.count() as f64) * 0.6).ceil() as u64;

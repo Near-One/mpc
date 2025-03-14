@@ -111,6 +111,10 @@ pub enum InvalidCandidateSet {
     InsufficientOldParticipants,
     #[error("Participant ids are not coherent.")]
     IncoherentParticipantIds,
+    #[error("New Participant ids need to be unique and contiguous.")]
+    NewParticipantIdsNotContiguous,
+    #[error("New Participant ids need to not skip any unused participant ids.")]
+    NewParticipantIdsTooHigh,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
