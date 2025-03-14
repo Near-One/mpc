@@ -4,7 +4,6 @@ use crate::errors::Error;
 use crate::primitives::key_state::{
     AuthenticatedParticipantId, DKState, EpochId, KeyEventId, KeyStateProposal,
 };
-use crate::primitives::participants::AuthenticatedCandidateId;
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::{near, BlockHeight, PublicKey};
 
@@ -72,11 +71,9 @@ impl ResharingContractState {
         key_event_id: KeyEventId,
         event_max_idle_blocks: u64,
     ) -> Result<Option<RunningContractState>, Error> {
-        if self.event_state.vote_success(
-            &key_event_id,
-            event_max_idle_blocks,
-            None::<fn(AuthenticatedCandidateId)>,
-        )? == Tally::ThresholdReached
+        if let Tally::ThresholdReached(_) = self
+            .event_state
+            .vote_success(&key_event_id, event_max_idle_blocks)?
         {
             return Ok(Some(RunningContractState {
                 key_state: DKState::new(

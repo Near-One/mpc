@@ -31,9 +31,9 @@ pub struct KeyEvent {
 #[derive(Debug, PartialEq)]
 pub enum Tally {
     //The threshold has been met
-    ThresholdReached,
+    ThresholdReached(AuthenticatedCandidateId),
     /// The vote result is still pending.
-    ThresholdPending,
+    ThresholdPending(AuthenticatedCandidateId),
 }
 #[derive(Debug, PartialEq)]
 pub enum InstanceStatus {
@@ -62,24 +62,21 @@ impl KeyEvent {
     /// Casts a vote for `public_key` in `key_event_id`.
     /// Fails if `signer` is not a candidate, if the candidate already voted or if there is no active key event.
     /// Returns the current tally of the key event instance.
-    pub fn vote_success<F>(
+    pub fn vote_success(
         &mut self,
         key_event_id: &KeyEventId,
         event_max_idle_blocks: u64,
-        callback: Option<F>,
-    ) -> Result<Tally, Error>
-    where
-        F: FnOnce(AuthenticatedCandidateId),
-    {
+        //callback: Option<F>,
+    ) -> Result<Tally, Error> {
         let candidate = self.verify_vote(key_event_id, event_max_idle_blocks)?;
         let n_votes = self.instance.vote_success(candidate.clone())?;
-        if let Some(cb) = callback {
-            cb(candidate);
-        }
+        //if let Some(cb) = callback {
+        //    cb(candidate);
+        //}
         if self.event_threshold().value() <= n_votes {
-            Ok(Tally::ThresholdReached)
+            Ok(Tally::ThresholdReached(candidate))
         } else {
-            Ok(Tally::ThresholdPending)
+            Ok(Tally::ThresholdPending(candidate))
         }
     }
     /// Casts a vote to abort the current keygen instance.
@@ -295,7 +292,7 @@ pub mod tests {
     use near_sdk::{test_utils::VMContextBuilder, testing_env, AccountId, BlockHeight};
     use rand::Rng;
     use std::collections::BTreeSet;
-    use std::{cell::RefCell, mem};
+    use std::mem;
     pub struct Environment {
         pub signer: AccountId,
         pub block_height: BlockHeight,
@@ -502,10 +499,6 @@ pub mod tests {
         let mut env = Environment::new(None, None, None);
         let mut kes = KeyEvent::new(epoch_id.clone(), proposed.clone());
         let key_id = KeyEventId::new(epoch_id.clone(), AttemptId::new());
-        let counted = RefCell::new(0);
-        let count = Some(|_: AuthenticatedCandidateId| {
-            *counted.borrow_mut() += 1;
-        });
         let attempt = AttemptId::new();
         let (leader_account, _) = find_leader(&attempt, &kes);
 
@@ -520,12 +513,10 @@ pub mod tests {
             if *account_id != leader_account {
                 assert!(kes.start(100).is_err());
                 assert!(kes.vote_abort(key_id.clone(), 100).is_err());
-                assert!(kes.vote_success(&key_id, 100, count).is_err());
-                assert_eq!(*counted.borrow(), 0);
+                assert!(kes.vote_success(&key_id, 100).is_err());
             } else {
                 assert!(kes.vote_abort(key_id.clone(), 100).is_err());
-                assert!(kes.vote_success(&key_id, 100, count).is_err());
-                assert_eq!(*counted.borrow(), 0);
+                assert!(kes.vote_success(&key_id, 100).is_err());
             }
         }
         // non participant should not be able to vote
@@ -533,8 +524,7 @@ pub mod tests {
             env.set_signer(&gen_account_id());
             assert!(kes.start(100).is_err());
             assert!(kes.vote_abort(key_id.clone(), 100).is_err());
-            assert!(kes.vote_success(&key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), 0);
+            assert!(kes.vote_success(&key_id, 100).is_err());
         }
 
         // start event
@@ -550,8 +540,7 @@ pub mod tests {
         {
             Environment::new(Some(env.block_height + 1), Some(account_id.clone()), None);
             assert!(kes.vote_abort(key_id.clone(), 0).is_err());
-            assert!(kes.vote_success(&key_id, 0, count).is_err());
-            assert_eq!(*counted.borrow(), 0);
+            assert!(kes.vote_success(&key_id, 0).is_err());
         }
 
         // non participant should not be able to vote
@@ -559,8 +548,7 @@ pub mod tests {
             Environment::new(Some(env.block_height), None, None);
             assert!(kes.start(100).is_err());
             assert!(kes.vote_abort(key_id.clone(), 100).is_err());
-            assert!(kes.vote_success(&key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), 0);
+            assert!(kes.vote_success(&key_id, 100).is_err());
         }
 
         // votes should count if not timed out:
@@ -573,18 +561,16 @@ pub mod tests {
         {
             env.advance_block_height(1);
             env.set_signer(account_id);
-            let x = kes.vote_success(&key_id, 1, count).unwrap();
-            assert_eq!(*counted.borrow(), i + 1);
-            if proposed.key_event_threshold().value() <= (i + 1) as u64 {
-                assert_eq!(x, Tally::ThresholdReached);
-            } else {
-                assert_eq!(x, Tally::ThresholdPending);
+            let x = kes.vote_success(&key_id, 1).unwrap();
+            let reached = proposed.key_event_threshold().value() <= (i + 1) as u64;
+            match x {
+                Tally::ThresholdReached(_) => assert!(reached),
+                Tally::ThresholdPending(_) => assert!(!reached),
             }
             // abort should not work after submitting a vote:
             assert!(kes.vote_abort(key_id.clone(), 1).is_err());
             // submitting another vote should not work
-            assert!(kes.vote_success(&key_id, 1, count).is_err());
-            assert_eq!(*counted.borrow(), i + 1);
+            assert!(kes.vote_success(&key_id, 1).is_err());
 
             // non-leaders should still not be able to start
             if *account_id != leader_account {
@@ -594,8 +580,7 @@ pub mod tests {
             env.set_signer(&gen_account_id());
             assert!(kes.start(100).is_err());
             assert!(kes.vote_abort(key_id.clone(), 100).is_err());
-            assert!(kes.vote_success(&key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), i + 1);
+            assert!(kes.vote_success(&key_id, 100).is_err());
         }
 
         // start another attempt:
@@ -605,7 +590,6 @@ pub mod tests {
         let (leader_account, _) = find_leader(&attempt, &kes);
         env.set_signer(&leader_account);
         assert!(kes.start(1).is_ok());
-        *counted.borrow_mut() = 0;
         for (i, account_id) in proposed
             .proposed_threshold_parameters()
             .participants()
@@ -630,8 +614,7 @@ pub mod tests {
                 // abort should not work after aborting:
                 assert!(kes.vote_abort(key_id.clone(), 1).is_err());
                 // submitting another vote should not work either
-                assert!(kes.vote_success(&key_id, 1, count).is_err());
-                assert_eq!(*counted.borrow(), 0);
+                assert!(kes.vote_success(&key_id, 1).is_err());
                 // non-leaders should still not be able to start
                 if *account_id != leader_account {
                     assert!(kes.start(200).is_err());
@@ -642,8 +625,7 @@ pub mod tests {
             env.set_signer(&gen_account_id());
             assert!(kes.start(100).is_err());
             assert!(kes.vote_abort(key_id.clone(), 100).is_err());
-            assert!(kes.vote_success(&key_id, 100, count).is_err());
-            assert_eq!(*counted.borrow(), 0);
+            assert!(kes.vote_success(&key_id, 100).is_err());
         }
     }
 }

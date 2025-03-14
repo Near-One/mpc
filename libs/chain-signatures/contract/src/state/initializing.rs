@@ -55,23 +55,26 @@ impl InitializingContractState {
         public_key: PublicKey,
         event_max_idle_blocks: u64,
     ) -> Result<Option<RunningContractState>, Error> {
-        let callback = Some(|candidate_id: AuthenticatedCandidateId| {
-            self.pk_votes.votes.insert(candidate_id, public_key.clone());
-        });
-        let reached = self
+        let x = self
             .keygen
-            .vote_success(&key_event_id, event_max_idle_blocks, callback)?
-            == Tally::ThresholdReached;
-        if reached && (self.pk_votes.n_votes(&public_key) >= self.keygen.event_threshold().value())
-        {
-            return Ok(Some(RunningContractState {
-                key_state: DKState::new(
-                    public_key,
-                    key_event_id,
-                    self.keygen.proposed_threshold_parameters().clone(),
-                )?,
-                key_state_votes: KeyStateVotes::default(),
-            }));
+            .vote_success(&key_event_id, event_max_idle_blocks)?;
+        match x {
+            Tally::ThresholdReached(candidate_id) => {
+                self.pk_votes.votes.insert(candidate_id, public_key.clone());
+                if self.pk_votes.n_votes(&public_key) >= self.keygen.event_threshold().value() {
+                    return Ok(Some(RunningContractState {
+                        key_state: DKState::new(
+                            public_key,
+                            key_event_id,
+                            self.keygen.proposed_threshold_parameters().clone(),
+                        )?,
+                        key_state_votes: KeyStateVotes::default(),
+                    }));
+                }
+            }
+            Tally::ThresholdPending(candidate_id) => {
+                self.pk_votes.votes.insert(candidate_id, public_key.clone());
+            }
         }
         Ok(None)
     }
