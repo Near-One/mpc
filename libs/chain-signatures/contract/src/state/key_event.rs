@@ -48,7 +48,7 @@ impl KeyEvent {
     // starts a new reshare instance if there is no active reshare instance
     pub fn start(&mut self, event_max_idle_blocks: u64) -> Result<(), Error> {
         // update the current instance if required:
-        if self.instance.timed_out(event_max_idle_blocks) {
+        if self.timed_out(event_max_idle_blocks) {
             self.instance = self.instance.next_instance();
         }
         // check that the signer is the current leader:
@@ -105,6 +105,9 @@ impl KeyEvent {
 
 // Getters
 impl KeyEvent {
+    pub fn timed_out(&self, timeout_in_blocks: u64) -> bool {
+        self.instance.last_vote + timeout_in_blocks < env::block_height()
+    }
     pub fn authenticate_candidate(&self) -> Result<AuthenticatedCandidateId, Error> {
         AuthenticatedCandidateId::new(self.parameters.participants())
     }
@@ -163,7 +166,7 @@ impl KeyEvent {
         // ensure the signer is a candidate
         let candidate = self.authenticate_candidate()?;
         // ensure the instance was started and is active
-        if !self.instance.started() || self.instance.timed_out(event_max_idle_blocks) {
+        if !self.instance.started() || self.timed_out(event_max_idle_blocks) {
             return Err(KeyEventError::NoActiveKeyEvent.into());
         }
         // Ensure the key_event_id matches
@@ -218,9 +221,6 @@ impl Default for KeyEventInstance {
 impl KeyEventInstance {
     pub fn started(&self) -> bool {
         self.started.is_some()
-    }
-    pub fn timed_out(&self, timeout_in_blocks: u64) -> bool {
-        self.last_vote + timeout_in_blocks < env::block_height()
     }
     pub fn current_attempt(&self) -> AttemptId {
         self.attempt.clone()
@@ -340,21 +340,6 @@ pub mod tests {
             self.block_height += delta;
             self.set();
         }
-        pub fn assert_last_vote(&self, kei: &KeyEventInstance, expected_last_vote: BlockHeight) {
-            Environment::new(Some(expected_last_vote + 100), None, None);
-            assert!(!kei.timed_out(100));
-            assert!(!kei.timed_out(99));
-            self.set();
-        }
-    }
-    pub fn assert_last_vote_eq_current_block(env: &Environment, kei: &KeyEventInstance) {
-        assert_last_vote_eq_block(env, kei, env.block_height);
-    }
-    pub fn assert_last_vote_eq_block(env: &Environment, kei: &KeyEventInstance, bh: BlockHeight) {
-        Environment::new(Some(bh + 1), Some(env.signer.clone()), Some(env.seed));
-        assert!(kei.timed_out(0));
-        assert!(!kei.timed_out(1));
-        env.set();
     }
     fn gen_authentciated_leader() -> AuthenticatedLeader {
         let id: u32 = rand::thread_rng().gen();
@@ -366,22 +351,22 @@ pub mod tests {
         let mut env = Environment::new(None, None, None);
         let mut kei = KeyEventInstance::new();
         assert!(!kei.started());
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         env.advance_block_height(10);
         let leader = gen_authentciated_leader();
         assert!(kei.activate(leader).is_ok());
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         assert!(kei.started());
     }
     #[test]
     fn test_key_event_instance_vote_alive() {
         let mut env = Environment::new(None, None, None);
         let mut kei = KeyEventInstance::new();
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         env.advance_block_height(10);
         kei.vote_alive();
         assert!(!kei.started());
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
     }
     #[test]
     fn test_key_event_instance_constructor() {
@@ -389,11 +374,11 @@ pub mod tests {
         let kei = KeyEventInstance::new();
         assert_eq!(kei.current_attempt().get(), 0);
         assert!(!kei.started());
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         env.advance_block_height(10);
         let kei = kei.next_instance();
         assert_eq!(kei.current_attempt().get(), 1);
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
     }
     fn gen_auth_candidate() -> AuthenticatedCandidateId {
         let id: u32 = rand::thread_rng().gen();
@@ -409,22 +394,22 @@ pub mod tests {
         env.advance_block_height(10);
         let candidate = gen_auth_candidate();
         assert!(kei.vote_success(candidate.clone()).is_err());
-        assert_last_vote_eq_block(&env, &kei, env.block_height - 10);
+        assert_eq!(kei.last_vote, env.block_height - 10);
         let leader = gen_authentciated_leader();
         assert!(kei.activate(leader).is_ok());
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         // do accept votes if started:
         env.advance_block_height(10);
         let candidate = gen_auth_candidate();
         assert_eq!(kei.vote_success(candidate.clone()).unwrap(), 1);
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         // do not accept subsequent abort votes
         assert!(kei.vote_abort(candidate.clone()).is_err());
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         env.advance_block_height(10);
         // do not accept subsequent success votes
         assert!(kei.vote_success(candidate.clone()).is_err());
-        assert_last_vote_eq_block(&env, &kei, env.block_height - 10);
+        assert_eq!(kei.last_vote, env.block_height - 10);
     }
     #[test]
     fn test_key_event_instance_vote_abort() {
@@ -433,24 +418,24 @@ pub mod tests {
         // do accept aborts if not yet started:
         let candidate = gen_auth_candidate();
         assert_eq!(kei.vote_abort(candidate.clone()).unwrap(), 1);
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         // start instance
         env.advance_block_height(10);
         let leader = gen_authentciated_leader();
         assert!(kei.activate(leader).is_ok());
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         // do accept votes if started:
         env.advance_block_height(10);
         let candidate = gen_auth_candidate();
         assert_eq!(kei.vote_abort(candidate.clone()).unwrap(), 2);
-        assert_last_vote_eq_current_block(&env, &kei);
+        assert_eq!(kei.last_vote, env.block_height);
         env.advance_block_height(10);
         // do not accept subsequent success votes
         assert!(kei.vote_success(candidate.clone()).is_err());
-        assert_last_vote_eq_block(&env, &kei, env.block_height - 10);
+        assert_eq!(kei.last_vote, env.block_height - 10);
         // do not accept subsequent abort votes
         assert!(kei.vote_abort(candidate.clone()).is_err());
-        assert_last_vote_eq_block(&env, &kei, env.block_height - 10);
+        assert_eq!(kei.last_vote, env.block_height - 10);
     }
     pub fn find_leader(attempt: &AttemptId, kes: &KeyEvent) -> (AccountId, ParticipantId) {
         let mut env = Environment::new(None, None, None);
@@ -462,7 +447,6 @@ pub mod tests {
             .keys()
         {
             env.set_signer(account_id);
-            //Environment::new(None, Some(account_id.clone()), None);
             if let Ok(tmp) = kes.authenticate_leader(attempt.clone()) {
                 assert!(leader.is_none());
                 leader = Some((account_id.clone(), tmp.0));
