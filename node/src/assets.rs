@@ -822,7 +822,7 @@ mod tests {
     fn test_distributed_assets_storage() {
         let clock = FakeClock::default();
         let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::SecretDB::new(dir.path(), [1; 16]).unwrap();
+        let db = crate::db::SecretDB::new(dir.path(), [1; 16].into()).unwrap();
         let all_participants = vec![
             ParticipantId::from_raw(0),
             ParticipantId::from_raw(1),
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn test_distributed_store_add_take_owned() {
         let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::SecretDB::new(dir.path(), [1; 16]).unwrap();
+        let db = crate::db::SecretDB::new(dir.path(), [1; 16].into()).unwrap();
         let store = super::DistributedAssetStorage::<u32>::new(
             FakeClock::default().clock(),
             db,
@@ -1019,7 +1019,7 @@ mod tests {
     #[test]
     fn test_distributed_store_add_owned_different_order() {
         let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::SecretDB::new(dir.path(), [1; 16]).unwrap();
+        let db = crate::db::SecretDB::new(dir.path(), [1; 16].into()).unwrap();
         let store = super::DistributedAssetStorage::<u32>::new(
             FakeClock::default().clock(),
             db.clone(),
@@ -1085,7 +1085,7 @@ mod tests {
     #[test]
     fn test_distribtued_store_add_take_unowned() {
         let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::SecretDB::new(dir.path(), [1; 16]).unwrap();
+        let db = crate::db::SecretDB::new(dir.path(), [1; 16].into()).unwrap();
         let store = super::DistributedAssetStorage::<u32>::new(
             FakeClock::default().clock(),
             db,
@@ -1116,7 +1116,7 @@ mod tests {
     #[test]
     fn test_distributed_store_persistence() {
         let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::SecretDB::new(dir.path(), [1; 16]).unwrap();
+        let db = crate::db::SecretDB::new(dir.path(), [1; 16].into()).unwrap();
         let myself = ParticipantId::from_raw(42);
         let store = super::DistributedAssetStorage::<u32>::new(
             FakeClock::default().clock(),

@@ -5,8 +5,8 @@ use k256::{AffinePoint, Scalar, Secp256k1};
 use std::collections::HashMap;
 
 use crate::config::{
-    ConfigFile, IndexerConfig, KeygenConfig, ParticipantsConfig, PresignatureConfig, SecretsConfig,
-    SignatureConfig, SyncMode, TripleConfig, WebUIConfig,
+    AesEncryptionKey, ConfigFile, IndexerConfig, KeygenConfig, ParticipantsConfig,
+    PresignatureConfig, SecretsConfig, SignatureConfig, SyncMode, TripleConfig, WebUIConfig,
 };
 use crate::coordinator::Coordinator;
 use crate::db::SecretDB;
@@ -283,7 +283,7 @@ impl IntegrationTestSetup {
                 },
             };
             let secrets = SecretsConfig {
-                local_storage_aes_key: rand::random(),
+                local_storage_aes_key: AesEncryptionKey::from([1; 16]),
                 p2p_private_key: p2p_key,
             };
             let (indexer_api, task, currently_running_job_name) =

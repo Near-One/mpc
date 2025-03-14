@@ -5,6 +5,8 @@ use cait_sith::KeygenOutput;
 use k256::{AffinePoint, Scalar, Secp256k1};
 use serde::{Deserialize, Serialize};
 
+use crate::config::AesEncryptionKey;
+
 /// The root keyshare data along with an epoch. The epoch is incremented
 /// for each key resharing. This is the format stored in the old MPC
 /// implementation, and we're keeping it the same to ease migration.
@@ -53,7 +55,7 @@ pub enum KeyshareStorageFactory {
     },
     Local {
         home_dir: std::path::PathBuf,
-        encryption_key: [u8; 16],
+        encryption_key: AesEncryptionKey,
     },
 }
 

@@ -1,5 +1,5 @@
 use super::{KeyshareStorage, RootKeyshareData};
-use crate::db;
+use crate::{config::AesEncryptionKey, db};
 use aes_gcm::{Aes128Gcm, KeyInit};
 use anyhow::Context;
 use sha3::digest::generic_array::GenericArray;
@@ -8,11 +8,11 @@ use std::path::PathBuf;
 /// Stores the root keyshare in a local encrypted file.
 pub struct LocalKeyshareStorage {
     home_dir: PathBuf,
-    encryption_key: [u8; 16],
+    encryption_key: AesEncryptionKey,
 }
 
 impl LocalKeyshareStorage {
-    pub fn new(home_dir: PathBuf, key: [u8; 16]) -> Self {
+    pub fn new(home_dir: PathBuf, key: AesEncryptionKey) -> Self {
         Self {
             home_dir,
             encryption_key: key,
@@ -23,7 +23,7 @@ impl LocalKeyshareStorage {
 #[async_trait::async_trait]
 impl KeyshareStorage for LocalKeyshareStorage {
     async fn load(&self) -> anyhow::Result<Option<RootKeyshareData>> {
-        let cipher = Aes128Gcm::new(GenericArray::from_slice(&self.encryption_key));
+        let cipher = Aes128Gcm::new(GenericArray::from_slice(&self.encryption_key.as_bytes()));
         let keyfile = self.home_dir.join("key");
         if !keyfile.exists() {
             return Ok(None);
@@ -48,7 +48,7 @@ impl KeyshareStorage for LocalKeyshareStorage {
                 ));
             }
         }
-        let cipher = Aes128Gcm::new(GenericArray::from_slice(&self.encryption_key));
+        let cipher = Aes128Gcm::new(GenericArray::from_slice(&self.encryption_key.as_bytes()));
         let data = serde_json::to_vec(&root_keyshare).context("Failed to serialize keygen")?;
         let encrypted = db::encrypt(&cipher, &data);
         // Write the new key to a separate file, and then create a link to it.
@@ -83,7 +83,7 @@ mod tests {
             .unwrap()
             .1;
 
-        let storage = LocalKeyshareStorage::new(dir.path().to_path_buf(), encryption_key);
+        let storage = LocalKeyshareStorage::new(dir.path().to_path_buf(), encryption_key.into());
         assert!(storage.load().await.unwrap().is_none());
         storage
             .store(&RootKeyshareData::new(0, generated_key.clone()))

@@ -6,6 +6,8 @@ use std::fmt::Display;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::config::AesEncryptionKey;
+
 /// Key-value store that encrypts all values with AES-GCM.
 /// The keys of the key-value store are NOT encrypted.
 pub struct SecretDB {
@@ -63,8 +65,8 @@ pub fn decrypt(cipher: &Aes128Gcm, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>
 }
 
 impl SecretDB {
-    pub fn new(path: &Path, encryption_key: [u8; 16]) -> anyhow::Result<Arc<Self>> {
-        let cipher = AesGcm::new(GenericArray::from_slice(&encryption_key));
+    pub fn new(path: &Path, encryption_key: AesEncryptionKey) -> anyhow::Result<Arc<Self>> {
+        let cipher = AesGcm::new(GenericArray::from_slice(&encryption_key.as_bytes()));
         let mut options = rocksdb::Options::default();
         options.create_if_missing(true);
         options.create_missing_column_families(true);
@@ -201,7 +203,7 @@ mod tests {
     #[test]
     fn test_db() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let db = SecretDB::new(dir.path(), [1; 16])?;
+        let db = SecretDB::new(dir.path(), [1; 16].into())?;
         let mut update = db.update();
         update.put(DBCol::Presignature, b"key", b"value");
         update.put(DBCol::Triple, b"triple1", b"tripledata");

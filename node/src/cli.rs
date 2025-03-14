@@ -1,22 +1,26 @@
-use crate::config::{
-    load_config_file, BlockArgs, KeygenConfig, PresignatureConfig, SecretsConfig, SignatureConfig,
-    SyncMode, TripleConfig, WebUIConfig,
+use crate::{
+    config::{
+        load_config_file, AesEncryptionKey, BlockArgs, ConfigFile, IndexerConfig, KeygenConfig,
+        PresignatureConfig, SecretsConfig, SignatureConfig, SyncMode, TripleConfig, WebUIConfig,
+    },
+    coordinator::Coordinator,
+    db::SecretDB,
+    indexer::{real::spawn_real_indexer, IndexerAPI},
+    keyshare::KeyshareStorageFactory,
+    p2p::testing::{generate_test_p2p_configs, PortSeed},
+    tracking::{self, start_root_task},
+    web::start_web_server,
 };
-use crate::config::{ConfigFile, IndexerConfig};
-use crate::coordinator::Coordinator;
-use crate::db::SecretDB;
-use crate::indexer::{real::spawn_real_indexer, IndexerAPI};
-use crate::keyshare::KeyshareStorageFactory;
-use crate::p2p::testing::{generate_test_p2p_configs, PortSeed};
-use crate::tracking::{self, start_root_task};
-use crate::web::start_web_server;
 use clap::Parser;
 use near_crypto::SecretKey;
 use near_indexer_primitives::types::Finality;
 use near_sdk::AccountId;
 use near_time::Clock;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::{
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Parser, Debug)]
 pub enum Cli {
@@ -37,6 +41,48 @@ pub enum Cli {
         #[arg(long, default_value = "8192")]
         desired_presignatures_to_buffer: usize,
     },
+    MigrateKeyshare(MigrateKeyshare),
+}
+
+#[derive(Parser, Debug)]
+pub struct MigrateKeyshare {
+    #[arg(long, env("MPC_HOME_DIR"))]
+    pub home_dir: String,
+    #[arg(env("GCP_KEYSHARE_SECRET_ID"))]
+    pub gcp_keyshare_secret_id: String,
+    #[arg(env("GCP_PROJECT_ID"))]
+    pub gcp_project_id: String,
+    /// Hex-encoded 16 byte AES key for local storage encryption.
+    /// This key should come from a secure secret storage.
+    #[arg(env("MPC_SECRET_STORE_KEY"))]
+    pub secret_store_key_hex: String,
+}
+
+impl MigrateKeyshare {
+    async fn migrate_key_shares(self) -> Result<(), anyhow::Error> {
+        let gcp_key_share_storage = KeyshareStorageFactory::Gcp {
+            project_id: self.gcp_project_id,
+            secret_id: self.gcp_keyshare_secret_id,
+        }
+        .create()
+        .await?;
+
+        let encryption_key = AesEncryptionKey::from_str(self.secret_store_key_hex.as_str())?;
+
+        let local_key_share_storage = KeyshareStorageFactory::Local {
+            home_dir: self.home_dir.into(),
+            encryption_key,
+        }
+        .create()
+        .await?;
+
+        let gcp_key_share = match gcp_key_share_storage.load().await? {
+            Some(key_share) => key_share,
+            None => anyhow::bail!("No key share found in gcp secure storage"),
+        };
+
+        local_key_share_storage.store(&gcp_key_share).await
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -222,6 +268,7 @@ impl Cli {
                 )
                 .await
             }
+            Cli::MigrateKeyshare(migrate_key_share) => migrate_key_share.migrate_key_shares().await,
         }
     }
 

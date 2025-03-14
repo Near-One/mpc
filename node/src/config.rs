@@ -3,7 +3,7 @@ use anyhow::Context;
 use near_crypto::{PublicKey, SecretKey};
 use near_indexer_primitives::types::{AccountId, Finality};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{path::Path, str::FromStr};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TripleConfig {
@@ -173,24 +173,51 @@ pub struct ParticipantInfo {
 #[derive(Clone, Debug)]
 pub struct SecretsConfig {
     pub p2p_private_key: near_crypto::ED25519SecretKey,
-    pub local_storage_aes_key: [u8; 16],
+    pub local_storage_aes_key: AesEncryptionKey,
+}
+
+/// Encryption key used for encrypting key shares locally.
+#[derive(Clone, Copy, Debug)]
+pub struct AesEncryptionKey([u8; 16]);
+
+impl From<[u8; 16]> for AesEncryptionKey {
+    fn from(value: [u8; 16]) -> Self {
+        Self(value)
+    }
+}
+
+impl FromStr for AesEncryptionKey {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let local_storage_aes_key =
+            hex::decode(value).context("Encryption key must be 32 hex characters")?;
+
+        local_storage_aes_key
+            .as_slice()
+            .try_into()
+            .map(Self)
+            .context("Encryption key must be 16 bytes (32 bytes hex)")
+    }
+}
+
+impl AesEncryptionKey {
+    pub fn as_bytes(&self) -> [u8; 16] {
+        self.0
+    }
 }
 
 impl SecretsConfig {
     pub fn from_cli(
-        local_storage_aes_key_hex: &str,
+        local_storage_aes_key_hex_str: &str,
         p2p_private_key: near_crypto::SecretKey,
     ) -> anyhow::Result<Self> {
-        let local_storage_aes_key = hex::decode(local_storage_aes_key_hex)
-            .context("Encryption key must be 32 hex characters")?;
-        let local_storage_aes_key: [u8; 16] = local_storage_aes_key
-            .as_slice()
-            .try_into()
-            .context("Encryption key must be 16 bytes (32 bytes hex)")?;
+        let local_storage_aes_key = AesEncryptionKey::from_str(local_storage_aes_key_hex_str)?;
 
         let near_crypto::SecretKey::ED25519(p2p_private_key) = p2p_private_key else {
             anyhow::bail!("P2P private key must be ed25519");
         };
+
         Ok(Self {
             p2p_private_key,
             local_storage_aes_key,
