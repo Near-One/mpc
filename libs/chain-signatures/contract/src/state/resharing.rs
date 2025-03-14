@@ -1,4 +1,4 @@
-use super::key_event::KeyEvent;
+use super::key_event::{InstanceStatus, KeyEvent, Tally};
 use super::running::RunningContractState;
 use crate::errors::Error;
 use crate::primitives::key_state::{
@@ -76,7 +76,8 @@ impl ResharingContractState {
             &key_event_id,
             event_max_idle_blocks,
             None::<fn(AuthenticatedCandidateId)>,
-        )? {
+        )? == Tally::ThresholdReached
+        {
             return Ok(Some(RunningContractState {
                 key_state: DKState::new(
                     self.public_key().clone(),
@@ -94,7 +95,7 @@ impl ResharingContractState {
         &mut self,
         key_event_id: KeyEventId,
         event_max_idle_blocks: BlockHeight,
-    ) -> Result<bool, Error> {
+    ) -> Result<InstanceStatus, Error> {
         self.event_state
             .vote_abort(key_event_id, event_max_idle_blocks)
     }
@@ -106,7 +107,7 @@ mod tests {
     use crate::primitives::test_utils::gen_legacy_resharing_state;
     use crate::primitives::votes::KeyStateVotes;
     use crate::state::key_event::tests::{find_leader, Environment};
-    use crate::state::key_event::KeyEvent;
+    use crate::state::key_event::{InstanceStatus, KeyEvent};
     use crate::state::resharing::ResharingContractState;
     use crate::state::running::running_tests::{gen_running_state, gen_valid_ksp};
     use crate::state::running::RunningContractState;
@@ -281,12 +282,12 @@ mod tests {
                 - ((i + 1) as u64)
                 < state.event_state.event_threshold().value()
             {
-                assert!(x);
+                assert_eq!(x, InstanceStatus::Replaced);
                 let key_event = KeyEventId::new(key_event.epoch_id(), key_event.attempt().next());
                 assert_eq!(state.event_state.current_key_event_id(), key_event);
                 break;
             } else {
-                assert!(!x);
+                assert_eq!(x, InstanceStatus::Pending);
             }
             // assert we can't abort after aborting
             assert!(state.vote_abort(key_event.clone(), 0).is_err());

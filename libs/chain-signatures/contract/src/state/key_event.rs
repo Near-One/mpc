@@ -28,6 +28,20 @@ pub struct KeyEvent {
     event_threshold: DKGThreshold,
     instance: KeyEventInstance, // if we add key types, we will have one instance per key type.
 }
+#[derive(Debug, PartialEq)]
+pub enum Tally {
+    //The threshold has been met
+    ThresholdReached,
+    /// The vote result is still pending.
+    ThresholdPending,
+}
+#[derive(Debug, PartialEq)]
+pub enum InstanceStatus {
+    // The key event instance has been aborted and replaced.
+    Replaced,
+    // The key event instance may still succeed.
+    Pending,
+}
 
 // voting API
 impl KeyEvent {
@@ -47,13 +61,13 @@ impl KeyEvent {
     }
     /// Casts a vote for `public_key` in `key_event_id`.
     /// Fails if `signer` is not a candidate, if the candidate already voted or if there is no active key event.
-    /// Returns `RunningContractState` if `public_key` reaches the required votes.
+    /// Returns the current tally of the key event instance.
     pub fn vote_success<F>(
         &mut self,
         key_event_id: &KeyEventId,
         event_max_idle_blocks: u64,
         callback: Option<F>,
-    ) -> Result<bool, Error>
+    ) -> Result<Tally, Error>
     where
         F: FnOnce(AuthenticatedCandidateId),
     {
@@ -62,15 +76,20 @@ impl KeyEvent {
         if let Some(cb) = callback {
             cb(candidate);
         }
-        Ok(self.event_threshold().value() <= n_votes)
+        if self.event_threshold().value() <= n_votes {
+            Ok(Tally::ThresholdReached)
+        } else {
+            Ok(Tally::ThresholdPending)
+        }
     }
     /// Casts a vote to abort the current keygen instance.
     /// Replaces the current instance in case dkg threshold can't be reached anymore.
+    /// Returns the status of the current key event instance.
     pub fn vote_abort(
         &mut self,
         key_event_id: KeyEventId,
         event_max_idle_blocks: BlockHeight,
-    ) -> Result<bool, Error> {
+    ) -> Result<InstanceStatus, Error> {
         let candidate = self.verify_vote(&key_event_id, event_max_idle_blocks)?;
         let n_votes = self.instance.vote_abort(candidate)?;
         if self.proposed_threshold_parameters().n_participants() - n_votes
@@ -78,9 +97,9 @@ impl KeyEvent {
         {
             // we can't achieve `dkg_threshold` votes anymore, abort this instance and reset
             self.instance = self.instance.next_instance();
-            return Ok(true);
+            return Ok(InstanceStatus::Replaced);
         }
-        Ok(false)
+        Ok(InstanceStatus::Pending)
     }
 }
 
@@ -267,7 +286,7 @@ pub mod tests {
     use crate::primitives::key_state::{AttemptId, EpochId, KeyEventId};
     use crate::primitives::participants::{AuthenticatedCandidateId, ParticipantId};
     use crate::primitives::test_utils::{gen_account_id, gen_seed};
-    use crate::state::key_event::{KeyEvent, KeyEventInstance};
+    use crate::state::key_event::{InstanceStatus, KeyEvent, KeyEventInstance, Tally};
     use near_sdk::{test_utils::VMContextBuilder, testing_env, AccountId, BlockHeight};
     use rand::Rng;
     use std::collections::BTreeSet;
@@ -539,9 +558,9 @@ pub mod tests {
             let x = kes.vote_success(&key_id, 1, count).unwrap();
             assert_eq!(*counted.borrow(), i + 1);
             if proposed.key_event_threshold().value() <= (i + 1) as u64 {
-                assert!(x);
+                assert_eq!(x, Tally::ThresholdReached);
             } else {
-                assert!(!x);
+                assert_eq!(x, Tally::ThresholdPending);
             }
             // abort should not work after submitting a vote:
             assert!(kes.vote_abort(key_id.clone(), 1).is_err());
@@ -576,10 +595,10 @@ pub mod tests {
             if proposed.key_event_threshold().value()
                 > proposed.n_proposed_participants() - ((i + 1) as u64)
             {
-                assert!(x);
+                assert_eq!(x, InstanceStatus::Replaced);
                 break;
             } else {
-                assert!(!x);
+                assert_eq!(x, InstanceStatus::Pending);
                 // abort should not work after aborting:
                 assert!(kes.vote_abort(key_id.clone(), 1).is_err());
                 // submitting another vote should not work either
