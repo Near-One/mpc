@@ -1,12 +1,23 @@
 pub mod common;
-use common::{candidates, create_response, init, init_env, sign_and_validate};
+use common::{
+    candidates, contruct_valid_key_state_proposal, create_response, init, init_env,
+    sign_and_validate,
+};
 
-use mpc_contract::errors;
-use mpc_contract::primitives::{CandidateInfo, SignRequest};
-use near_workspaces::types::{AccountId, NearToken};
+use mpc_contract::{
+    config::InitConfig,
+    errors,
+    primitives::{
+        key_state::KeyStateProposal,
+        participants::Participants,
+        signature::SignRequest,
+        thresholds::{DKGThreshold, Threshold, ThresholdParameters},
+    },
+};
+use near_workspaces::types::NearToken;
 
 use crypto_shared::SignatureResponse;
-use std::collections::HashMap;
+use std::mem;
 
 #[tokio::test]
 async fn test_contract_sign_request() -> anyhow::Result<()> {
@@ -252,15 +263,20 @@ async fn test_contract_sign_request_deposits() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_contract_initialization() -> anyhow::Result<()> {
     let (_, contract) = init().await;
-    let valid_candidates = candidates(None);
 
     // Empty candidates should fail.
-    let candidates: HashMap<AccountId, CandidateInfo> = HashMap::new();
+    let participants = Participants::new();
+    let threshold = Threshold::new(0);
+    let proposed_threshold_parameters: ThresholdParameters =
+        unsafe { mem::transmute((participants, threshold)) };
+    let key_event_threshold = DKGThreshold::new(0);
+    let key_state_proposal: KeyStateProposal =
+        unsafe { mem::transmute((proposed_threshold_parameters, key_event_threshold)) };
     let result = contract
         .call("init")
         .args_json(serde_json::json!({
-            "threshold": 2,
-            "candidates": candidates
+            "key_state_proposal": key_state_proposal,
+            "init_config": None::<InitConfig>,
         }))
         .transact()
         .await?;
@@ -269,11 +285,12 @@ async fn test_contract_initialization() -> anyhow::Result<()> {
         "initializing with zero candidates or less than threshold candidates should fail"
     );
 
+    let key_state_proposal = contruct_valid_key_state_proposal(&candidates(None)).await;
     let result = contract
         .call("init")
         .args_json(serde_json::json!({
-            "threshold": 2,
-            "candidates": valid_candidates,
+            "key_state_proposal": key_state_proposal,
+            "init_config": None::<InitConfig>,
         }))
         .transact()
         .await?;
@@ -286,8 +303,8 @@ async fn test_contract_initialization() -> anyhow::Result<()> {
     let result = contract
         .call("init")
         .args_json(serde_json::json!({
-            "threshold": 2,
-            "candidates": valid_candidates,
+            "key_state_proposal": key_state_proposal,
+            "init_config": None::<InitConfig>,
         }))
         .transact()
         .await?;

@@ -1,7 +1,7 @@
 pub mod common;
 use common::{init_env, vote_update_till_completion, CONTRACT_FILE_PATH, INVALID_CONTRACT};
 
-use mpc_contract::config::ConfigV1;
+use mpc_contract::config::Config;
 use mpc_contract::errors;
 use mpc_contract::update::{ProposeUpdateArgs, UpdateId};
 
@@ -79,9 +79,10 @@ async fn test_propose_update_config() {
         .contains(&errors::VoteError::VoterNotParticipant.to_string()));
 
     // have each participant propose a new update:
-    let new_config = ConfigV1 {
+    let new_config = Config {
         max_num_requests_to_remove: 30,
         request_timeout_blocks: 200,
+        event_max_idle_blocks: 30,
     };
 
     let mut proposals = Vec::with_capacity(accounts.len());
@@ -104,7 +105,7 @@ async fn test_propose_update_config() {
     }
 
     let old_config: serde_json::Value = contract.view("config").await.unwrap().json().unwrap();
-    let state: mpc_contract::ProtocolContractState =
+    let state: legacy_contract::ProtocolContractState =
         contract.view("state").await.unwrap().json().unwrap();
 
     // check that each participant can vote on a singular proposal and have it reflect changes:
@@ -171,7 +172,7 @@ async fn test_propose_update_contract() {
 
     dbg!(&execution);
 
-    let state: mpc_contract::ProtocolContractState = execution.json().unwrap();
+    let state: legacy_contract::ProtocolContractState = execution.json().unwrap();
     dbg!(state);
 }
 
@@ -209,10 +210,10 @@ async fn test_invalid_contract_deploy() {
         .unwrap();
 
     dbg!(&execution);
-    let state: mpc_contract::ProtocolContractState = execution.json().unwrap();
+    let state: legacy_contract::ProtocolContractState = execution.json().unwrap();
     dbg!(state);
 }
-
+// todo: fix this test
 #[tokio::test]
 async fn test_propose_update_contract_many() {
     let (_, contract, accounts, _) = init_env().await;
@@ -244,7 +245,7 @@ async fn test_propose_update_contract_many() {
     vote_update_till_completion(&contract, &accounts, proposals.last().unwrap()).await;
 
     // Let's check that we can call into the state and see all the proposals.
-    let state: mpc_contract::ProtocolContractState =
+    let state: legacy_contract::ProtocolContractState =
         contract.view("state").await.unwrap().json().unwrap();
     dbg!(state);
 }

@@ -179,11 +179,12 @@ impl Coordinator {
                                 self.keyshare_storage_factory.create().await?,
                                 state.clone(),
                                 self.indexer.txn_sender.clone(),
+                                // here, pass self.indexer.reshare_instance_receiver
                             ),
                         )?,
                         stop_fn: Box::new(move |new_state| match new_state {
                             ContractState::Resharing(new_state) => {
-                                new_state.old_epoch != state.old_epoch
+                                new_state.old_epoch != state.old_epoch// add comparison for instance id? or just pass through channel?
                                     || new_state.new_participants != state.new_participants
                             }
                             _ => true,
@@ -460,6 +461,7 @@ impl Coordinator {
         keyshare_storage: Box<dyn KeyshareStorage>,
         contract_state: ContractResharingState,
         chain_txn_sender: mpsc::Sender<ChainSendTransactionRequest>,
+        // reshare_instance_receiver
     ) -> anyhow::Result<MpcJobResult> {
         let Some(mpc_config) = MpcConfig::from_participants_with_near_account_id(
             contract_state.new_participants.clone(),
@@ -477,7 +479,9 @@ impl Coordinator {
 
         let existing_keyshare = match keyshare_storage.load().await? {
             Some(existing_keyshare) => {
+                // only enter this if the full key event id matches.
                 if existing_keyshare.epoch == contract_state.old_epoch + 1 {
+                    // check key id: a mismatch should (theoretically) never happen.
                     if contract_state
                         .finished_votes
                         .contains(&config_file.my_near_account_id)
@@ -496,7 +500,7 @@ impl Coordinator {
                                     epoch: contract_state.old_epoch + 1,
                                 },
                             ))
-                            .await?;
+                            .await?; // adjust
                         tracing::info!("Sent vote_reshared txn; waiting for contract state to transition into Running");
                     }
                     return Ok(MpcJobResult::HaltUntilInterrupted);
@@ -564,7 +568,10 @@ impl Coordinator {
         .await?;
         tracing::info!("Key resharing complete; will call vote_reshared next");
         // Exit; we'll immediately re-enter the same function and send vote_reshared.
+        // maybe send vote_instance_complete() here, before exiting.
+        //
 
+        // leader needs to observe the contract state here.
         Ok(MpcJobResult::Done)
     }
 }

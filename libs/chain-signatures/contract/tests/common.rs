@@ -1,6 +1,3 @@
-use std::collections::{BTreeMap, HashMap};
-use std::str::FromStr;
-
 use crypto_shared::kdf::{check_ec_signature, derive_secret_key};
 use crypto_shared::{
     derive_epsilon, derive_key, ScalarExt as _, SerializableAffinePoint, SerializableScalar,
@@ -12,21 +9,27 @@ use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::DecompressPoint as _;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{AffinePoint, FieldBytes, Scalar, Secp256k1};
-use mpc_contract::primitives::{
-    CandidateInfo, ParticipantInfo, Participants, SignRequest, SignatureRequest,
+use mpc_contract::config::InitConfig;
+use mpc_contract::primitives::key_state::{
+    AttemptId, DKState, EpochId, KeyEventId, KeyStateProposal,
 };
+use mpc_contract::primitives::participants::{ParticipantInfo, Participants};
+use mpc_contract::primitives::signature::{SignRequest, SignatureRequest};
+use mpc_contract::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 use mpc_contract::update::UpdateId;
+use near_sdk::log;
 use near_workspaces::network::Sandbox;
 use near_workspaces::types::{AccountId, NearToken};
 use near_workspaces::{Account, Contract, Worker};
 use signature::DigestSigner;
+use std::str::FromStr;
 
 pub const CONTRACT_FILE_PATH: &str = "../target/wasm32-unknown-unknown/release/mpc_contract.wasm";
 pub const INVALID_CONTRACT: &str = "../res/mpc_test_contract.wasm";
 pub const PARTICIPANT_LEN: usize = 3;
 
-pub fn candidates(names: Option<Vec<AccountId>>) -> HashMap<AccountId, CandidateInfo> {
-    let mut candidates: HashMap<AccountId, CandidateInfo> = HashMap::new();
+pub fn candidates(names: Option<Vec<AccountId>>) -> Participants {
+    let mut participants: Participants = Participants::new();
     let names = names.unwrap_or_else(|| {
         vec![
             "alice.near".parse().unwrap(),
@@ -36,10 +39,9 @@ pub fn candidates(names: Option<Vec<AccountId>>) -> HashMap<AccountId, Candidate
     });
 
     for account_id in names {
-        candidates.insert(
+        let _ = participants.insert(
             account_id.clone(),
-            CandidateInfo {
-                account_id,
+            ParticipantInfo {
                 url: "127.0.0.1".into(),
                 cipher_pk: [0; 32],
                 sign_pk: near_sdk::PublicKey::from_str(
@@ -49,16 +51,15 @@ pub fn candidates(names: Option<Vec<AccountId>>) -> HashMap<AccountId, Candidate
             },
         );
     }
-    candidates
+    participants
 }
-
 /// Create `amount` accounts and return them along with the candidate info.
-pub async fn accounts(
-    worker: &Worker<Sandbox>,
-) -> (Vec<Account>, HashMap<AccountId, CandidateInfo>) {
+pub async fn accounts(worker: &Worker<Sandbox>) -> (Vec<Account>, Participants) {
     let mut accounts = Vec::with_capacity(PARTICIPANT_LEN);
     for _ in 0..PARTICIPANT_LEN {
+        log!("attempting to create account");
         let account = worker.dev_create_account().await.unwrap();
+        log!("created account");
         accounts.push(account);
     }
     let candidates = candidates(Some(accounts.iter().map(|a| a.id().clone()).collect()));
@@ -71,34 +72,34 @@ pub async fn init() -> (Worker<Sandbox>, Contract) {
     let contract = worker.dev_deploy(&wasm).await.unwrap();
     (worker, contract)
 }
-
+pub async fn contruct_valid_key_state_proposal(participants: &Participants) -> KeyStateProposal {
+    let threshold = ((participants.count() as f64) * 0.6).ceil() as u64;
+    let threshold = Threshold::new(threshold);
+    let threshold_parameters = ThresholdParameters::new(participants.clone(), threshold).unwrap();
+    let key_event_threshold = DKGThreshold::new(threshold_parameters.participants().count());
+    KeyStateProposal::new(threshold_parameters, key_event_threshold).unwrap()
+}
 pub async fn init_with_candidates(
     pk: Option<near_crypto::PublicKey>,
 ) -> (Worker<Sandbox>, Contract, Vec<Account>) {
     let (worker, contract) = init().await;
-    let (accounts, candidates) = accounts(&worker).await;
-
+    let (accounts, participants) = accounts(&worker).await;
+    let threshold = ((participants.count() as f64) * 0.6).ceil() as u64;
+    let threshold = Threshold::new(threshold);
+    let threshold_parameters = ThresholdParameters::new(participants, threshold).unwrap();
     let init = if let Some(pk) = pk {
-        let participants_map = candidates
-            .into_iter()
-            .map(|(k, v)| (k, Into::<ParticipantInfo>::into(v)))
-            .collect::<BTreeMap<_, _>>();
-        let participants = Participants {
-            next_id: participants_map.len().try_into().unwrap(),
-            participants: participants_map.clone(),
-            account_to_participant_id: participants_map
-                .into_iter()
-                .enumerate()
-                .map(|(id, (account_id, _))| (account_id, id.try_into().unwrap()))
-                .collect(),
-        };
+        let pk: near_sdk::PublicKey = near_sdk::PublicKey::from_str(&format!("{}", pk)).unwrap();
+        let dk_state = DKState::new(
+            pk,
+            KeyEventId::new(EpochId::new(5), AttemptId::new()),
+            threshold_parameters,
+        )
+        .unwrap();
         contract
             .call("init_running")
             .args_json(serde_json::json!({
-                "epoch": 0,
-                "threshold": 2,
-                "participants": participants,
-                "public_key": pk,
+                "key_state": dk_state,
+                "init_config": None::<InitConfig>,
             }))
             .transact()
             .await
@@ -106,11 +107,14 @@ pub async fn init_with_candidates(
             .into_result()
             .unwrap()
     } else {
+        let key_event_threshold = DKGThreshold::new(threshold_parameters.participants().count());
+        let key_state_proposal =
+            KeyStateProposal::new(threshold_parameters, key_event_threshold).unwrap();
         contract
             .call("init")
             .args_json(serde_json::json!({
-                "threshold": 2,
-                "candidates": candidates
+                "key_state_proposal": key_state_proposal,
+                "init_config": None::<InitConfig>,
             }))
             .transact()
             .await

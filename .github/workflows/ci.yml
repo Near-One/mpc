@@ -49,7 +49,7 @@ jobs:
       - name: Build the contract
         run: | 
           cd libs/chain-signatures
-          cargo build -p mpc-contract --target=wasm32-unknown-unknown --release
+          cargo build -p mpc-contract@2.0.0-alpha --target=wasm32-unknown-unknown --release
           mkdir -p res && cp target/wasm32-unknown-unknown/release/mpc_contract.wasm res/mpc_contract.wasm
 
       - name: Download near core binary from S3

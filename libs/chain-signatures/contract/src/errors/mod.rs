@@ -11,8 +11,6 @@ pub enum SignError {
         "This key version is not supported. Call latest_key_version() to get the latest supported version."
     )]
     UnsupportedKeyVersion,
-    #[error("Too many pending requests. Please try again later.")]
-    RequestLimitExceeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -22,33 +20,39 @@ pub enum RespondError {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
-pub enum JoinError {
-    #[error("Account to join is already in the participant set.")]
-    JoinAlreadyParticipant,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum PublicKeyError {
     #[error("Derived key conversion failed.")]
     DerivedKeyConversionFailed,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
-pub enum InitError {
-    #[error("Threshold cannot be greater than the number of candidates")]
-    ThresholdTooHigh,
+pub enum KeyEventError {
+    #[error("Epoch Id must be incremented by one.")]
+    EpochMismatch,
+    #[error("Key event Id mismatch")]
+    KeyEventIdMismatch,
+    #[error("Can not start a new reshare or keygen instance while the current instance is still active.")]
+    ActiveKeyEvent,
+    #[error("Expected ongoing reshare")]
+    NoActiveKeyEvent,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum VoteError {
-    #[error("Voting account is not in the participant set.")]
+    #[error("Voting account is not a participant.")]
     VoterNotParticipant,
-    #[error("Account to be kicked is not in the participant set.")]
-    KickNotParticipant,
-    #[error("Account to join is not in the candidate set.")]
-    JoinNotCandidate,
-    #[error("Number of participants cannot go below threshold.")]
-    ParticipantsBelowThreshold,
+    #[error("Voting account is neither a participant, nor a proposed participant.")]
+    VoterNotParticipantNorProposedParticipant,
+    #[error("This participant already registered a vote.")]
+    ParticipantVoteAlreadyRegistered,
+    #[error("Voting account is not the leader of the current reshare or keygen instance.")]
+    VoterNotLeader,
+    #[error("Inconsistent voting state")]
+    InconsistentVotingState,
+    #[error("Voter already aborted the current key event.")]
+    VoterAlreadyAborted,
+    #[error("Vote already casted.")]
+    VoteAlreadySubmitted,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -63,20 +67,54 @@ pub enum InvalidParameters {
     RequestNotFound,
     #[error("Update not found.")]
     UpdateNotFound,
+    #[error("Participant already in set.")]
+    ParticipantAlreadyInSet,
+    #[error("Participant id already used.")]
+    ParticipantAlreadyUsed,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum InvalidState {
     #[error("The protocol is not Running.")]
     ProtocolStateNotRunning,
-    #[error("Protocol state is not running or resharing.")]
-    ProtocolStateNotRunningOrResharing,
+    #[error("Protocol state is not resharing.")]
+    ProtocolStateNotResharing,
+    #[error("Protocol state is not initializing.")]
+    ProtocolStateNotInitializing,
+    #[error("Protocol state is not running, nor resharing.")]
+    ProtocolStateNotRunningNorResharing,
     #[error("Unexpected protocol state.")]
     UnexpectedProtocolState,
     #[error("Cannot load in contract due to missing state")]
     ContractStateIsMissing,
-    #[error("Mismatched epoch.")]
-    EpochMismatch,
+    #[error("Participant index out of range")]
+    ParticipantIndexOutOfRange,
+    #[error("Not a participant")]
+    NotParticipant,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
+pub enum InvalidThreshold {
+    #[error("Threshold does not meet the minimum absolute requirement")]
+    MinAbsRequirementFailed,
+    #[error("Threshold does not meet the minimum relative requirement")]
+    MinRelRequirementFailed,
+    #[error("Threshold must not exceed number of participants")]
+    MaxRequirementFailed,
+    #[error("Key event threshold must match the number of participants")]
+    DKGThresholdFailed,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
+pub enum InvalidCandidateSet {
+    #[error("Set of proposed participants must contain at least `threshold` old participants.")]
+    InsufficientOldParticipants,
+    #[error("Participant ids are not coherent.")]
+    IncoherentParticipantIds,
+    #[error("New Participant ids need to be unique and contiguous.")]
+    NewParticipantIdsNotContiguous,
+    #[error("New Participant ids need to not skip any unused participant ids.")]
+    NewParticipantIdsTooHigh,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -95,15 +133,9 @@ pub enum ErrorKind {
     /// An error occurred while node is performing respond call.
     #[error("{0}")]
     Respond(#[from] RespondError),
-    /// An error occurred while node is performing join call.
-    #[error("{0}")]
-    Join(#[from] JoinError),
     /// An error occurred while user is performing public_key_* call.
     #[error("{0}")]
     PublicKey(#[from] PublicKeyError),
-    /// An error occurred while developer is performing init_* call.
-    #[error("{0}")]
-    Init(#[from] InitError),
     /// An error occurred while node is performing vote_* call.
     #[error("{0}")]
     Vote(#[from] VoteError),
@@ -116,6 +148,15 @@ pub enum ErrorKind {
     // Conversion errors
     #[error("{0}")]
     ConversionError(#[from] ConversionError),
+    // Invalid state errors
+    #[error("{0}")]
+    InvalidThreshold(#[from] InvalidThreshold),
+    // Invalid Candidate errors
+    #[error("{0}")]
+    InvalidCandidateSet(#[from] InvalidCandidateSet),
+    // Key event errors
+    #[error("{0}")]
+    KeyEventError(#[from] KeyEventError),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use crate::config::{Config, ConfigV1};
-use crate::primitives::StorageKey;
+use crate::config::Config;
+use crate::storage_keys::StorageKey;
 
 use borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::store::IterableMap;
-use near_sdk::{env, AccountId, Gas, NearToken, Promise};
+use near_sdk::{env, near, AccountId, Gas, NearToken, Promise};
 
 #[derive(
     Copy,
@@ -40,29 +40,30 @@ impl From<u64> for UpdateId {
     }
 }
 
-#[allow(clippy::large_enum_variant)] // TODO: Config is big
-#[derive(Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+#[near(serializers=[borsh, json])]
+#[derive(Debug)]
 pub enum Update {
-    Config(Config),
     Contract(Vec<u8>),
-    ConfigV1(ConfigV1),
+    Config(Config),
 }
 
-// can safely be changed
-#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Default)]
+#[near(serializers=[borsh, json])]
+#[derive(Debug, Default)]
 pub struct ProposeUpdateArgs {
     pub code: Option<Vec<u8>>,
-    pub config: Option<ConfigV1>,
+    pub config: Option<Config>,
 }
 
-#[derive(Debug, BorshSerialize, BorshDeserialize)]
+#[near(serializers=[borsh ])]
+#[derive(Debug)]
 struct UpdateEntry {
     updates: Vec<Update>,
     votes: HashSet<AccountId>,
     bytes_used: u128,
 }
 
-#[derive(Debug, BorshSerialize, BorshDeserialize)]
+#[near(serializers=[borsh ])]
+#[derive(Debug)]
 pub struct ProposedUpdates {
     entries: IterableMap<UpdateId, UpdateEntry>,
     id: UpdateId,
@@ -78,21 +79,21 @@ impl Default for ProposedUpdates {
 }
 
 impl ProposedUpdates {
-    pub fn required_deposit(code: &Option<Vec<u8>>, config: &Option<ConfigV1>) -> NearToken {
+    pub fn required_deposit(code: &Option<Vec<u8>>, config: &Option<Config>) -> NearToken {
         required_deposit(bytes_used(code, config))
     }
 
     /// Propose an update given the new contract code and/or config.
     ///
     /// Returns Some(UpdateId) if the update was successfully proposed, otherwise None.
-    pub fn propose(&mut self, code: Option<Vec<u8>>, config: Option<ConfigV1>) -> Option<UpdateId> {
+    pub fn propose(&mut self, code: Option<Vec<u8>>, config: Option<Config>) -> Option<UpdateId> {
         let bytes_used = bytes_used(&code, &config);
         let updates = match (code, config) {
             (Some(contract), Some(config)) => {
-                vec![Update::Contract(contract), Update::ConfigV1(config)]
+                vec![Update::Contract(contract), Update::Config(config)]
             }
             (Some(contract), None) => vec![Update::Contract(contract)],
-            (None, Some(config)) => vec![Update::ConfigV1(config)],
+            (None, Some(config)) => vec![Update::Config(config)],
             (None, None) => return None,
         };
 
@@ -127,10 +128,9 @@ impl ProposedUpdates {
 
         let mut promise = Promise::new(env::current_account_id());
         for update in entry.updates {
+            // does it make sense to update both code & config
+            // simultaneously?
             match update {
-                Update::Config(_) => {
-                    panic!("This config structure is deprecated.");
-                }
                 Update::Contract(code) => {
                     // deploy contract then do a `migrate` call to migrate state.
                     promise = promise.deploy_contract(code).function_call(
@@ -140,7 +140,7 @@ impl ProposedUpdates {
                         gas,
                     );
                 }
-                Update::ConfigV1(config) => {
+                Update::Config(config) => {
                     promise = promise.function_call(
                         "update_config".into(),
                         serde_json::to_vec(&(&config,)).unwrap(),
@@ -154,7 +154,7 @@ impl ProposedUpdates {
     }
 }
 
-fn bytes_used(code: &Option<Vec<u8>>, config: &Option<ConfigV1>) -> u128 {
+fn bytes_used(code: &Option<Vec<u8>>, config: &Option<Config>) -> u128 {
     let mut bytes_used = std::mem::size_of::<UpdateEntry>() as u128;
 
     // Assume a high max of 128 participant votes per update entry.

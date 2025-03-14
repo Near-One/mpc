@@ -6,7 +6,7 @@ use k256::{
     elliptic_curve::{ops::Reduce, point::AffineCoordinates, Curve, CurveArithmetic},
     AffinePoint, Scalar, Secp256k1,
 };
-use mpc_contract::primitives;
+use legacy_mpc_contract;
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::Gas;
 use serde::{Deserialize, Serialize};
@@ -99,7 +99,7 @@ pub struct ChainGetPendingRequestArgs {
 #[derive(Serialize, Debug)]
 pub struct ChainJoinArgs {
     pub url: String,
-    pub cipher_pk: primitives::hpke::PublicKey,
+    pub cipher_pk: legacy_mpc_contract::primitives::hpke::PublicKey,
     pub sign_pk: PublicKey,
 }
 

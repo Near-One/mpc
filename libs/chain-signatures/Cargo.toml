@@ -4,6 +4,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.metadata.test]
+doc = true
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

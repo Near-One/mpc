@@ -2,7 +2,7 @@ use crate::config::{ParticipantInfo, ParticipantsConfig};
 use crate::indexer::lib::{get_mpc_contract_state, wait_for_contract_code, wait_for_full_sync};
 use crate::primitives::ParticipantId;
 use anyhow::Context;
-use mpc_contract::ProtocolContractState;
+use legacy_mpc_contract;
 use near_indexer_primitives::types::AccountId;
 use std::collections::{BTreeMap, HashSet};
 use std::str::FromStr;
@@ -94,8 +94,8 @@ async fn read_contract_state_from_chain(
     let state = get_mpc_contract_state(mpc_contract_id.clone(), &view_client).await?;
     tracing::debug!(target: "indexer", "got mpc contract state {:?}", state);
     let state = match state {
-        ProtocolContractState::NotInitialized => ContractState::Invalid,
-        ProtocolContractState::Initializing(state) => {
+        legacy_mpc_contract::ProtocolContractState::NotInitialized => ContractState::Invalid,
+        legacy_mpc_contract::ProtocolContractState::Initializing(state) => {
             let mut pk_votes = BTreeMap::new();
             for (pk, votes) in state.pk_votes.votes {
                 pk_votes.insert(
@@ -113,18 +113,20 @@ async fn read_contract_state_from_chain(
                 pk_votes,
             })
         }
-        ProtocolContractState::Running(state) => ContractState::Running(ContractRunningState {
-            epoch: state.epoch,
-            participants: convert_participant_infos(
-                state.participants,
-                port_override,
-                state.threshold,
-            )?,
-            root_public_key: String::from(&state.public_key)
-                .parse()
-                .context("parse public key")?,
-        }),
-        ProtocolContractState::Resharing(state) => {
+        legacy_mpc_contract::ProtocolContractState::Running(state) => {
+            ContractState::Running(ContractRunningState {
+                epoch: state.epoch,
+                participants: convert_participant_infos(
+                    state.participants,
+                    port_override,
+                    state.threshold,
+                )?,
+                root_public_key: String::from(&state.public_key)
+                    .parse()
+                    .context("parse public key")?,
+            })
+        }
+        legacy_mpc_contract::ProtocolContractState::Resharing(state) => {
             ContractState::Resharing(ContractResharingState {
                 old_epoch: state.old_epoch,
                 old_participants: convert_participant_infos(
@@ -148,7 +150,7 @@ async fn read_contract_state_from_chain(
 }
 
 fn convert_participant_infos(
-    participants: mpc_contract::primitives::Participants,
+    participants: legacy_mpc_contract::primitives::Participants,
     port_override: Option<u16>,
     threshold: usize,
 ) -> anyhow::Result<ParticipantsConfig> {
@@ -273,15 +275,15 @@ mod tests {
 
     fn create_chain_participant_infos_from_raw(
         raw: Vec<(u32, String, String, [u8; 32], String)>,
-    ) -> mpc_contract::primitives::Participants {
-        let mut participants = mpc_contract::primitives::Participants::new();
+    ) -> legacy_mpc_contract::primitives::Participants {
+        let mut participants = legacy_mpc_contract::primitives::Participants::new();
         for (participant_id, account_id, url, cipher_pk, pk) in raw {
             let account_id = AccountId::from_str(&account_id).unwrap();
             let url = url.to_string();
             let sign_pk = near_sdk::PublicKey::from_str(&pk).unwrap();
             participants.participants.insert(
                 account_id.clone(),
-                mpc_contract::primitives::ParticipantInfo {
+                legacy_mpc_contract::primitives::ParticipantInfo {
                     account_id: account_id.clone(),
                     url,
                     cipher_pk,
@@ -296,11 +298,11 @@ mod tests {
         participants
     }
 
-    fn create_chain_participant_infos() -> mpc_contract::primitives::Participants {
+    fn create_chain_participant_infos() -> legacy_mpc_contract::primitives::Participants {
         create_chain_participant_infos_from_raw(create_participant_data_raw())
     }
 
-    fn create_invalid_chain_participant_infos() -> mpc_contract::primitives::Participants {
+    fn create_invalid_chain_participant_infos() -> legacy_mpc_contract::primitives::Participants {
         create_chain_participant_infos_from_raw(create_invalid_participant_data_raw())
     }
 
