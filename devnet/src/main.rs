@@ -7,10 +7,10 @@ mod constants;
 mod devnet;
 mod funding;
 mod loadtest;
-mod rpc;
-mod types;
 mod mpc;
+mod rpc;
 mod terraform;
+mod types;
 
 #[tokio::main]
 async fn main() {

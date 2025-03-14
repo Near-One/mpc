@@ -37,8 +37,17 @@ jobs:
           RUSTFLAGS="-D warnings" \
           cargo clippy --all-features --all-targets --locked
 
+          cd devnet
+          CARGO_TARGET_DIR="target/clippy" \
+          RUSTFLAGS="-D warnings" \
+          cargo clippy --all-features --all-targets --locked
+
       - name: Run Cargo fmt
-        run: cargo fmt -- --check
+        run: |
+          cargo fmt -- --check
+
+          cd devnet
+          cargo fmt -- --check
           
       - name: Install cargo-nextest
         run: cargo install cargo-nextest
