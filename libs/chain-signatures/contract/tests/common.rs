@@ -76,7 +76,7 @@ pub async fn contruct_valid_key_state_proposal(participants: &Participants) -> K
     let threshold = ((participants.count() as f64) * 0.6).ceil() as u64;
     let threshold = Threshold::new(threshold);
     let threshold_parameters = ThresholdParameters::new(participants.clone(), threshold).unwrap();
-    let key_event_threshold = DKGThreshold::new(threshold_parameters.n_participants());
+    let key_event_threshold = DKGThreshold::new(threshold_parameters.participants().count());
     KeyStateProposal::new(threshold_parameters, key_event_threshold).unwrap()
 }
 pub async fn init_with_candidates(
@@ -107,7 +107,7 @@ pub async fn init_with_candidates(
             .into_result()
             .unwrap()
     } else {
-        let key_event_threshold = DKGThreshold::new(threshold_parameters.n_participants());
+        let key_event_threshold = DKGThreshold::new(threshold_parameters.participants().count());
         let key_state_proposal =
             KeyStateProposal::new(threshold_parameters, key_event_threshold).unwrap();
         contract

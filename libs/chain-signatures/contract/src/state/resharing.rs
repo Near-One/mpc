@@ -278,7 +278,8 @@ mod tests {
             if state
                 .event_state
                 .proposed_threshold_parameters()
-                .n_participants()
+                .participants()
+                .count()
                 - ((i + 1) as u64)
                 < state.event_state.event_threshold().value()
             {

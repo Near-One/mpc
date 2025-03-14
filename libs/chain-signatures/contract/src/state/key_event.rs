@@ -92,7 +92,7 @@ impl KeyEvent {
     ) -> Result<InstanceStatus, Error> {
         let candidate = self.verify_vote(&key_event_id, event_max_idle_blocks)?;
         let n_votes = self.instance.vote_abort(candidate)?;
-        if self.proposed_threshold_parameters().n_participants() - n_votes
+        if self.proposed_threshold_parameters().participants().count() - n_votes
             < self.event_threshold().value()
         {
             // we can't achieve `dkg_threshold` votes anymore, abort this instance and reset
@@ -495,13 +495,20 @@ pub mod tests {
         );
         let mut attempt = AttemptId::new();
         let mut leaders = BTreeSet::new();
-        for _ in 0..proposed.proposed_threshold_parameters().n_participants() {
+        for _ in 0..proposed
+            .proposed_threshold_parameters()
+            .participants()
+            .count()
+        {
             leaders.insert(find_leader(&attempt, &kes));
             attempt = attempt.next();
         }
         assert_eq!(
             leaders.len() as u64,
-            proposed.proposed_threshold_parameters().n_participants()
+            proposed
+                .proposed_threshold_parameters()
+                .participants()
+                .count()
         );
     }
     #[test]
@@ -626,7 +633,11 @@ pub mod tests {
             // abort should count if not timed out:
             let x = kes.vote_abort(key_id.clone(), 1).unwrap();
             if proposed.key_event_threshold().value()
-                > proposed.proposed_threshold_parameters().n_participants() - ((i + 1) as u64)
+                > proposed
+                    .proposed_threshold_parameters()
+                    .participants()
+                    .count()
+                    - ((i + 1) as u64)
             {
                 assert_eq!(x, InstanceStatus::Replaced);
                 break;

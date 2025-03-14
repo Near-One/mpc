@@ -1,6 +1,6 @@
-use super::participants::{ParticipantId, Participants};
+use super::participants::Participants;
 use crate::errors::{Error, InvalidThreshold};
-use near_sdk::{near, AccountId};
+use near_sdk::near;
 
 /// Minimum absolute threshold required.
 const MIN_THRESHOLD_ABSOLUTE: u64 = 2;
@@ -92,31 +92,15 @@ impl ThresholdParameters {
         Ok(())
     }
     pub fn validate(&self) -> Result<(), Error> {
-        Self::validate_threshold(self.n_participants(), self.threshold())?;
+        Self::validate_threshold(self.participants.count(), self.threshold())?;
         self.participants.validate()
     }
     pub fn threshold(&self) -> Threshold {
         self.threshold.clone()
     }
-    /// Returns the number of key share.
-    pub fn n_participants(&self) -> u64 {
-        self.participants.count()
-    }
     /// Returns the map of Participants.
     pub fn participants(&self) -> &Participants {
         &self.participants
-    }
-    /// Returns true if `account_id` holds a key share.
-    pub fn is_participant(&self, account_id: &AccountId) -> bool {
-        self.participants.is_participant(account_id)
-    }
-    /// Returns the AccountId for the participant `id`.
-    pub fn participant_by_idx(&self, id: &ParticipantId) -> Result<AccountId, Error> {
-        self.participants.account_id(id)
-    }
-    /// Returns the index of participant with `AccountId`
-    pub fn participant_idx(&self, account_id: &AccountId) -> Result<ParticipantId, Error> {
-        self.participants.id(account_id)
     }
 }
 
@@ -203,14 +187,17 @@ mod tests {
             let tp = tp.unwrap();
             assert!(tp.validate().is_ok());
             assert_eq!(tp.threshold(), threshold);
-            assert_eq!(tp.n_participants(), participants.count());
+            assert_eq!(tp.participants.count(), participants.count());
             assert_eq!(participants, *tp.participants());
             // porbably overkill to test below
             for account_id in participants.participants().keys() {
-                assert!(tp.is_participant(account_id));
+                assert!(tp.participants.is_participant(account_id));
                 let expected_id = participants.id(account_id).unwrap();
-                assert_eq!(expected_id, tp.participant_idx(account_id).unwrap());
-                assert_eq!(tp.participant_by_idx(&expected_id).unwrap(), *account_id);
+                assert_eq!(expected_id, tp.participants.id(account_id).unwrap());
+                assert_eq!(
+                    tp.participants.account_id(&expected_id).unwrap(),
+                    *account_id
+                );
             }
         }
     }

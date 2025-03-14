@@ -89,7 +89,7 @@ pub struct DKState {
 impl DKState {
     pub fn authenticate(&self) -> Result<AuthenticatedParticipantId, Error> {
         let signer = env::signer_account_id();
-        let id = self.threshold_parameters.participant_idx(&signer)?;
+        let id = self.threshold_parameters.participants().id(&signer)?;
         Ok(AuthenticatedParticipantId(id))
     }
     pub fn public_key(&self) -> &PublicKey {
@@ -102,7 +102,9 @@ impl DKState {
         self.key_event_id.clone()
     }
     pub fn is_participant(&self, account_id: &AccountId) -> bool {
-        self.threshold_parameters.is_participant(account_id)
+        self.threshold_parameters
+            .participants()
+            .is_participant(account_id)
     }
     pub fn threshold(&self) -> Threshold {
         self.threshold_parameters.threshold()
@@ -155,7 +157,7 @@ impl KeyStateProposal {
         key_event_threshold: DKGThreshold,
     ) -> Result<Self, Error> {
         key_event_threshold.validate(
-            proposed_threshold_parameters.n_participants(),
+            proposed_threshold_parameters.participants().count(),
             proposed_threshold_parameters.threshold(),
         )?;
         Ok(KeyStateProposal {
@@ -168,7 +170,7 @@ impl KeyStateProposal {
     }
     pub fn validate(&self) -> Result<(), Error> {
         self.key_event_threshold().validate(
-            self.proposed_threshold_parameters.n_participants(),
+            self.proposed_threshold_parameters.participants().count(),
             self.proposed_threshold_parameters.threshold(),
         )?;
         self.proposed_threshold_parameters.participants().validate()
@@ -297,7 +299,8 @@ pub mod tests {
     pub fn gen_key_state_proposal(max_n: Option<usize>) -> KeyStateProposal {
         let max_n = max_n.unwrap_or(MAX_N);
         let proposed_threshold_parameters = gen_threshold_params(max_n);
-        let key_event_threshold = DKGThreshold::new(proposed_threshold_parameters.n_participants());
+        let key_event_threshold =
+            DKGThreshold::new(proposed_threshold_parameters.participants().count());
         KeyStateProposal::new(
             proposed_threshold_parameters.clone(),
             key_event_threshold.clone(),
@@ -307,7 +310,7 @@ pub mod tests {
     #[test]
     fn test_key_state_proposal() {
         let proposed_threshold_parameters = gen_threshold_params(MAX_N);
-        for i in 0..proposed_threshold_parameters.n_participants() {
+        for i in 0..proposed_threshold_parameters.participants().count() {
             let key_event_threshold = DKGThreshold::new(i);
             assert!(KeyStateProposal::new(
                 proposed_threshold_parameters.clone(),
@@ -316,7 +319,7 @@ pub mod tests {
             .is_err());
         }
         let candidates = proposed_threshold_parameters.participants();
-        let i = proposed_threshold_parameters.n_participants();
+        let i = proposed_threshold_parameters.participants().count();
         let key_event_threshold = DKGThreshold::new(i);
         let ksp = KeyStateProposal::new(proposed_threshold_parameters.clone(), key_event_threshold);
         assert!(ksp.is_ok());
@@ -326,7 +329,7 @@ pub mod tests {
         // test authentication:
         KeyStateProposal::new(
             proposed_threshold_parameters.clone(),
-            DKGThreshold::new(proposed_threshold_parameters.n_participants()),
+            DKGThreshold::new(proposed_threshold_parameters.participants().count()),
         )
         .unwrap();
         for account_id in candidates.participants().keys() {
@@ -352,7 +355,7 @@ pub mod tests {
             assert_eq!(migrated_ksp.key_event_threshold().value(), n as u64);
             let found = migrated_ksp.proposed_threshold_parameters();
             assert_eq!(found.threshold().value(), k as u64);
-            assert_eq!(found.n_participants(), n as u64);
+            assert_eq!(found.participants().count(), n as u64);
             assert_candidate_migration(&legacy_state.candidates, found.participants());
         }
     }
@@ -395,7 +398,7 @@ pub mod tests {
             let found = migrated_ksp.proposed_threshold_parameters();
             assert_eq!(found.threshold().value(), k as u64);
             assert_eq!(migrated_ksp.key_event_threshold().value(), n as u64);
-            assert_eq!(found.n_participants(), n as u64);
+            assert_eq!(found.participants().count(), n as u64);
             assert_participant_migration(&legacy_state.new_participants, found.participants());
         }
     }

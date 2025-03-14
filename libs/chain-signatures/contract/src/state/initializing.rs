@@ -279,7 +279,8 @@ mod tests {
             if state
                 .keygen
                 .proposed_threshold_parameters()
-                .n_participants()
+                .participants()
+                .count()
                 - ((i + 1) as u64)
                 < state.keygen.event_threshold().value()
             {
