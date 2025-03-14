@@ -2,6 +2,7 @@ use super::key_state::AuthenticatedParticipantId;
 use crate::errors::{Error, VoteError};
 use crate::primitives::key_state::KeyStateProposal;
 use near_sdk::near;
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[near(serializers=[borsh, json])]
@@ -37,17 +38,14 @@ impl KeyStateVotes {
         proposal: &KeyStateProposal,
         participant: &AuthenticatedParticipantId,
     ) -> Result<u64, Error> {
-        if self.proposal_by_account.contains_key(participant) {
-            return Err(VoteError::ParticipantVoteAlreadyRegistered.into());
-        }
-        if self
-            .proposal_by_account
-            .insert(participant.clone(), proposal.clone())
-            .is_some()
-        {
-            // this should not really happen
-            return Err(VoteError::ParticipantVoteAlreadyRegistered.into());
-        }
+        match self.proposal_by_account.entry(participant.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(proposal.clone());
+            }
+            Entry::Occupied(_) => {
+                return Err(VoteError::ParticipantVoteAlreadyRegistered.into());
+            }
+        };
         Ok(self
             .votes_by_proposal
             .entry(proposal.clone())
