@@ -1755,7 +1755,7 @@ dependencies = [
 [[package]]
 name = "crypto-shared"
 version = "0.1.1"
-source = "git+https://github.com/near-one/mpc?branch=kd%2Fcontract-coordinated-key-resharing#b5ef1a8675c181170a532e1236abbb676ba05733"
+source = "git+https://github.com/near-one/mpc?rev=1d4954dff28e8eb988fb7762eff414a602a2b124#1d4954dff28e8eb988fb7762eff414a602a2b124"
 dependencies = [
  "anyhow",
  "borsh",
@@ -3832,7 +3832,7 @@ dependencies = [
 [[package]]
 name = "mpc-contract"
 version = "1.0.1"
-source = "git+https://github.com/Near-One/mpc?rev=72ffae1be79f60511b80f43bb2c89cfc78569a51#72ffae1be79f60511b80f43bb2c89cfc78569a51"
+source = "git+https://github.com/Near-One/mpc?rev=bd1737264a86a7419bb6ffc6023fb5d668223d83#bd1737264a86a7419bb6ffc6023fb5d668223d83"
 dependencies = [
  "borsh",
  "crypto-shared 0.1.1",
