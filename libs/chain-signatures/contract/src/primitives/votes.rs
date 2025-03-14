@@ -3,32 +3,24 @@ use crate::errors::{Error, VoteError};
 use crate::primitives::key_state::KeyStateProposal;
 use near_sdk::near;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Default, PartialEq)]
 pub struct KeyStateVotes {
-    votes_by_proposal: BTreeMap<KeyStateProposal, BTreeSet<AuthenticatedParticipantId>>,
     proposal_by_account: BTreeMap<AuthenticatedParticipantId, KeyStateProposal>,
 }
 
 impl KeyStateVotes {
     pub fn new() -> Self {
         KeyStateVotes {
-            votes_by_proposal: BTreeMap::new(),
             proposal_by_account: BTreeMap::new(),
         }
     }
     /// Removes the vote submitted by `account_id` from the state.
     /// Returns true if the vote was removed and false else.
     pub fn remove_vote(&mut self, participant: &AuthenticatedParticipantId) -> bool {
-        if let Some(proposal) = self.proposal_by_account.remove(participant) {
-            return self
-                .votes_by_proposal
-                .get_mut(&proposal)
-                .is_some_and(|vote_set| vote_set.remove(participant));
-        }
-        false
+        self.proposal_by_account.remove(participant).is_some()
     }
     /// Registers a vote by `participant` for `proposal` (inserts `proposal` if necessary).
     /// Returns an Error if `participant` already registered a vote.
@@ -47,17 +39,10 @@ impl KeyStateVotes {
             }
         };
         Ok(self
-            .votes_by_proposal
-            .entry(proposal.clone())
-            .and_modify(|votes| {
-                votes.insert(participant.clone());
-            })
-            .or_insert({
-                let mut x = BTreeSet::new();
-                x.insert(participant.clone());
-                x
-            })
-            .len() as u64)
+            .proposal_by_account
+            .values()
+            .filter(|&prop| prop == proposal)
+            .count() as u64)
     }
 }
 

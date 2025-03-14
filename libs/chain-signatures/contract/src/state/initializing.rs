@@ -6,12 +6,12 @@ use crate::primitives::participants::AuthenticatedCandidateId;
 use crate::primitives::votes::KeyStateVotes;
 use near_sdk::BlockHeight;
 use near_sdk::{near, PublicKey};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 #[near(serializers=[borsh, json])]
 #[derive(Debug)]
 pub struct PkVotes {
-    pub votes: BTreeMap<PublicKey, BTreeSet<AuthenticatedCandidateId>>,
+    pub votes: BTreeMap<AuthenticatedCandidateId, PublicKey>,
 }
 
 impl Default for PkVotes {
@@ -26,12 +26,8 @@ impl PkVotes {
             votes: BTreeMap::new(),
         }
     }
-    pub fn n_votes(&self, public_key: &PublicKey) -> usize {
-        self.votes.get(public_key).map_or(0, |votes| votes.len())
-    }
-
-    pub fn entry(&mut self, public_key: PublicKey) -> &mut BTreeSet<AuthenticatedCandidateId> {
-        self.votes.entry(public_key).or_default()
+    pub fn n_votes(&self, public_key: &PublicKey) -> u64 {
+        self.votes.values().filter(|&pk| pk == public_key).count() as u64
     }
 }
 
@@ -60,15 +56,13 @@ impl InitializingContractState {
         event_max_idle_blocks: u64,
     ) -> Result<Option<RunningContractState>, Error> {
         let callback = Some(|candidate_id: AuthenticatedCandidateId| {
-            self.pk_votes.entry(public_key.clone()).insert(candidate_id);
+            self.pk_votes.votes.insert(candidate_id, public_key.clone());
         });
         let reached = self
             .keygen
             .vote_success(&key_event_id, event_max_idle_blocks, callback)?
             == Tally::ThresholdReached;
-        if reached
-            && ((self.pk_votes.entry(public_key.clone()).len() as u64)
-                >= self.keygen.event_threshold().value())
+        if reached && (self.pk_votes.n_votes(&public_key) >= self.keygen.event_threshold().value())
         {
             return Ok(Some(RunningContractState {
                 key_state: DKState::new(
