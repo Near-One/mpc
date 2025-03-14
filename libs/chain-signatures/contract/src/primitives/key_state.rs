@@ -214,7 +214,7 @@ impl From<&legacy_contract::ResharingContractState> for KeyStateProposal {
                 Threshold::new(state.threshold as u64),
                 state.new_participants.clone(),
             )),
-            key_event_threshold: DKGThreshold::new(state.threshold as u64),
+            key_event_threshold: DKGThreshold::new(state.new_participants.len() as u64),
         }
     }
 }
@@ -225,7 +225,7 @@ impl From<&legacy_contract::InitializingContractState> for KeyStateProposal {
                 Threshold::new(state.threshold as u64),
                 state.candidates.clone(),
             )),
-            key_event_threshold: DKGThreshold::new(state.threshold as u64),
+            key_event_threshold: DKGThreshold::new(state.candidates.candidates.len() as u64),
         }
     }
 }
@@ -356,7 +356,7 @@ pub mod tests {
         for k in [k_invalid, k_valid] {
             let legacy_state = gen_legacy_initializing_state(n, k);
             let migrated_ksp: KeyStateProposal = (&legacy_state).into();
-            assert_eq!(migrated_ksp.key_event_threshold().value(), k as u64);
+            assert_eq!(migrated_ksp.key_event_threshold().value(), n as u64);
             assert_eq!(migrated_ksp.proposed_threshold().value(), k as u64);
             assert_eq!(migrated_ksp.n_proposed_participants(), n as u64);
             assert_candidate_migration(&legacy_state.candidates, migrated_ksp.candidates());
@@ -399,7 +399,7 @@ pub mod tests {
             );
             let migrated_ksp: KeyStateProposal = (&legacy_state).into();
             assert_eq!(migrated_ksp.proposed_threshold().value(), k as u64);
-            assert_eq!(migrated_ksp.key_event_threshold().value(), k as u64);
+            assert_eq!(migrated_ksp.key_event_threshold().value(), n as u64);
             assert_eq!(migrated_ksp.n_proposed_participants(), n as u64);
             assert_participant_migration(&legacy_state.new_participants, migrated_ksp.candidates());
         }

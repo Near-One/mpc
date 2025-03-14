@@ -125,7 +125,7 @@ mod tests {
             state.current_state.key_state.threshold().value(),
             legacy_state.threshold as u64
         );
-        assert_eq!(state.event_state.event_threshold().value(), k as u64);
+        assert_eq!(state.event_state.event_threshold().value(), n as u64);
         assert_eq!(
             state.event_state.current_key_event_id().epoch_id().get(),
             legacy_state.old_epoch + 1

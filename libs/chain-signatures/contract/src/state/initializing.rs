@@ -128,7 +128,7 @@ mod tests {
                 .value(),
             k as u64
         );
-        assert_eq!(state.keygen.event_threshold().value(), k as u64);
+        assert_eq!(state.keygen.event_threshold().value(), n as u64);
         assert_eq!(state.keygen.current_key_event_id().epoch_id().get(), 0u64);
         assert_eq!(state.keygen.current_key_event_id().attempt().get(), 0u64);
     }
