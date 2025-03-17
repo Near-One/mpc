@@ -3,15 +3,157 @@ use crate::background::InFlightGenerationTracker;
 use crate::config::TripleConfig;
 use crate::metrics;
 use crate::network::computation::MpcLeaderCentricComputation;
-use crate::network::MeshNetworkClient;
-use crate::network::NetworkTaskChannel;
-use crate::primitives::{choose_random_participants, EcdsaTaskId, PairedTriple};
+use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+use crate::primitives::{choose_random_participants, participants_from_triples, ParticipantId};
 use crate::protocol::run_protocol;
+use crate::providers::ecdsa::{EcdsaSignatureProvider, EcdsaTaskId};
+use crate::providers::HasParticipants;
 use crate::tracking::AutoAbortTaskCollection;
 use cait_sith::protocol::Participant;
+use cait_sith::triples::TripleGenerationOutput;
 use k256::Secp256k1;
 use std::sync::Arc;
 use std::time::Duration;
+
+pub type TripleStorage = DistributedAssetStorage<PairedTriple>;
+
+pub const SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE: usize = 64;
+
+impl EcdsaSignatureProvider {
+    /// Continuously runs triple generation in the background, using the number of threads
+    /// specified in the config, trying to maintain some number of available triples all the
+    /// time as specified in the config. Generated triples will be written to `triple_store`
+    /// as owned triples.
+    ///
+    /// This function will not take care of the passive side of triple generation (i.e. other
+    /// participants of the computations this function initiates), so that needs to be
+    /// separately handled.
+    pub(super) async fn run_background_triple_generation(
+        client: Arc<MeshNetworkClient>,
+        threshold: usize,
+        config: Arc<TripleConfig>,
+        triple_store: Arc<TripleStorage>,
+    ) -> anyhow::Result<()> {
+        let in_flight_generations = InFlightGenerationTracker::new();
+        let parallelism_limiter = Arc::new(tokio::sync::Semaphore::new(config.concurrency));
+        let mut tasks = AutoAbortTaskCollection::new();
+        loop {
+            metrics::MPC_OWNED_NUM_TRIPLES_ONLINE.set(triple_store.num_owned_ready() as i64);
+            metrics::MPC_OWNED_NUM_TRIPLES_WITH_OFFLINE_PARTICIPANT
+                .set(triple_store.num_owned_offline() as i64);
+            let my_triples_count = triple_store.num_owned();
+            metrics::MPC_OWNED_NUM_TRIPLES_AVAILABLE.set(my_triples_count as i64);
+            let should_generate = my_triples_count + in_flight_generations.num_in_flight()
+                < config.desired_triples_to_buffer;
+
+            if should_generate
+                // There's no point to issue way too many in-flight computations, as they
+                // will just be limited by the concurrency anyway.
+                && in_flight_generations.num_in_flight()
+                < config.concurrency * 2 * SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE
+            {
+                let current_active_participants_ids = client.all_alive_participant_ids();
+                if current_active_participants_ids.len() < threshold {
+                    // that should not happen often, so sleeping here is okay
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                let id_start = triple_store
+                    .generate_and_reserve_id_range(SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE as u32);
+                let task_id = EcdsaTaskId::ManyTriples {
+                    start: id_start,
+                    count: SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE as u32,
+                };
+                let participants = choose_random_participants(
+                    current_active_participants_ids,
+                    client.my_participant_id(),
+                    threshold,
+                );
+                let channel = client.new_channel_for_task(task_id, participants)?;
+                let in_flight =
+                    in_flight_generations.in_flight(SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE);
+                let parallelism_limiter = parallelism_limiter.clone();
+                let triple_store = triple_store.clone();
+                let config_clone = config.clone();
+                tasks.spawn_checked(&format!("{:?}", task_id), async move {
+                    let _in_flight = in_flight;
+                    let _semaphore_guard = parallelism_limiter.acquire().await?;
+                    let triples = (ManyTripleGenerationComputation::<
+                        SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
+                    > {
+                        threshold,
+                    })
+                    .perform_leader_centric_computation(
+                        channel,
+                        Duration::from_secs(config_clone.timeout_sec),
+                    )
+                    .await?;
+
+                    for (i, paired_triple) in triples.into_iter().enumerate() {
+                        triple_store.add_owned(id_start.add_to_counter(i as u32)?, paired_triple);
+                    }
+
+                    anyhow::Ok(())
+                });
+                // Before issuing another one, wait a bit. This can dramatically
+                // improve throughput by avoiding thundering herd situations.
+                // Further optimization can be done to avoid thundering herd
+                // situations in the first place.
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    config.parallel_triple_generation_stagger_time_sec,
+                ))
+                .await;
+                continue;
+            }
+
+            // If the store is full, try to discard some triples which cannot be used right now
+            if my_triples_count == config.desired_triples_to_buffer {
+                triple_store.maybe_discard_owned(32).await;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    pub(super) async fn run_triple_generation_follower(
+        self: Arc<Self>,
+        channel: NetworkTaskChannel,
+        start: UniqueId,
+        count: u32,
+    ) -> anyhow::Result<()> {
+        if count as usize != SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE {
+            return Err(anyhow::anyhow!(
+                "Unsupported batch size for triple generation"
+            ));
+        }
+        FollowerManyTripleGenerationComputation::<SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE> {
+            threshold: self.mpc_config.participants.threshold as usize,
+            out_triple_id_start: start,
+            out_triple_store: self.triple_store.clone(),
+        }
+        .perform_leader_centric_computation(
+            channel,
+            Duration::from_secs(self.config.triple.timeout_sec),
+        )
+        .await?;
+
+        Ok(())
+    }
+}
+
+pub type PairedTriple = (
+    TripleGenerationOutput<Secp256k1>,
+    TripleGenerationOutput<Secp256k1>,
+);
+
+impl HasParticipants for PairedTriple {
+    fn is_subset_of_active_participants(&self, active_participants: &[ParticipantId]) -> bool {
+        let triple_participants = participants_from_triples(&self.0, &self.1);
+        triple_participants
+            .iter()
+            .all(|p| active_participants.contains(p))
+    }
+}
 
 /// Generates many cait-sith triples at once. This can significantly save the
 /// *number* of network messages.
@@ -93,103 +235,6 @@ impl<const N: usize> MpcLeaderCentricComputation<()>
     }
 }
 
-pub type TripleStorage = DistributedAssetStorage<PairedTriple>;
-
-pub const SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE: usize = 64;
-
-/// Continuously runs triple generation in the background, using the number of threads
-/// specified in the config, trying to maintain some number of available triples all the
-/// time as specified in the config. Generated triples will be written to `triple_store`
-/// as owned triples.
-///
-/// This function will not take care of the passive side of triple generation (i.e. other
-/// participants of the computations this function initiates), so that needs to be
-/// separately handled.
-pub async fn run_background_triple_generation(
-    client: Arc<MeshNetworkClient>,
-    threshold: usize,
-    config: Arc<TripleConfig>,
-    triple_store: Arc<TripleStorage>,
-) -> anyhow::Result<()> {
-    let in_flight_generations = InFlightGenerationTracker::new();
-    let parallelism_limiter = Arc::new(tokio::sync::Semaphore::new(config.concurrency));
-    let mut tasks = AutoAbortTaskCollection::new();
-    loop {
-        metrics::MPC_OWNED_NUM_TRIPLES_ONLINE.set(triple_store.num_owned_ready() as i64);
-        metrics::MPC_OWNED_NUM_TRIPLES_WITH_OFFLINE_PARTICIPANT
-            .set(triple_store.num_owned_offline() as i64);
-        let my_triples_count = triple_store.num_owned();
-        metrics::MPC_OWNED_NUM_TRIPLES_AVAILABLE.set(my_triples_count as i64);
-        let should_generate = my_triples_count + in_flight_generations.num_in_flight()
-            < config.desired_triples_to_buffer;
-
-        if should_generate
-            // There's no point to issue way too many in-flight computations, as they
-            // will just be limited by the concurrency anyway.
-            && in_flight_generations.num_in_flight()
-                < config.concurrency * 2 * SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE
-        {
-            let current_active_participants_ids = client.all_alive_participant_ids();
-            if current_active_participants_ids.len() < threshold {
-                // that should not happen often, so sleeping here is okay
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            }
-            let id_start = triple_store
-                .generate_and_reserve_id_range(SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE as u32);
-            let task_id = EcdsaTaskId::ManyTriples {
-                start: id_start,
-                count: SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE as u32,
-            };
-            let participants = choose_random_participants(
-                current_active_participants_ids,
-                client.my_participant_id(),
-                threshold,
-            );
-            let channel = client.new_channel_for_task(task_id, participants)?;
-            let in_flight = in_flight_generations.in_flight(SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE);
-            let parallelism_limiter = parallelism_limiter.clone();
-            let triple_store = triple_store.clone();
-            let config_clone = config.clone();
-            tasks.spawn_checked(&format!("{:?}", task_id), async move {
-                let _in_flight = in_flight;
-                let _semaphore_guard = parallelism_limiter.acquire().await?;
-                let triples =
-                    (ManyTripleGenerationComputation::<SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE> {
-                        threshold,
-                    })
-                    .perform_leader_centric_computation(
-                        channel,
-                        Duration::from_secs(config_clone.timeout_sec),
-                    )
-                    .await?;
-
-                for (i, paired_triple) in triples.into_iter().enumerate() {
-                    triple_store.add_owned(id_start.add_to_counter(i as u32)?, paired_triple);
-                }
-
-                anyhow::Ok(())
-            });
-            // Before issuing another one, wait a bit. This can dramatically
-            // improve throughput by avoiding thundering herd situations.
-            // Further optimization can be done to avoid thundering herd
-            // situations in the first place.
-            tokio::time::sleep(std::time::Duration::from_secs(
-                config.parallel_triple_generation_stagger_time_sec,
-            ))
-            .await;
-            continue;
-        }
-
-        // If the store is full, try to discard some triples which cannot be used right now
-        if my_triples_count == config.desired_triples_to_buffer {
-            triple_store.maybe_discard_owned(32).await;
-        }
-
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-}
-
 #[cfg(test)]
 mod tests_many {
     use super::{ManyTripleGenerationComputation, PairedTriple};
@@ -197,7 +242,8 @@ mod tests_many {
     use crate::network::computation::MpcLeaderCentricComputation;
     use crate::network::testing::run_test_clients;
     use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-    use crate::primitives::{EcdsaTaskId, MpcTaskId};
+    use crate::primitives::MpcTaskId;
+    use crate::providers::ecdsa::EcdsaTaskId;
     use crate::tests::TestGenerators;
     use crate::tracing::init_logging;
     use crate::tracking;

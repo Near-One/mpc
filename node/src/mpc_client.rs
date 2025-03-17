@@ -1,26 +1,15 @@
-use crate::config::{ConfigFile, MpcConfig};
+use crate::config::ConfigFile;
 use crate::hkdf::derive_tweak;
 use crate::indexer::handler::{ChainBlockUpdate, SignatureRequestFromChain};
 use crate::indexer::types::{ChainRespondArgs, ChainSendTransactionRequest};
-use crate::keyshare::RootKeyshareData;
 use crate::metrics;
-use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-use crate::primitives::{EcdsaTaskId, MpcTaskId};
-use crate::sign::{
-    run_background_presignature_generation, FollowerPresignComputation, FollowerSignComputation,
-    PresignatureStorage, SignComputation,
-};
-use crate::sign_request::{SignRequestStorage, SignatureId, SignatureRequest};
+use crate::primitives::MpcTaskId;
+use crate::providers::{EcdsaSignatureProvider, SignatureProvider};
+use crate::sign_request::{SignRequestStorage, SignatureRequest};
 use crate::signing::queue::{PendingSignatureRequests, CHECK_EACH_SIGNATURE_REQUEST_INTERVAL};
 use crate::tracking::{self, AutoAbortTaskCollection};
-use crate::triple::{
-    run_background_triple_generation, FollowerManyTripleGenerationComputation, TripleStorage,
-    SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
-};
 use crate::web::{SignatureDebugRequest, SignatureDebugRequestKind};
-use cait_sith::FullSignature;
-use k256::{AffinePoint, Secp256k1};
 use near_time::Clock;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,32 +26,23 @@ const INITIAL_STARTUP_SIGNATURE_PROCESSING_DELAY: Duration = Duration::from_secs
 #[derive(Clone)]
 pub struct MpcClient {
     config: Arc<ConfigFile>,
-    mpc_config: Arc<MpcConfig>,
     client: Arc<MeshNetworkClient>,
-    triple_store: Arc<TripleStorage>,
-    presignature_store: Arc<PresignatureStorage>,
     sign_request_store: Arc<SignRequestStorage>,
-    root_keyshare: RootKeyshareData,
+    ecdsa_signature_provider: Arc<EcdsaSignatureProvider>,
 }
 
 impl MpcClient {
     pub fn new(
         config: Arc<ConfigFile>,
-        mpc_config: Arc<MpcConfig>,
         client: Arc<MeshNetworkClient>,
-        triple_store: Arc<TripleStorage>,
-        presignature_store: Arc<PresignatureStorage>,
         sign_request_store: Arc<SignRequestStorage>,
-        root_keyshare: RootKeyshareData,
+        ecdsa_secp256k1signature_provider: Arc<EcdsaSignatureProvider>,
     ) -> Self {
         Self {
             config,
-            mpc_config,
             client,
-            triple_store,
-            presignature_store,
             sign_request_store,
-            root_keyshare,
+            ecdsa_signature_provider: ecdsa_secp256k1signature_provider,
         }
     }
 
@@ -103,33 +83,17 @@ impl MpcClient {
             )
         };
 
-        let generate_triples = tracking::spawn(
-            "generate triples",
-            run_background_triple_generation(
-                self.client.clone(),
-                self.mpc_config.participants.threshold as usize,
-                self.config.triple.clone().into(),
-                self.triple_store.clone(),
-            ),
-        );
-
-        let generate_presignatures = tracking::spawn(
-            "generate presignatures",
-            run_background_presignature_generation(
-                self.client.clone(),
-                self.mpc_config.participants.threshold as usize,
-                self.config.presignature.clone().into(),
-                self.triple_store.clone(),
-                self.presignature_store.clone(),
-                self.root_keyshare.keygen_output(),
-            ),
+        let ecdsa_background_tasks = tracking::spawn(
+            "ecdsa_background_tasks",
+            self.ecdsa_signature_provider
+                .clone()
+                .spawn_background_tasks(),
         );
 
         let _ = monitor_passive_channels.await?;
         metrics_emitter.await?;
         monitor_chain.await?;
-        generate_triples.await??;
-        generate_presignatures.await??;
+        let _ = ecdsa_background_tasks.await?;
 
         Ok(())
     }
@@ -242,7 +206,9 @@ impl MpcClient {
 
                                 let (signature, public_key) = timeout(
                                     Duration::from_secs(this.config.signature.timeout_sec),
-                                    this.clone().make_signature(signature_attempt.request.id),
+                                    this.ecdsa_signature_provider
+                                        .clone()
+                                        .make_signature(signature_attempt.request.id),
                                 )
                                 .await??;
 
@@ -300,114 +266,14 @@ impl MpcClient {
         channel: NetworkTaskChannel,
     ) -> anyhow::Result<()> {
         match channel.task_id() {
-            MpcTaskId::EcdsaTaskId(task) => match task {
-                EcdsaTaskId::KeyGeneration => {
-                    anyhow::bail!("Key generation rejected in normal node operation");
-                }
-                EcdsaTaskId::KeyResharing { .. } => {
-                    anyhow::bail!("Key resharing rejected in normal node operation");
-                }
-                EcdsaTaskId::ManyTriples { start, count } => {
-                    if count as usize != SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE {
-                        return Err(anyhow::anyhow!(
-                            "Unsupported batch size for triple generation"
-                        ));
-                    }
-                    FollowerManyTripleGenerationComputation::<
-                        SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
-                    > {
-                        threshold: self.mpc_config.participants.threshold as usize,
-                        out_triple_id_start: start,
-                        out_triple_store: self.triple_store.clone(),
-                    }
-                    .perform_leader_centric_computation(
-                        channel,
-                        Duration::from_secs(self.config.triple.timeout_sec),
-                    )
-                    .await?;
-                }
-                EcdsaTaskId::Presignature {
-                    id,
-                    paired_triple_id,
-                } => {
-                    FollowerPresignComputation {
-                        threshold: self.mpc_config.participants.threshold as usize,
-                        keygen_out: self.root_keyshare.keygen_output(),
-                        triple_store: self.triple_store.clone(),
-                        paired_triple_id,
-                        out_presignature_store: self.presignature_store.clone(),
-                        out_presignature_id: id,
-                    }
-                    .perform_leader_centric_computation(
-                        channel,
-                        Duration::from_secs(self.config.presignature.timeout_sec),
-                    )
-                    .await?;
-                }
-                EcdsaTaskId::Signature {
-                    id,
-                    presignature_id,
-                } => {
-                    metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_RECEIVED.inc();
-                    let SignatureRequest {
-                        msg_hash,
-                        tweak,
-                        entropy,
-                        ..
-                    } = timeout(
-                        Duration::from_secs(self.config.signature.timeout_sec),
-                        self.sign_request_store.get(id),
-                    )
-                    .await??;
-                    metrics::MPC_NUM_PASSIVE_SIGN_REQUESTS_LOOKUP_SUCCEEDED.inc();
-
-                    FollowerSignComputation {
-                        keygen_out: self.root_keyshare.keygen_output(),
-                        presignature_store: self.presignature_store.clone(),
-                        presignature_id,
-                        msg_hash,
-                        tweak,
-                        entropy,
-                    }
-                    .perform_leader_centric_computation(
-                        channel,
-                        Duration::from_secs(self.config.signature.timeout_sec),
-                    )
-                    .await?;
-                }
-            },
+            MpcTaskId::EcdsaTaskId(_) => {
+                self.ecdsa_signature_provider
+                    .clone()
+                    .process_channel(channel)
+                    .await?
+            }
         }
 
         Ok(())
-    }
-
-    pub async fn make_signature(
-        self: Arc<Self>,
-        id: SignatureId,
-    ) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
-        let (presignature_id, presignature) = self.presignature_store.take_owned().await;
-        let sign_request = self.sign_request_store.get(id).await?;
-        let channel = self.client.new_channel_for_task(
-            EcdsaTaskId::Signature {
-                id,
-                presignature_id,
-            },
-            presignature.participants,
-        )?;
-        let keygen_output = self.root_keyshare.keygen_output();
-        let (signature, public_key) = SignComputation {
-            keygen_out: keygen_output,
-            presign_out: presignature.presignature,
-            msg_hash: sign_request.msg_hash,
-            tweak: sign_request.tweak,
-            entropy: sign_request.entropy,
-        }
-        .perform_leader_centric_computation(
-            channel,
-            Duration::from_secs(self.config.signature.timeout_sec),
-        )
-        .await?;
-
-        Ok((signature, public_key))
     }
 }

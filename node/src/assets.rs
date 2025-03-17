@@ -595,7 +595,8 @@ where
 mod tests {
     use super::{ColdQueue, DoubleQueue, UniqueId};
     use crate::async_testing::{run_future_once, MaybeReady};
-    use crate::primitives::{HasParticipants, ParticipantId};
+    use crate::primitives::ParticipantId;
+    use crate::providers::HasParticipants;
     use borsh::BorshDeserialize;
     use futures::FutureExt;
     use near_time::FakeClock;

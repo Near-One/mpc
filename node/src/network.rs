@@ -129,6 +129,29 @@ impl MeshNetworkClient {
         Ok(channel)
     }
 
+    /// That is expected that the caller is a follower of this MPC task.
+    /// Used in cases when the task sequence is strictly defined, e.g. when doing key generation
+    pub async fn wait_for_task(
+        channel_receiver: &mut mpsc::UnboundedReceiver<NetworkTaskChannel>,
+        expected_task_id: impl Into<MpcTaskId>,
+    ) -> NetworkTaskChannel {
+        let task_id = expected_task_id.into();
+        loop {
+            let channel = channel_receiver.recv().await.unwrap();
+
+            if channel.task_id() != task_id {
+                tracing::info!(
+                    "Received unexpected task ID: expected {:?}, actual {:?}; ignoring.",
+                    task_id,
+                    channel.task_id()
+                );
+                continue;
+            }
+
+            break channel;
+        }
+    }
+
     pub fn my_participant_id(&self) -> ParticipantId {
         self.transport_sender.my_participant_id()
     }
@@ -827,7 +850,8 @@ mod tests {
     use super::{MeshNetworkClient, NetworkTaskChannel};
     use crate::assets::UniqueId;
     use crate::network::testing::run_test_clients;
-    use crate::primitives::{EcdsaTaskId, MpcTaskId};
+    use crate::primitives::MpcTaskId;
+    use crate::providers::EcdsaTaskId;
     use crate::tests::TestGenerators;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use crate::tracking::{self, AutoAbortTaskCollection};
@@ -987,7 +1011,8 @@ mod fault_handling_tests {
     use super::{MeshNetworkClient, NetworkTaskChannel};
     use crate::assets::UniqueId;
     use crate::network::testing::run_test_clients;
-    use crate::primitives::{EcdsaTaskId, ParticipantId};
+    use crate::primitives::ParticipantId;
+    use crate::providers::EcdsaTaskId;
     use crate::tests::TestGenerators;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use near_o11y::testonly::init_integration_logger;

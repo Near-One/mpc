@@ -1,16 +1,41 @@
 use crate::config::MpcConfig;
-use crate::keyshare::{KeyshareStorage, RootKeyshareData};
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-use crate::primitives::{EcdsaTaskId, MpcTaskId};
 use crate::protocol::run_protocol;
-use anyhow::Context;
+use crate::providers::ecdsa::{EcdsaSignatureProvider, EcdsaTaskId};
 use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
-use k256::{AffinePoint, Secp256k1};
+use k256::Secp256k1;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+
+impl EcdsaSignatureProvider {
+    pub(super) async fn run_key_generation_client_internal(
+        mpc_config: MpcConfig,
+        network_client: Arc<MeshNetworkClient>,
+        channel_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<NetworkTaskChannel>,
+    ) -> anyhow::Result<KeygenOutput<Secp256k1>> {
+        let channel = if mpc_config.is_leader_for_keygen() {
+            network_client.new_channel_for_task(
+                EcdsaTaskId::KeyGeneration,
+                network_client.all_participant_ids(),
+            )?
+        } else {
+            MeshNetworkClient::wait_for_task(channel_receiver, EcdsaTaskId::KeyGeneration).await
+        };
+
+        let threshold = mpc_config.participants.threshold as usize;
+        let key = KeyGenerationComputation { threshold }
+            .perform_leader_centric_computation(
+                channel,
+                // TODO(#195): Move timeout here instead of in Coordinator.
+                std::time::Duration::from_secs(60),
+            )
+            .await?;
+        tracing::info!("Ecdsa secp256k1 key generation completed");
+
+        Ok(key)
+    }
+}
 
 /// Runs the key generation protocol, returning the key generated.
 /// This protocol is identical for the leader and the followers.
@@ -40,66 +65,13 @@ impl MpcLeaderCentricComputation<KeygenOutput<Secp256k1>> for KeyGenerationCompu
     }
 }
 
-/// Performs the key generation protocol, saving the keyshare to disk.
-/// Returns when the key generation is complete or runs into an error.
-/// This is expected to only succeed if all participants are online
-/// and running this function.
-pub async fn run_key_generation_client(
-    config: Arc<MpcConfig>,
-    client: Arc<MeshNetworkClient>,
-    keyshare_storage: Box<dyn KeyshareStorage>,
-    mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
-) -> anyhow::Result<()> {
-    if keyshare_storage.load().await?.is_some() {
-        anyhow::bail!("Keyshare already exists, refusing to run key generation");
-    }
-
-    let channel = if config.is_leader_for_keygen() {
-        client.new_channel_for_task(EcdsaTaskId::KeyGeneration, client.all_participant_ids())?
-    } else {
-        loop {
-            let channel = channel_receiver.recv().await.unwrap();
-            if channel.task_id() != MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyGeneration) {
-                tracing::info!(
-                    "Received task ID is not key generation: {:?}; ignoring.",
-                    channel.task_id()
-                );
-                continue;
-            }
-            break channel;
-        }
-    };
-    let key = KeyGenerationComputation {
-        threshold: config.participants.threshold as usize,
-    }
-    .perform_leader_centric_computation(
-        channel,
-        // TODO(#195): Move timeout here instead of in Coordinator.
-        std::time::Duration::from_secs(60),
-    )
-    .await?;
-    keyshare_storage
-        .store(&RootKeyshareData::new(0, key.clone()))
-        .await?;
-    tracing::info!("Key generation completed");
-
-    Ok(())
-}
-
-pub fn affine_point_to_public_key(point: AffinePoint) -> anyhow::Result<near_crypto::PublicKey> {
-    Ok(near_crypto::PublicKey::SECP256K1(
-        near_crypto::Secp256K1PublicKey::try_from(&point.to_encoded_point(false).as_bytes()[1..65])
-            .context("Failed to convert affine point to public key")?,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::key_generation::KeyGenerationComputation;
     use crate::network::computation::MpcLeaderCentricComputation;
     use crate::network::testing::run_test_clients;
     use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-    use crate::primitives::EcdsaTaskId;
+    use crate::providers::ecdsa::key_generation::KeyGenerationComputation;
+    use crate::providers::ecdsa::EcdsaTaskId;
     use crate::tests::TestGenerators;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use cait_sith::KeygenOutput;

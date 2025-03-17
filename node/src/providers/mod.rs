@@ -5,6 +5,11 @@
 //! you don’t need to add anything more internally for it to work.
 //!
 //! As a reference, check the existing implementations.
+
+mod ecdsa;
+pub use ecdsa::EcdsaSignatureProvider;
+pub use ecdsa::EcdsaTaskId;
+
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::sign_request::SignatureId;
 use k256::Scalar;
@@ -13,7 +18,7 @@ use tokio::sync::mpsc;
 
 use crate::config::MpcConfig;
 use crate::indexer::participants::ContractResharingState;
-use crate::primitives::MpcTaskId;
+use crate::primitives::{MpcTaskId, ParticipantId};
 
 /// This `keyshare_id` is used for persisting a key share.
 /// The returned value should be unique across all `SignatureProviders`.
@@ -72,4 +77,10 @@ pub trait SignatureProvider {
 
     /// Spawns any auxiliary logic that performs pre-computation (typically meant to optimize signature delay).
     async fn spawn_background_tasks(self: Arc<Self>) -> anyhow::Result<()>;
+}
+
+/// A resource might be generated with a set of some participants `A`.
+/// This trait helps check whether the current set of participants contains `A`.
+pub trait HasParticipants {
+    fn is_subset_of_active_participants(&self, active_participants: &[ParticipantId]) -> bool;
 }

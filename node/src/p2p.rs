@@ -715,7 +715,8 @@ mod tests {
     use crate::p2p::testing::{
         generate_keypair, generate_test_p2p_configs, keypair_to_raw_ed25519_secret_key, PortSeed,
     };
-    use crate::primitives::{EcdsaTaskId, MpcMessage, MpcTaskId, ParticipantId, PeerMessage};
+    use crate::primitives::{MpcMessage, MpcTaskId, ParticipantId, PeerMessage};
+    use crate::providers::EcdsaTaskId;
     use crate::tracing::init_logging;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use std::time::Duration;

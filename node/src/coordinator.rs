@@ -1,5 +1,6 @@
 use crate::config::{ConfigFile, MpcConfig, SecretsConfig};
 use crate::db::{DBCol, SecretDB};
+use crate::hkdf::affine_point_to_public_key;
 use crate::indexer::handler::ChainBlockUpdate;
 use crate::indexer::participants::{
     ContractInitializingState, ContractResharingState, ContractRunningState, ContractState,
@@ -7,19 +8,15 @@ use crate::indexer::participants::{
 };
 use crate::indexer::types::{ChainSendTransactionRequest, ChainVotePkArgs, ChainVoteResharedArgs};
 use crate::indexer::IndexerAPI;
-use crate::key_generation::{affine_point_to_public_key, run_key_generation_client};
-use crate::key_resharing::run_key_resharing_client;
-use crate::keyshare::{KeyshareStorage, KeyshareStorageFactory};
+use crate::keyshare::{KeyshareStorage, KeyshareStorageFactory, RootKeyshareData};
 use crate::metrics;
 use crate::mpc_client::MpcClient;
 use crate::network::{run_network_client, MeshNetworkTransportSender};
 use crate::p2p::new_tls_mesh_network;
-use crate::primitives::HasParticipants;
+use crate::providers::{EcdsaSignatureProvider, SignatureProvider};
 use crate::runtime::AsyncDroppableRuntime;
-use crate::sign::PresignatureStorage;
 use crate::sign_request::SignRequestStorage;
 use crate::tracking::{self};
-use crate::triple::TripleStorage;
 use crate::web::SignatureDebugRequest;
 use anyhow::anyhow;
 use futures::future::BoxFuture;
@@ -344,15 +341,20 @@ impl Coordinator {
         sender
             .wait_for_ready(mpc_config.participants.participants.len())
             .await?;
-        let (network_client, channel_receiver, _handle) =
+        let (network_client, mut channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
-        run_key_generation_client(
-            mpc_config.clone().into(),
+
+        let key = EcdsaSignatureProvider::run_key_generation_client(
+            mpc_config,
             network_client,
-            keyshare_storage,
-            channel_receiver,
+            &mut channel_receiver,
         )
         .await?;
+
+        keyshare_storage
+            .store(&RootKeyshareData::new(0, key.clone()))
+            .await?;
+
         tracing::info!("Key generation complete");
         anyhow::Ok(MpcJobResult::Done)
     }
@@ -410,41 +412,23 @@ impl Coordinator {
         let (network_client, channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
 
-        let active_participants_query = {
-            let network_client = network_client.clone();
-            Arc::new(move || network_client.all_alive_participant_ids())
-        };
-
-        let triple_store = Arc::new(TripleStorage::new(
-            clock.clone(),
-            secret_db.clone(),
-            DBCol::Triple,
-            network_client.my_participant_id(),
-            |participants, pair| pair.is_subset_of_active_participants(participants),
-            active_participants_query.clone(),
-        )?);
-
-        let presignature_store = Arc::new(PresignatureStorage::new(
-            clock,
-            secret_db.clone(),
-            DBCol::Presignature,
-            network_client.my_participant_id(),
-            |participants, presignature| {
-                presignature.is_subset_of_active_participants(participants)
-            },
-            active_participants_query,
-        )?);
-
         let sign_request_store = Arc::new(SignRequestStorage::new(secret_db.clone())?);
+
+        let ecdsa_signature_provider = Arc::new(EcdsaSignatureProvider::new(
+            config_file.clone().into(),
+            mpc_config.clone().into(),
+            network_client.clone(),
+            clock,
+            secret_db,
+            sign_request_store.clone(),
+            keyshare.keygen_output(),
+        )?);
 
         let mpc_client = Arc::new(MpcClient::new(
             config_file.clone().into(),
-            mpc_config.clone().into(),
             network_client,
-            triple_store,
-            presignature_store,
             sign_request_store,
-            keyshare,
+            ecdsa_signature_provider,
         ));
         mpc_client
             .run(
@@ -563,15 +547,22 @@ impl Coordinator {
             .await?;
         let (network_client, channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
-        run_key_resharing_client(
+
+        let new_keygen_output = EcdsaSignatureProvider::run_key_resharing_client(
             mpc_config.clone().into(),
             network_client,
-            contract_state,
+            contract_state.clone(),
             existing_keyshare.map(|k| k.private_share),
-            keyshare_storage,
             channel_receiver,
         )
         .await?;
+        keyshare_storage
+            .store(&RootKeyshareData::new(
+                contract_state.old_epoch + 1,
+                new_keygen_output,
+            ))
+            .await?;
+
         tracing::info!("Key resharing complete; will call vote_reshared next");
         // Exit; we'll immediately re-enter the same function and send vote_reshared.
         // maybe send vote_instance_complete() here, before exiting.

@@ -1,16 +1,60 @@
 use crate::config::MpcConfig;
 use crate::indexer::participants::ContractResharingState;
-use crate::keyshare::{KeyshareStorage, RootKeyshareData};
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-use crate::primitives::{EcdsaTaskId, MpcTaskId, ParticipantId};
+use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
+use crate::providers::ecdsa::{EcdsaSignatureProvider, EcdsaTaskId};
 use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
 use k256::elliptic_curve::sec1::FromEncodedPoint;
 use k256::{AffinePoint, EncodedPoint, Scalar, Secp256k1};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+impl EcdsaSignatureProvider {
+    pub(super) async fn run_key_resharing_client_internal(
+        config: Arc<MpcConfig>,
+        client: Arc<MeshNetworkClient>,
+        state: ContractResharingState,
+        my_share: Option<Scalar>,
+        mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
+    ) -> anyhow::Result<KeygenOutput<Secp256k1>> {
+        let task_id = EcdsaTaskId::KeyResharing {
+            new_epoch: state.old_epoch + 1,
+        };
+        let channel = if config.is_leader_for_keygen() {
+            client.new_channel_for_task(task_id, client.all_participant_ids())?
+        } else {
+            MeshNetworkClient::wait_for_task(&mut channel_receiver, task_id).await
+        };
+        let public_key = public_key_to_affine_point(state.public_key)?;
+        let new_keyshare = KeyResharingComputation {
+            threshold: config.participants.threshold as usize,
+            old_participants: state
+                .old_participants
+                .participants
+                .iter()
+                .map(|p| p.id)
+                .collect(),
+            old_threshold: state.old_participants.threshold as usize,
+            my_share,
+            public_key,
+        }
+        .perform_leader_centric_computation(
+            channel,
+            // TODO(#195): Move timeout here instead of in Coordinator.
+            std::time::Duration::from_secs(60),
+        )
+        .await?;
+        tracing::info!("Key resharing completed");
+
+        Ok(KeygenOutput {
+            private_share: new_keyshare,
+            public_key,
+        })
+    }
+}
 
 /// Runs the key resharing protocol.
 /// This protocol is identical for the leader and the followers.
@@ -61,70 +105,6 @@ impl MpcLeaderCentricComputation<Scalar> for KeyResharingComputation {
     }
 }
 
-/// Performs the key resharing protocol. Retrieves the current keyshare
-/// from storage, performs the resharing, and upon success, updates the storage
-/// with the newly generated keyshare. This can only succeed if all new
-/// participants are online.
-pub async fn run_key_resharing_client(
-    config: Arc<MpcConfig>,
-    client: Arc<MeshNetworkClient>,
-    state: ContractResharingState,
-    my_share: Option<Scalar>,
-    keyshare_storage: Box<dyn KeyshareStorage>,
-    mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
-) -> anyhow::Result<()> {
-    let task_id = EcdsaTaskId::KeyResharing {
-        new_epoch: state.old_epoch + 1,
-        // add instance id
-    };
-    let channel = if config.is_leader_for_keygen() {
-        client.new_channel_for_task(task_id, client.all_participant_ids())?
-    } else {
-        loop {
-            let channel = channel_receiver.recv().await.unwrap();
-            if channel.task_id() != MpcTaskId::EcdsaTaskId(task_id) {
-                tracing::info!(
-                    "Received task ID is not key resharing: {:?}; ignoring.",
-                    channel.task_id()
-                );
-                continue;
-            }
-            break channel;
-        }
-    };
-    let public_key = public_key_to_affine_point(state.public_key)?;
-    let new_keyshare = KeyResharingComputation {
-        threshold: config.participants.threshold as usize,
-        old_participants: state
-            .old_participants
-            .participants
-            .iter()
-            .map(|p| p.id)
-            .collect(),
-        old_threshold: state.old_participants.threshold as usize,
-        my_share,
-        public_key,
-    }
-    .perform_leader_centric_computation(
-        channel,
-        // TODO(#195): Move timeout here instead of in Coordinator.
-        std::time::Duration::from_secs(60),
-    )
-    .await?;
-    keyshare_storage
-        .store(&RootKeyshareData::new(
-            state.old_epoch + 1, // add id
-            KeygenOutput {
-                private_share: new_keyshare,
-                public_key,
-            },
-        ))
-        .await?;
-    tracing::info!("Key resharing completed");
-
-    Ok(())
-}
-
 pub fn public_key_to_affine_point(key: near_crypto::PublicKey) -> anyhow::Result<AffinePoint> {
     match key {
         near_crypto::PublicKey::SECP256K1(key) => {
@@ -144,11 +124,12 @@ pub fn public_key_to_affine_point(key: near_crypto::PublicKey) -> anyhow::Result
 
 #[cfg(test)]
 mod tests {
-    use crate::key_resharing::KeyResharingComputation;
     use crate::network::computation::MpcLeaderCentricComputation;
     use crate::network::testing::run_test_clients;
     use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-    use crate::primitives::{EcdsaTaskId, ParticipantId};
+    use crate::primitives::ParticipantId;
+    use crate::providers::ecdsa::key_resharing::KeyResharingComputation;
+    use crate::providers::ecdsa::EcdsaTaskId;
     use crate::tests::TestGenerators;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use std::sync::Arc;
@@ -178,7 +159,7 @@ mod tests {
                     // We'll have the first participant be the leader.
                     let channel = if participant_id == all_participant_ids[0] {
                         client.new_channel_for_task(
-                            EcdsaTaskId::KeyGeneration,
+                            EcdsaTaskId::KeyResharing { new_epoch: 0 },
                             client.all_participant_ids(),
                         )?
                     } else {
