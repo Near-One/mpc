@@ -3,6 +3,7 @@ use crate::db::{DBCol, SecretDB};
 use crate::indexer::handler::ChainBlockUpdate;
 use crate::indexer::participants::{
     ContractInitializingState, ContractResharingState, ContractRunningState, ContractState,
+    WrappedContractState,
 };
 use crate::indexer::types::{ChainSendTransactionRequest, ChainVotePkArgs, ChainVoteResharedArgs};
 use crate::indexer::IndexerAPI;
@@ -20,6 +21,7 @@ use crate::sign_request::SignRequestStorage;
 use crate::tracking::{self};
 use crate::triple::TripleStorage;
 use crate::web::SignatureDebugRequest;
+use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use near_time::{Clock, Duration};
@@ -82,9 +84,9 @@ enum MpcJobResult {
 impl Coordinator {
     pub async fn run(mut self) -> anyhow::Result<()> {
         loop {
-            let state = self.indexer.contract_state_receiver.borrow().clone();
-            let mut job = match state {
-                ContractState::WaitingForSync => {
+            let wrapped_state = self.indexer.contract_state_receiver.borrow().clone();
+            let job: MpcJob = match wrapped_state {
+                WrappedContractState::WaitingForSync => {
                     // This is the initial state. We stop this state for any state changes.
                     MpcJob {
                         name: "WaitingForSync",
@@ -93,108 +95,112 @@ impl Coordinator {
                         timeout_fut: futures::future::pending().boxed(),
                     }
                 }
-                ContractState::Invalid => {
-                    // Invalid state. Similar to initial state; we do nothing until the state changes.
-                    MpcJob {
-                        name: "Invalid",
-                        fut: futures::future::ready(Ok(MpcJobResult::HaltUntilInterrupted)).boxed(),
-                        stop_fn: Box::new(|_| true),
-                        timeout_fut: futures::future::pending().boxed(),
+                WrappedContractState::Legacy(state) => match state {
+                    ContractState::Invalid => {
+                        // Invalid state. Similar to initial state; we do nothing until the state changes.
+                        MpcJob {
+                            name: "Invalid",
+                            fut: futures::future::ready(Ok(MpcJobResult::HaltUntilInterrupted))
+                                .boxed(),
+                            stop_fn: Box::new(|_| true),
+                            timeout_fut: futures::future::pending().boxed(),
+                        }
                     }
-                }
-                ContractState::Initializing(state) => {
-                    // For initialization state, we generate keys and vote for the public key.
-                    // We give it a timeout, so that if somehow the keygen and voting fail to
-                    // progress, we can retry.
-                    MpcJob {
-                        name: "Initializing",
-                        fut: Self::create_runtime_and_run(
-                            "Initializing",
-                            self.config_file.cores,
-                            Self::run_initialization(
-                                self.secrets.clone(),
-                                self.config_file.clone(),
-                                self.keyshare_storage_factory.create().await?,
-                                state.clone(),
-                                self.indexer.txn_sender.clone(),
+                    ContractState::Initializing(state) => {
+                        // For initialization state, we generate keys and vote for the public key.
+                        // We give it a timeout, so that if somehow the keygen and voting fail to
+                        // progress, we can retry.
+                        MpcJob {
+                            name: "Initializing",
+                            fut: Self::create_runtime_and_run(
+                                "Initializing",
+                                self.config_file.cores,
+                                Self::run_initialization(
+                                    self.secrets.clone(),
+                                    self.config_file.clone(),
+                                    self.keyshare_storage_factory.create().await?,
+                                    state.clone(),
+                                    self.indexer.txn_sender.clone(),
+                                ),
+                            )?,
+                            stop_fn: Box::new(move |new_state| match new_state {
+                                ContractState::Initializing(new_state) => {
+                                    new_state.participants != state.participants
+                                }
+                                _ => true,
+                            }),
+                            // TODO(#151): This timeout is not ideal. If participants are not synchronized,
+                            // they might each timeout out of order and never complete keygen?
+                            timeout_fut: sleep(
+                                &self.clock,
+                                Duration::seconds(self.config_file.keygen.timeout_sec as i64),
                             ),
-                        )?,
-                        stop_fn: Box::new(move |new_state| match new_state {
-                            ContractState::Initializing(new_state) => {
-                                new_state.participants != state.participants
-                            }
-                            _ => true,
-                        }),
-                        // TODO(#151): This timeout is not ideal. If participants are not synchronized,
-                        // they might each timeout out of order and never complete keygen?
-                        timeout_fut: sleep(
-                            &self.clock,
-                            Duration::seconds(self.config_file.keygen.timeout_sec as i64),
-                        ),
+                        }
                     }
-                }
-                ContractState::Running(state) => {
-                    // For the running state, we run the full MPC protocol.
-                    // There's no timeout. The only time we stop is when the contract state
-                    // changes to no longer be running (or if somehow the epoch changes).
-                    MpcJob {
-                        name: "Running",
-                        fut: Self::create_runtime_and_run(
-                            "Running",
-                            self.config_file.cores,
-                            Self::run_mpc(
-                                self.clock.clone(),
-                                self.secret_db.clone(),
-                                self.secrets.clone(),
-                                self.config_file.clone(),
-                                self.keyshare_storage_factory.create().await?,
-                                state.clone(),
-                                self.indexer.txn_sender.clone(),
-                                self.indexer
-                                    .block_update_receiver
-                                    .clone()
-                                    .lock_owned()
-                                    .await,
-                                self.signature_debug_request_sender.subscribe(),
-                            ),
-                        )?,
-                        stop_fn: Box::new(move |new_state| match new_state {
-                            ContractState::Running(new_state) => new_state.epoch != state.epoch,
-                            _ => true,
-                        }),
-                        timeout_fut: futures::future::pending().boxed(),
+                    ContractState::Running(state) => {
+                        // For the running state, we run the full MPC protocol.
+                        // There's no timeout. The only time we stop is when the contract state
+                        // changes to no longer be running (or if somehow the epoch changes).
+                        MpcJob {
+                            name: "Running",
+                            fut: Self::create_runtime_and_run(
+                                "Running",
+                                self.config_file.cores,
+                                Self::run_mpc(
+                                    self.clock.clone(),
+                                    self.secret_db.clone(),
+                                    self.secrets.clone(),
+                                    self.config_file.clone(),
+                                    self.keyshare_storage_factory.create().await?,
+                                    state.clone(),
+                                    self.indexer.txn_sender.clone(),
+                                    self.indexer
+                                        .block_update_receiver
+                                        .clone()
+                                        .lock_owned()
+                                        .await,
+                                    self.signature_debug_request_sender.subscribe(),
+                                ),
+                            )?,
+                            stop_fn: Box::new(move |new_state| match new_state {
+                                ContractState::Running(new_state) => new_state.epoch != state.epoch,
+                                _ => true,
+                            }),
+                            timeout_fut: futures::future::pending().boxed(),
+                        }
                     }
-                }
-                ContractState::Resharing(state) => {
-                    // In resharing state, we perform key resharing, again with a timeout.
-                    MpcJob {
-                        name: "Resharing",
-                        fut: Self::create_runtime_and_run(
-                            "Resharing",
-                            self.config_file.cores,
-                            Self::run_key_resharing(
-                                self.secret_db.clone(),
-                                self.secrets.clone(),
-                                self.config_file.clone(),
-                                self.keyshare_storage_factory.create().await?,
-                                state.clone(),
-                                self.indexer.txn_sender.clone(),
-                                // here, pass self.indexer.reshare_instance_receiver
-                            ),
-                        )?,
-                        stop_fn: Box::new(move |new_state| match new_state {
-                            ContractState::Resharing(new_state) => {
-                                new_state.old_epoch != state.old_epoch// add comparison for instance id? or just pass through channel?
+                    ContractState::Resharing(state) => {
+                        // In resharing state, we perform key resharing, again with a timeout.
+                        MpcJob {
+                            name: "Resharing",
+                            fut: Self::create_runtime_and_run(
+                                "Resharing",
+                                self.config_file.cores,
+                                Self::run_key_resharing(
+                                    self.secret_db.clone(),
+                                    self.secrets.clone(),
+                                    self.config_file.clone(),
+                                    self.keyshare_storage_factory.create().await?,
+                                    state.clone(),
+                                    self.indexer.txn_sender.clone(),
+                                    // here, pass self.indexer.reshare_instance_receiver
+                                ),
+                            )?,
+                            stop_fn: Box::new(move |new_state| match new_state {
+                                ContractState::Resharing(new_state) => {
+                                    new_state.old_epoch != state.old_epoch// add comparison for instance id? or just pass through channel?
                                     || new_state.new_participants != state.new_participants
-                            }
-                            _ => true,
-                        }),
-                        timeout_fut: sleep(
-                            &self.clock,
-                            Duration::seconds(self.config_file.keygen.timeout_sec as i64),
-                        ),
+                                }
+                                _ => true,
+                            }),
+                            timeout_fut: sleep(
+                                &self.clock,
+                                Duration::seconds(self.config_file.keygen.timeout_sec as i64),
+                            ),
+                        }
                     }
-                }
+                },
+                WrappedContractState::Current(_) => anyhow::bail!("not implemented"),
             };
             tracing::info!("[{}] Starting", job.name);
             let _report_guard =

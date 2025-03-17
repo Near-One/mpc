@@ -36,10 +36,15 @@ pub(crate) async fn wait_for_full_sync(client: &Addr<ClientActor>) {
     }
 }
 
+#[derive(Debug)]
+pub enum WrappedProtocolContractState {
+    Legacy(legacy_mpc_contract::ProtocolContractState),
+    Current(mpc_contract::state::ProtocolContractState),
+}
 pub(crate) async fn get_mpc_contract_state(
     mpc_contract_id: AccountId,
     client: &actix::Addr<near_client::ViewClientActor>,
-) -> anyhow::Result<legacy_mpc_contract::ProtocolContractState> {
+) -> anyhow::Result<WrappedProtocolContractState> {
     let request = QueryRequest::CallFunction {
         account_id: mpc_contract_id,
         method_name: "state".to_string(),
@@ -52,7 +57,17 @@ pub(crate) async fn get_mpc_contract_state(
     let response = client.send(query.with_span_context()).await??;
 
     match response.kind {
-        CallResult(result) => Ok(serde_json::from_slice(&result.result)?),
+        CallResult(result) => {
+            if let Ok(legacy) =
+                serde_json::from_slice::<legacy_mpc_contract::ProtocolContractState>(&result.result)
+            {
+                Ok(WrappedProtocolContractState::Legacy(legacy))
+            } else {
+                Ok(WrappedProtocolContractState::Current(
+                    serde_json::from_slice(&result.result)?,
+                ))
+            }
+        }
         _ => {
             bail!("got unexpected response querying mpc contract state")
         }

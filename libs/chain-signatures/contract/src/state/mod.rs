@@ -12,7 +12,7 @@ use resharing::ResharingContractState;
 use running::RunningContractState;
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolContractState {
     NotInitialized,
     Initializing(InitializingContractState),

@@ -12,7 +12,7 @@ pub mod types;
 
 use handler::ChainBlockUpdate;
 use near_indexer_primitives::types::AccountId;
-use participants::ContractState;
+use participants::WrappedContractState;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use types::ChainSendTransactionRequest;
@@ -47,7 +47,7 @@ impl IndexerState {
 /// running in a separate process.
 pub struct IndexerAPI {
     /// Provides the current contract state as well as updates to it.
-    pub contract_state_receiver: watch::Receiver<ContractState>,
+    pub contract_state_receiver: watch::Receiver<WrappedContractState>,
     /// Provides block updates (signature requests and other relevant receipts).
     /// It is in a mutex, because the logical "owner" of this receiver can
     /// change over time (specifically, when we transition from the Running

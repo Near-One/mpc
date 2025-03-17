@@ -8,7 +8,7 @@ use crate::primitives::votes::KeyStateVotes;
 use near_sdk::{near, BlockHeight, PublicKey};
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResharingContractState {
     pub current_state: RunningContractState,
     pub event_state: KeyEvent, // rename

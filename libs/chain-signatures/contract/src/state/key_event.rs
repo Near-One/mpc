@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 /// - the current instance of the key event
 /// - a leader order, pseudo-randomly generated from `env::random_seed()` and `epoch_id`.
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEvent {
     epoch_id: EpochId,
     leader_order: Vec<ParticipantId>,
@@ -168,7 +168,7 @@ impl KeyEvent {
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEventInstance {
     attempt: AttemptId,
     last_vote: BlockHeight,
@@ -271,7 +271,7 @@ impl KeyEventInstance {
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedLeader(ParticipantId);
 
 #[cfg(test)]

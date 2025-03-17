@@ -10,7 +10,7 @@ use near_sdk::{near, AccountId, PublicKey};
 use std::collections::BTreeMap;
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningContractState {
     pub key_state: DKState,
     pub key_state_votes: KeyStateVotes,

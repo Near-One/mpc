@@ -9,7 +9,7 @@ use near_sdk::{near, PublicKey};
 use std::collections::BTreeMap;
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PkVotes {
     pub votes: BTreeMap<AuthenticatedCandidateId, PublicKey>,
 }
@@ -32,7 +32,7 @@ impl PkVotes {
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InitializingContractState {
     pub keygen: KeyEvent,
     pub pk_votes: PkVotes,

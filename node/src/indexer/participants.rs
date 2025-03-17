@@ -1,5 +1,8 @@
 use crate::config::{ParticipantInfo, ParticipantsConfig};
-use crate::indexer::lib::{get_mpc_contract_state, wait_for_contract_code, wait_for_full_sync};
+use crate::indexer::lib::{
+    get_mpc_contract_state, wait_for_contract_code, wait_for_full_sync,
+    WrappedProtocolContractState,
+};
 use crate::primitives::ParticipantId;
 use anyhow::Context;
 use legacy_mpc_contract;
@@ -34,11 +37,17 @@ pub struct ContractResharingState {
 /// that the MPC node cares about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractState {
-    WaitingForSync,
     Invalid,
     Initializing(ContractInitializingState),
     Running(ContractRunningState),
     Resharing(ContractResharingState),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WrappedContractState {
+    WaitingForSync,
+    Legacy(ContractState),
+    Current(mpc_contract::state::ProtocolContractState),
 }
 
 /// Continuously monitors the contract state. Every time the state changes,
@@ -48,10 +57,10 @@ pub async fn monitor_chain_state(
     port_override: Option<u16>,
     view_client: actix::Addr<near_client::ViewClientActor>,
     client: actix::Addr<near_client::ClientActor>,
-    contract_state_sender: tokio::sync::watch::Sender<ContractState>,
+    contract_state_sender: tokio::sync::watch::Sender<WrappedContractState>,
 ) -> anyhow::Result<()> {
     const CONTRACT_STATE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
-    let mut prev_state = ContractState::Invalid;
+    let mut prev_state = WrappedContractState::Legacy(ContractState::Invalid);
     loop {
         let result = read_contract_state_from_chain(
             mpc_contract_id.clone(),
@@ -81,7 +90,7 @@ async fn read_contract_state_from_chain(
     port_override: Option<u16>,
     view_client: actix::Addr<near_client::ViewClientActor>,
     client: actix::Addr<near_client::ClientActor>,
-) -> anyhow::Result<ContractState> {
+) -> anyhow::Result<WrappedContractState> {
     // We wait first to catch up to the chain to avoid reading the participants from an outdated state.
     // We currently assume the participant set is static and do not detect or support any updates.
     tracing::debug!(target: "indexer", "awaiting full sync to read mpc contract state");
@@ -93,60 +102,64 @@ async fn read_contract_state_from_chain(
 
     let state = get_mpc_contract_state(mpc_contract_id.clone(), &view_client).await?;
     tracing::debug!(target: "indexer", "got mpc contract state {:?}", state);
-    let state = match state {
-        legacy_mpc_contract::ProtocolContractState::NotInitialized => ContractState::Invalid,
-        legacy_mpc_contract::ProtocolContractState::Initializing(state) => {
-            let mut pk_votes = BTreeMap::new();
-            for (pk, votes) in state.pk_votes.votes {
-                pk_votes.insert(
-                    near_crypto::PublicKey::from_str(&String::from(&pk))
-                        .context("parse public key")?,
-                    votes.into_iter().collect(),
-                );
+    if let WrappedProtocolContractState::Legacy(state) = state {
+        let state = match state {
+            legacy_mpc_contract::ProtocolContractState::NotInitialized => ContractState::Invalid,
+            legacy_mpc_contract::ProtocolContractState::Initializing(state) => {
+                let mut pk_votes = BTreeMap::new();
+                for (pk, votes) in state.pk_votes.votes {
+                    pk_votes.insert(
+                        near_crypto::PublicKey::from_str(&String::from(&pk))
+                            .context("parse public key")?,
+                        votes.into_iter().collect(),
+                    );
+                }
+                ContractState::Initializing(ContractInitializingState {
+                    participants: convert_participant_infos(
+                        state.candidates.into(),
+                        port_override,
+                        state.threshold,
+                    )?,
+                    pk_votes,
+                })
             }
-            ContractState::Initializing(ContractInitializingState {
-                participants: convert_participant_infos(
-                    state.candidates.into(),
-                    port_override,
-                    state.threshold,
-                )?,
-                pk_votes,
-            })
-        }
-        legacy_mpc_contract::ProtocolContractState::Running(state) => {
-            ContractState::Running(ContractRunningState {
-                epoch: state.epoch,
-                participants: convert_participant_infos(
-                    state.participants,
-                    port_override,
-                    state.threshold,
-                )?,
-                root_public_key: String::from(&state.public_key)
-                    .parse()
-                    .context("parse public key")?,
-            })
-        }
-        legacy_mpc_contract::ProtocolContractState::Resharing(state) => {
-            ContractState::Resharing(ContractResharingState {
-                old_epoch: state.old_epoch,
-                old_participants: convert_participant_infos(
-                    state.old_participants,
-                    port_override,
-                    state.threshold,
-                )?,
-                new_participants: convert_participant_infos(
-                    state.new_participants,
-                    port_override,
-                    state.threshold,
-                )?,
-                public_key: String::from(&state.public_key)
-                    .parse()
-                    .context("parse public key")?,
-                finished_votes: state.finished_votes,
-            })
-        }
-    };
-    Ok(state)
+            legacy_mpc_contract::ProtocolContractState::Running(state) => {
+                ContractState::Running(ContractRunningState {
+                    epoch: state.epoch,
+                    participants: convert_participant_infos(
+                        state.participants,
+                        port_override,
+                        state.threshold,
+                    )?,
+                    root_public_key: String::from(&state.public_key)
+                        .parse()
+                        .context("parse public key")?,
+                })
+            }
+            legacy_mpc_contract::ProtocolContractState::Resharing(state) => {
+                ContractState::Resharing(ContractResharingState {
+                    old_epoch: state.old_epoch,
+                    old_participants: convert_participant_infos(
+                        state.old_participants,
+                        port_override,
+                        state.threshold,
+                    )?,
+                    new_participants: convert_participant_infos(
+                        state.new_participants,
+                        port_override,
+                        state.threshold,
+                    )?,
+                    public_key: String::from(&state.public_key)
+                        .parse()
+                        .context("parse public key")?,
+                    finished_votes: state.finished_votes,
+                })
+            }
+        };
+        Ok(WrappedContractState::Legacy(state))
+    } else {
+        anyhow::bail!("not implemented")
+    }
 }
 
 fn convert_participant_infos(

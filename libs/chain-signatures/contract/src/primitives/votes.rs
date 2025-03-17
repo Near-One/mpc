@@ -4,7 +4,7 @@ use near_sdk::{log, near};
 use std::collections::BTreeMap;
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyStateVotes {
     proposal_by_account: BTreeMap<AuthenticatedParticipantId, KeyStateProposal>, // use Hash of
                                                                                  // KeyStateProposal?
@@ -36,6 +36,12 @@ impl KeyStateVotes {
             .values()
             .filter(|&prop| prop == proposal)
             .count() as u64
+    }
+}
+
+impl Default for KeyStateVotes {
+    fn default() -> Self {
+        KeyStateVotes::new()
     }
 }
 

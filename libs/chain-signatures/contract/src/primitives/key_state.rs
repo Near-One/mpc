@@ -79,7 +79,7 @@ impl KeyEventId {
 /// - the key event that resulted in the key shares
 /// - threshold parameters
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DKState {
     public_key: PublicKey,
     key_event_id: KeyEventId,
