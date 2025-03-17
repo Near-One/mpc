@@ -1,4 +1,4 @@
-use crate::indexer::participants::ContractState;
+use crate::indexer::participants::{ContractState, WrappedContractState};
 use crate::p2p::testing::PortSeed;
 use crate::tests::{request_signature_and_await_response, IntegrationTestSetup};
 use crate::tracking::AutoAbortTask;
@@ -47,7 +47,12 @@ async fn test_faulty_cluster() {
     tracing::info!("Waiting for key generation to complete");
     setup
         .indexer
-        .wait_for_contract_state(|state| matches!(state, ContractState::Running(_)))
+        .wait_for_contract_state(|state| {
+            matches!(
+                state,
+                WrappedContractState::Legacy(ContractState::Running(_))
+            )
+        })
         .await;
     tracing::info!("Key generation complete");
 

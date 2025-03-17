@@ -18,7 +18,6 @@ use crate::runtime::AsyncDroppableRuntime;
 use crate::sign_request::SignRequestStorage;
 use crate::tracking::{self};
 use crate::web::SignatureDebugRequest;
-use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use near_time::{Clock, Duration};
@@ -60,7 +59,7 @@ struct MpcJob {
     fut: BoxFuture<'static, anyhow::Result<MpcJobResult>>,
     /// a function that looks at a new contract state and returns true iff the
     /// current task should be killed.
-    stop_fn: Box<dyn Fn(&ContractState) -> bool + Send>,
+    stop_fn: Box<dyn Fn(&WrappedContractState) -> bool + Send>,
     /// a future that resolves when the current task exceeds the desired
     /// timeout.
     timeout_fut: BoxFuture<'static, ()>,
@@ -82,7 +81,7 @@ impl Coordinator {
     pub async fn run(mut self) -> anyhow::Result<()> {
         loop {
             let wrapped_state = self.indexer.contract_state_receiver.borrow().clone();
-            let job: MpcJob = match wrapped_state {
+            let mut job: MpcJob = match wrapped_state {
                 WrappedContractState::WaitingForSync => {
                     // This is the initial state. We stop this state for any state changes.
                     MpcJob {
@@ -121,9 +120,9 @@ impl Coordinator {
                                 ),
                             )?,
                             stop_fn: Box::new(move |new_state| match new_state {
-                                ContractState::Initializing(new_state) => {
-                                    new_state.participants != state.participants
-                                }
+                                WrappedContractState::Legacy(ContractState::Initializing(
+                                    new_state,
+                                )) => new_state.participants != state.participants,
                                 _ => true,
                             }),
                             // TODO(#151): This timeout is not ideal. If participants are not synchronized,
@@ -160,7 +159,9 @@ impl Coordinator {
                                 ),
                             )?,
                             stop_fn: Box::new(move |new_state| match new_state {
-                                ContractState::Running(new_state) => new_state.epoch != state.epoch,
+                                WrappedContractState::Legacy(ContractState::Running(new_state)) => {
+                                    new_state.epoch != state.epoch
+                                }
                                 _ => true,
                             }),
                             timeout_fut: futures::future::pending().boxed(),
@@ -184,7 +185,9 @@ impl Coordinator {
                                 ),
                             )?,
                             stop_fn: Box::new(move |new_state| match new_state {
-                                ContractState::Resharing(new_state) => {
+                                WrappedContractState::Legacy(ContractState::Resharing(
+                                    new_state,
+                                )) => {
                                     new_state.old_epoch != state.old_epoch// add comparison for instance id? or just pass through channel?
                                     || new_state.new_participants != state.new_participants
                                 }

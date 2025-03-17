@@ -1,6 +1,7 @@
 use super::handler::{ChainBlockUpdate, SignatureRequestFromChain};
 use super::participants::{
     ContractInitializingState, ContractResharingState, ContractRunningState, ContractState,
+    WrappedContractState,
 };
 use super::types::{ChainRespondArgs, ChainSendTransactionRequest};
 use super::IndexerAPI;
@@ -19,7 +20,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 
 /// A simplification of the real MPC contract state for testing.
 pub struct FakeMpcContractState {
-    pub state: ContractState,
+    pub state: WrappedContractState,
     // Not a real MPC contract; here we only index by the payload.
     // We don't test signatures with the same payload anyway.
     pub pending_signatures: BTreeMap<Scalar, SignatureId>,
@@ -27,7 +28,7 @@ pub struct FakeMpcContractState {
 
 impl FakeMpcContractState {
     pub fn new() -> FakeMpcContractState {
-        let config = ContractState::WaitingForSync;
+        let config = WrappedContractState::WaitingForSync;
         FakeMpcContractState {
             state: config,
             pending_signatures: BTreeMap::new(),
@@ -35,17 +36,17 @@ impl FakeMpcContractState {
     }
 
     pub fn initialize(&mut self, participants: ParticipantsConfig) {
-        assert_eq!(self.state, ContractState::WaitingForSync);
+        assert_eq!(self.state, WrappedContractState::WaitingForSync);
         let state = ContractState::Initializing(ContractInitializingState {
             participants,
             pk_votes: BTreeMap::new(),
         });
-        self.state = state;
+        self.state = WrappedContractState::Legacy(state);
     }
 
     pub fn start_resharing(&mut self, new_participants: ParticipantsConfig) {
         let running_state = match &self.state {
-            ContractState::Running(state) => state,
+            WrappedContractState::Legacy(ContractState::Running(state)) => state,
             _ => panic!("Cannot start resharing from non-running state"),
         };
         let state = ContractState::Resharing(ContractResharingState {
@@ -55,11 +56,11 @@ impl FakeMpcContractState {
             new_participants,
             finished_votes: HashSet::new(),
         });
-        self.state = state;
+        self.state = WrappedContractState::Legacy(state);
     }
 
     pub fn vote_pk(&mut self, account_id: AccountId, pk: PublicKey) {
-        if let ContractState::Initializing(config) = &mut self.state {
+        if let WrappedContractState::Legacy(ContractState::Initializing(config)) = &mut self.state {
             config.pk_votes.entry(pk).or_default().insert(account_id);
             for (key, voters) in &config.pk_votes {
                 if voters.len() >= config.participants.participants.len() {
@@ -68,7 +69,7 @@ impl FakeMpcContractState {
                         participants: config.participants.clone(),
                         root_public_key: key.clone(),
                     });
-                    self.state = new_config;
+                    self.state = WrappedContractState::Legacy(new_config);
                     return;
                 }
             }
@@ -80,7 +81,7 @@ impl FakeMpcContractState {
     }
 
     pub fn vote_reshared(&mut self, account_id: AccountId, new_epoch: u64) {
-        if let ContractState::Resharing(config) = &mut self.state {
+        if let WrappedContractState::Legacy(ContractState::Resharing(config)) = &mut self.state {
             assert_eq!(new_epoch, config.old_epoch + 1);
             if !config
                 .new_participants
@@ -100,7 +101,7 @@ impl FakeMpcContractState {
                     participants: config.new_participants.clone(),
                     root_public_key: config.public_key.clone(),
                 });
-                self.state = new_config;
+                self.state = WrappedContractState::Legacy(new_config);
             }
         } else {
             tracing::warn!(
@@ -123,7 +124,7 @@ struct FakeIndexerCore {
     /// Receives signature requests from the FakeIndexerManager.
     signature_request_receiver: mpsc::UnboundedReceiver<SignatureRequestFromChain>,
     /// Broadcasts the contract state to each node.
-    state_change_sender: broadcast::Sender<ContractState>,
+    state_change_sender: broadcast::Sender<WrappedContractState>,
     /// Broadcasts block updates to each node.
     block_update_sender: broadcast::Sender<ChainBlockUpdate>,
 
@@ -260,7 +261,7 @@ pub struct FakeIndexerManager {
     core_txn_sender: mpsc::UnboundedSender<(ChainSendTransactionRequest, AccountId)>,
     /// Used to call .subscribe() so that each node can receive changes to the
     /// contract state.
-    core_state_change_sender: broadcast::Sender<ContractState>,
+    core_state_change_sender: broadcast::Sender<WrappedContractState>,
     /// Used to call .subscribe() so that each node can receive block updates.
     core_block_update_sender: broadcast::Sender<ChainBlockUpdate>,
     /// Task that runs the core logic.
@@ -326,7 +327,7 @@ struct FakeIndexerOneNode {
 
     // The following are counterparts of the core channels.
     core_txn_sender: mpsc::UnboundedSender<(ChainSendTransactionRequest, AccountId)>,
-    core_state_change_receiver: broadcast::Receiver<ContractState>,
+    core_state_change_receiver: broadcast::Receiver<WrappedContractState>,
     block_update_receiver: broadcast::Receiver<ChainBlockUpdate>,
 
     /// Whether the node should yield ContractState::Invalid to artificially simulate bringing the
@@ -334,7 +335,7 @@ struct FakeIndexerOneNode {
     disable: Arc<AtomicBool>,
 
     // The following are counterparts of the API channels.
-    api_state_sender: watch::Sender<ContractState>,
+    api_state_sender: watch::Sender<WrappedContractState>,
     api_block_update_sender: mpsc::UnboundedSender<ChainBlockUpdate>,
     api_txn_receiver: mpsc::Receiver<ChainSendTransactionRequest>,
 }
@@ -353,11 +354,11 @@ impl FakeIndexerOneNode {
             ..
         } = self;
         let monitor_state_changes = AutoAbortTask::from(tokio::spawn(async move {
-            let mut last_state = ContractState::WaitingForSync;
+            let mut last_state = WrappedContractState::WaitingForSync;
             loop {
                 let state = core_state_change_receiver.recv().await.unwrap();
                 let state = if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                    ContractState::Invalid
+                    WrappedContractState::Legacy(ContractState::Invalid)
                 } else {
                     state
                 };
@@ -433,7 +434,8 @@ impl FakeIndexerManager {
         &mut self,
         account_id: AccountId,
     ) -> (IndexerAPI, AutoAbortTask<()>, Arc<std::sync::Mutex<String>>) {
-        let (api_state_sender, api_state_receiver) = watch::channel(ContractState::WaitingForSync);
+        let (api_state_sender, api_state_receiver) =
+            watch::channel(WrappedContractState::WaitingForSync);
         let (api_signature_request_sender, api_signature_request_receiver) =
             mpsc::unbounded_channel();
         let (api_txn_sender, api_txn_receiver) = mpsc::channel(1000);
@@ -468,7 +470,7 @@ impl FakeIndexerManager {
     }
 
     /// Waits for the contract state to satisfy the given predicate.
-    pub async fn wait_for_contract_state(&mut self, f: impl Fn(&ContractState) -> bool) {
+    pub async fn wait_for_contract_state(&mut self, f: impl Fn(&WrappedContractState) -> bool) {
         let mut state_change_receiver = self.core_state_change_sender.subscribe();
         loop {
             let state = state_change_receiver.recv().await.unwrap();

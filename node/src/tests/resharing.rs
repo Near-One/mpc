@@ -1,4 +1,4 @@
-use crate::indexer::participants::ContractState;
+use crate::indexer::participants::{ContractState, WrappedContractState};
 use crate::metrics;
 use crate::p2p::testing::PortSeed;
 use crate::tests::{request_signature_and_await_response, IntegrationTestSetup};
@@ -62,7 +62,7 @@ async fn test_key_resharing_simple() {
     timeout(
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
-            ContractState::Running(running) => {
+            WrappedContractState::Legacy(ContractState::Running(running)) => {
                 running.epoch == 1 && running.participants.participants.len() == NUM_PARTICIPANTS
             }
             _ => false,
@@ -138,7 +138,7 @@ async fn test_key_resharing_multistage() {
     timeout(
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
-            ContractState::Running(running) => {
+            WrappedContractState::Legacy(ContractState::Running(running)) => {
                 running.epoch == 1
                     && running.participants.participants.len() == NUM_PARTICIPANTS - 1
             }
@@ -165,7 +165,7 @@ async fn test_key_resharing_multistage() {
     timeout(
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
-            ContractState::Running(running) => {
+            WrappedContractState::Legacy(ContractState::Running(running)) => {
                 running.epoch == 2 && running.participants.participants.len() == NUM_PARTICIPANTS
             }
             _ => false,
@@ -194,7 +194,7 @@ async fn test_key_resharing_multistage() {
     timeout(
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
-            ContractState::Running(running) => {
+            WrappedContractState::Legacy(ContractState::Running(running)) => {
                 running.epoch == 3
                     && running.participants.participants.len() == NUM_PARTICIPANTS - 1
             }
@@ -225,7 +225,7 @@ async fn test_key_resharing_multistage() {
     timeout(
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
-            ContractState::Running(running) => {
+            WrappedContractState::Legacy(ContractState::Running(running)) => {
                 running.epoch == 4
                     && running.participants.participants.len() == NUM_PARTICIPANTS - 2
             }
