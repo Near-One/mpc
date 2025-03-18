@@ -120,6 +120,12 @@ async fn observe_tx_result(
                 }
             }
         }
+        ChainSendTransactionRequest::StartKeygen(_) => {
+            Ok(ChainTransactionState::Unknown) // not implemented
+        }
+        ChainSendTransactionRequest::StartReshare(_) => {
+            Ok(ChainTransactionState::Unknown) // not implemented
+        }
         ChainSendTransactionRequest::Join(_) => {
             Ok(ChainTransactionState::Unknown) // not implemented
         }

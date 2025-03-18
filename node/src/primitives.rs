@@ -27,7 +27,11 @@ impl From<Participant> for ParticipantId {
         ParticipantId(participant.into())
     }
 }
-
+impl From<mpc_contract::primitives::participants::ParticipantId> for ParticipantId {
+    fn from(participant: mpc_contract::primitives::participants::ParticipantId) -> Self {
+        ParticipantId(participant.get())
+    }
+}
 impl From<ParticipantId> for Participant {
     fn from(participant_id: ParticipantId) -> Self {
         Participant::from(participant_id.0)
