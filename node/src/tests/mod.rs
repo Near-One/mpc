@@ -266,14 +266,14 @@ impl IntegrationTestSetup {
                 keygen: KeygenConfig { timeout_sec: 60 },
                 my_near_account_id: participant_accounts[i].clone(),
                 presignature: PresignatureConfig {
-                    concurrency: 2,
-                    desired_presignatures_to_buffer: 100,
+                    concurrency: 1,
+                    desired_presignatures_to_buffer: 5,
                     timeout_sec: 60,
                 },
                 signature: SignatureConfig { timeout_sec: 60 },
                 triple: TripleConfig {
                     concurrency: 1,
-                    desired_triples_to_buffer: 1000,
+                    desired_triples_to_buffer: 10,
                     parallel_triple_generation_stagger_time_sec: 1,
                     timeout_sec: 60,
                 },
