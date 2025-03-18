@@ -693,7 +693,7 @@ pub mod testing {
         let mut configs = Vec::new();
         for (i, keypair) in keypairs.into_iter().enumerate() {
             let participants = ParticipantsConfig {
-                threshold: threshold as u32,
+                threshold: threshold as u64,
                 participants: participants.clone(),
             };
 
@@ -719,6 +719,9 @@ mod tests {
     use crate::providers::EcdsaTaskId;
     use crate::tracing::init_logging;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
+    use mpc_contract::primitives::domain::DomainId;
+    use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId};
+    use rand::Rng;
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -755,9 +758,21 @@ mod tests {
             sender0.wait_for_ready(2).await.unwrap();
             sender1.wait_for_ready(2).await.unwrap();
 
-            for i in 0..100 {
+            for _ in 0..100 {
+                // todo: adjust test?
+                let domain_id = rand::thread_rng().gen();
+                let epoch_id = rand::thread_rng().gen();
+                let n_attempts = rand::thread_rng().gen::<usize>() % 100;
+                let mut attempt_id = AttemptId::new();
+                for _ in 0..n_attempts {
+                    attempt_id = attempt_id.next();
+                }
+                let key_id =
+                    KeyEventId::new(EpochId::new(epoch_id), DomainId(domain_id), attempt_id);
                 let msg0to1 = MpcMessage {
-                    task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { new_epoch: i }),
+                    task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing {
+                        key_event: key_id,
+                    }),
                     kind: crate::primitives::MpcMessageKind::Success,
                 };
                 sender0
@@ -774,7 +789,9 @@ mod tests {
                 assert_eq!(msg.message, msg0to1);
 
                 let msg1to0 = MpcMessage {
-                    task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { new_epoch: i }),
+                    task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing {
+                        key_event: key_id,
+                    }),
                     kind: crate::primitives::MpcMessageKind::Abort("test".to_owned()),
                 };
                 sender1

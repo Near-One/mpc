@@ -1,6 +1,7 @@
-mod key_generation;
+pub mod key_generation;
 mod presign;
 mod sign;
+use mpc_contract::primitives::key_state::KeyEventId;
 pub use presign::PresignatureStorage;
 mod kdf;
 pub mod key_resharing;
@@ -9,9 +10,8 @@ pub mod triple;
 pub use triple::TripleStorage;
 
 use crate::assets::UniqueId;
-use crate::config::{ConfigFile, MpcConfig};
+use crate::config::{ConfigFile, MpcConfig, ParticipantsConfig};
 use crate::db::{DBCol, SecretDB};
-use crate::indexer::participants::ContractResharingState;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::primitives::MpcTaskId;
 use crate::providers::{HasParticipants, KeyshareId, SignatureProvider};
@@ -22,7 +22,6 @@ use cait_sith::{FullSignature, KeygenOutput};
 use k256::{AffinePoint, Scalar, Secp256k1};
 use near_time::Clock;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct EcdsaSignatureProvider {
@@ -84,9 +83,11 @@ impl EcdsaSignatureProvider {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub enum EcdsaTaskId {
-    KeyGeneration,
+    KeyGeneration {
+        key_event: KeyEventId,
+    },
     KeyResharing {
-        new_epoch: u64,
+        key_event: KeyEventId,
     },
     ManyTriples {
         start: UniqueId,
@@ -128,30 +129,24 @@ impl SignatureProvider for EcdsaSignatureProvider {
 
     async fn run_key_generation_client(
         mpc_config: MpcConfig,
-        network_client: Arc<MeshNetworkClient>,
-        channel_receiver: &mut mpsc::UnboundedReceiver<NetworkTaskChannel>,
+        channel: NetworkTaskChannel,
     ) -> anyhow::Result<Self::KeygenOutput> {
-        EcdsaSignatureProvider::run_key_generation_client_internal(
-            mpc_config,
-            network_client,
-            channel_receiver,
-        )
-        .await
+        EcdsaSignatureProvider::run_key_generation_client_internal(mpc_config, channel).await
     }
 
     async fn run_key_resharing_client(
         config: Arc<MpcConfig>,
-        client: Arc<MeshNetworkClient>,
-        state: ContractResharingState,
         my_share: Option<Scalar>,
-        channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
+        public_key: AffinePoint,
+        old_participants: &ParticipantsConfig,
+        channel: NetworkTaskChannel,
     ) -> anyhow::Result<Self::KeygenOutput> {
         EcdsaSignatureProvider::run_key_resharing_client_internal(
             config,
-            client,
-            state,
             my_share,
-            channel_receiver,
+            public_key,
+            old_participants,
+            channel,
         )
         .await
     }
@@ -159,7 +154,7 @@ impl SignatureProvider for EcdsaSignatureProvider {
     async fn process_channel(self: Arc<Self>, channel: NetworkTaskChannel) -> anyhow::Result<()> {
         match channel.task_id() {
             MpcTaskId::EcdsaTaskId(task) => match task {
-                EcdsaTaskId::KeyGeneration => {
+                EcdsaTaskId::KeyGeneration { .. } => {
                     anyhow::bail!("Key generation rejected in normal node operation");
                 }
                 EcdsaTaskId::KeyResharing { .. } => {

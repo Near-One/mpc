@@ -7,6 +7,7 @@ use k256::{
     AffinePoint, Scalar, Secp256k1,
 };
 use legacy_mpc_contract;
+use mpc_contract::primitives::key_state::KeyEventId;
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::Gas;
 use serde::{Deserialize, Serialize};
@@ -105,43 +106,48 @@ pub struct ChainJoinArgs {
 
 #[derive(Serialize, Debug)]
 pub struct ChainVotePkArgs {
+    pub key_event_id: KeyEventId,
     pub public_key: PublicKey,
 }
 
 #[derive(Serialize, Debug)]
 pub struct ChainVoteResharedArgs {
-    pub epoch: u64,
+    pub key_event_id: KeyEventId,
 }
 
+#[derive(Serialize, Debug)]
+pub struct ChainStartReshareArgs {}
+#[derive(Serialize, Debug)]
+pub struct ChainStartKeygenArgs {}
 /// Request to send a transaction to the contract on chain.
 #[derive(Serialize, Debug)]
 #[serde(untagged)]
 pub enum ChainSendTransactionRequest {
     Respond(ChainRespondArgs),
-    // TODO(#150): Implement join.
-    #[allow(dead_code)]
-    Join(ChainJoinArgs),
     VotePk(ChainVotePkArgs),
-    // TODO(#43): Implement vote_reshared.
-    #[allow(dead_code)]
+    StartKeygen(ChainStartKeygenArgs),
     VoteReshared(ChainVoteResharedArgs),
+    StartReshare(ChainStartReshareArgs),
 }
 
 impl ChainSendTransactionRequest {
     pub fn method(&self) -> &'static str {
         match self {
             ChainSendTransactionRequest::Respond(_) => "respond",
-            ChainSendTransactionRequest::Join(_) => "join",
             ChainSendTransactionRequest::VotePk(_) => "vote_pk",
             ChainSendTransactionRequest::VoteReshared(_) => "vote_reshared",
+            ChainSendTransactionRequest::StartReshare(_) => "start_reshare_instance",
+            ChainSendTransactionRequest::StartKeygen(_) => "start_keygen_instance",
         }
     }
 
     pub fn gas_required(&self) -> Gas {
         match self {
-            Self::Respond(_) | Self::Join(_) | Self::VotePk(_) | Self::VoteReshared(_) => {
-                300 * TGAS
-            }
+            Self::Respond(_)
+            | Self::VotePk(_)
+            | Self::VoteReshared(_)
+            | Self::StartReshare(_)
+            | Self::StartKeygen(_) => 300 * TGAS,
         }
     }
 }

@@ -63,7 +63,8 @@ async fn test_key_resharing_simple() {
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
             ContractState::Running(running) => {
-                running.epoch == 1 && running.participants.participants.len() == NUM_PARTICIPANTS
+                running.keyset.epoch_id.get() == 1
+                    && running.participants.participants.len() == NUM_PARTICIPANTS
             }
             _ => false,
         }),
@@ -139,7 +140,7 @@ async fn test_key_resharing_multistage() {
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
             ContractState::Running(running) => {
-                running.epoch == 1
+                running.keyset.epoch_id.get() == 1
                     && running.participants.participants.len() == NUM_PARTICIPANTS - 1
             }
             _ => false,
@@ -166,7 +167,8 @@ async fn test_key_resharing_multistage() {
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
             ContractState::Running(running) => {
-                running.epoch == 2 && running.participants.participants.len() == NUM_PARTICIPANTS
+                running.keyset.epoch_id.get() == 2
+                    && running.participants.participants.len() == NUM_PARTICIPANTS
             }
             _ => false,
         }),
@@ -195,7 +197,7 @@ async fn test_key_resharing_multistage() {
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
             ContractState::Running(running) => {
-                running.epoch == 3
+                running.keyset.epoch_id.get() == 3
                     && running.participants.participants.len() == NUM_PARTICIPANTS - 1
             }
             _ => false,
@@ -226,7 +228,7 @@ async fn test_key_resharing_multistage() {
         std::time::Duration::from_secs(20),
         setup.indexer.wait_for_contract_state(|state| match state {
             ContractState::Running(running) => {
-                running.epoch == 4
+                running.keyset.epoch_id.get() == 4
                     && running.participants.participants.len() == NUM_PARTICIPANTS - 2
             }
             _ => false,

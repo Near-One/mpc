@@ -38,7 +38,7 @@ def set_config():
         os.environ[CONFIG_ENV_VAR] = constants.CONFIG_PATH
 
 
-#@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def compile_contract():
     """
     This function navigates to the chain-signatures directory, compiles the mpc-contract and moves it in the res folder.
@@ -50,7 +50,7 @@ def compile_contract():
     chain_signatures = git_root / "libs" / "chain-signatures"
 
     subprocess.run([
-        "cargo", "build", "-p", "mpc-contract",
+        "cargo", "build", "-p", "mpc-contract@2.0.0-alpha",
         "--target=wasm32-unknown-unknown", "--release"
     ],
                    cwd=chain_signatures,
