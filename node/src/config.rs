@@ -153,7 +153,7 @@ impl ConfigFile {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParticipantsConfig {
     /// The threshold for the MPC protocol.
-    pub threshold: u32,
+    pub threshold: u64,
     pub participants: Vec<ParticipantInfo>,
 }
 
