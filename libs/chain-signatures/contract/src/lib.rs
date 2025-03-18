@@ -7,10 +7,12 @@ pub mod update;
 use crate::errors::Error;
 use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
 use config::{Config, InitConfig};
-use crypto_shared::SerializableScalar;
+use crypto_shared::types::Scheme;
 use crypto_shared::{
-    derive_epsilon, derive_key, kdf::check_ec_signature, near_public_key_to_affine_point,
-    types::SignatureResponse, ScalarExt as _,
+    derive_epsilon, derive_key,
+    k256_types::{SerializableAffinePoint, SerializableScalar},
+    kdf::secp256k1::check_ec_signature,
+    near_public_key_to_affine_point, ScalarExt, SignatureResponse,
 };
 use errors::{
     ConversionError, InvalidParameters, InvalidState, PublicKeyError, RespondError, SignError,
@@ -25,7 +27,7 @@ use near_sdk::{
     PromiseError, PublicKey,
 };
 use primitives::key_state::{DKState, EpochId, KeyEventId, KeyStateProposal};
-use primitives::signature::{SignRequest, SignatureRequest, YieldIndex};
+use primitives::signature::{SignatureRequestContract, SignatureRequestMpc, YieldIndex};
 use primitives::thresholds::Threshold;
 use primitives::votes::KeyStateVotes;
 use state::initializing::{InitializingContractState, PkVotes};
@@ -60,15 +62,15 @@ impl Default for VersionedMpcContract {
 #[derive(Debug)]
 pub struct MpcContract {
     protocol_state: ProtocolContractState,
-    pending_requests: LookupMap<SignatureRequest, YieldIndex>,
-    request_by_block_height: Vector<(u64, SignatureRequest)>,
+    pending_requests: LookupMap<SignatureRequestMpc, YieldIndex>,
+    request_by_block_height: Vector<(u64, SignatureRequestMpc)>,
     proposed_updates: ProposedUpdates,
     config: Config,
 }
 
 impl MpcContract {
-    fn public_key(&self) -> Result<PublicKey, Error> {
-        self.protocol_state.public_key()
+    fn public_key(&self, scheme: &Scheme) -> Result<PublicKey, Error> {
+        self.protocol_state.public_key(scheme)
     }
 
     fn threshold(&self) -> Result<Threshold, Error> {
@@ -91,7 +93,7 @@ impl MpcContract {
         cmp::max(i, 1) - 1
     }
 
-    fn add_request(&mut self, request: &SignatureRequest, data_id: CryptoHash) {
+    fn add_request(&mut self, request: &SignatureRequestMpc, data_id: CryptoHash) {
         self.request_by_block_height
             .push((env::block_height(), request.clone()));
         self.pending_requests
@@ -101,7 +103,7 @@ impl MpcContract {
         // then the request might get removed from the state when cleaning up t0.
     }
 
-    fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
+    fn get_pending_request(&self, request: &SignatureRequestMpc) -> Option<YieldIndex> {
         self.pending_requests.get(request).cloned()
     }
 
@@ -147,9 +149,14 @@ impl MpcContract {
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
+        public_key_ecdsa: PublicKey,
     ) -> Result<Option<ProtocolContractState>, Error> {
-        self.protocol_state
-            .vote_pk(key_event_id, public_key, self.config.event_max_idle_blocks)
+        self.protocol_state.vote_pk(
+            key_event_id,
+            public_key,
+            public_key_ecdsa,
+            self.config.event_max_idle_blocks,
+        )
     }
 
     pub fn vote_new_key_state(
@@ -176,26 +183,12 @@ impl VersionedMpcContract {
     /// The fee changes based on how busy the network is.
     #[handle_result]
     #[payable]
-    pub fn sign(&mut self, request: SignRequest) {
+    pub fn sign(&mut self, request: SignatureRequestContract) {
         log!(
             "sign: predecessor={:?}, request={:?}",
             env::predecessor_account_id(),
             request
         );
-        // ensure the signer sent a valid signature request
-
-        // It's important we fail here because the MPC nodes will fail in an identical way.
-        // This allows users to get the error message
-        let payload = match Scalar::from_bytes(request.payload) {
-            Some(payload) => payload,
-            None => {
-                env::panic_str(
-                    &InvalidParameters::MalformedPayload
-                        .message("Payload hash cannot be convereted to Scalar")
-                        .to_string(),
-                );
-            }
-        };
 
         if request.key_version > self.latest_key_version() {
             env::panic_str(&SignError::UnsupportedKeyVersion.to_string());
@@ -236,7 +229,7 @@ impl VersionedMpcContract {
             }
         }
 
-        let request = SignatureRequest::new(payload, &predecessor, &request.path);
+        let request = SignatureRequestMpc::new(&request, &predecessor);
 
         let Self::V0(mpc_contract) = self;
         // Remove timed out requests
@@ -269,30 +262,30 @@ impl VersionedMpcContract {
 
     /// This is the root public key combined from all the public keys of the participants.
     #[handle_result]
-    pub fn public_key(&self) -> Result<PublicKey, Error> {
+    pub fn public_key(&self, key_scheme: Option<Scheme>) -> Result<PublicKey, Error> {
         match self {
-            Self::V0(mpc_contract) => mpc_contract.public_key(),
+            Self::V0(mpc_contract) => mpc_contract.public_key(&key_scheme.unwrap_or_default()),
         }
     }
 
-    /// This is the derived public key of the caller given path and predecessor
-    /// if predecessor is not provided, it will be the caller of the contract
-    #[handle_result]
-    pub fn derived_public_key(
-        &self,
-        path: String,
-        predecessor: Option<AccountId>,
-    ) -> Result<PublicKey, Error> {
-        let predecessor = predecessor.unwrap_or_else(env::predecessor_account_id);
-        let epsilon = derive_epsilon(&predecessor, &path);
-        let derived_public_key =
-            derive_key(near_public_key_to_affine_point(self.public_key()?), epsilon);
-        let encoded_point = derived_public_key.to_encoded_point(false);
-        let slice: &[u8] = &encoded_point.as_bytes()[1..65];
-        let mut data: Vec<u8> = vec![near_sdk::CurveType::SECP256K1 as u8];
-        data.extend(slice.to_vec());
-        PublicKey::try_from(data).map_err(|_| PublicKeyError::DerivedKeyConversionFailed.into())
-    }
+    // /// This is the derived public key of the caller given path and predecessor
+    // /// if predecessor is not provided, it will be the caller of the contract
+    // #[handle_result]
+    // pub fn derived_public_key(
+    //     &self,
+    //     path: String,
+    //     predecessor: Option<AccountId>,
+    // ) -> Result<PublicKey, Error> {
+    //     let predecessor = predecessor.unwrap_or_else(env::predecessor_account_id);
+    //     let epsilon = derive_epsilon(&predecessor, &path);
+    //     let derived_public_key =
+    //         derive_key(near_public_key_to_affine_point(self.public_key()?), epsilon);
+    //     let encoded_point = derived_public_key.to_encoded_point(false);
+    //     let slice: &[u8] = &encoded_point.as_bytes()[1..65];
+    //     let mut data: Vec<u8> = vec![near_sdk::CurveType::SECP256K1 as u8];
+    //     data.extend(slice.to_vec());
+    //     PublicKey::try_from(data).map_err(|_| PublicKeyError::DerivedKeyConversionFailed.into())
+    // }
 
     /// Key versions refer new versions of the root key that we may choose to generate on cohort changes
     /// Older key versions will always work but newer key versions were never held by older signers
@@ -309,38 +302,41 @@ impl VersionedMpcContract {
     #[handle_result]
     pub fn respond(
         &mut self,
-        request: SignatureRequest,
+        request: SignatureRequestMpc,
         response: SignatureResponse,
     ) -> Result<(), Error> {
         let signer = env::signer_account_id();
         log!(
-            "respond: signer={}, request={:?} big_r={:?} s={:?}",
+            "respond: signer={}, request={:?}, response={:?}",
             &signer,
             &request,
-            &response.big_r,
-            &response.s
+            &response,
         );
         if !self.state().is_running() {
             return Err(InvalidState::ProtocolStateNotRunning.into());
         }
         // generate the expected public key
-        let pk = self.public_key()?;
-        let expected_public_key =
-            derive_key(near_public_key_to_affine_point(pk), request.epsilon.scalar);
+        // TODO: Figure out verification of public key with Simon
+        // let pk = self.public_key(Some(request.scheme()))?;
 
-        // Check the signature is correct
-        if check_ec_signature(
-            &expected_public_key,
-            &response.big_r.affine_point,
-            &response.s.scalar,
-            request.payload_hash.scalar,
-            response.recovery_id,
-        )
-        .is_err()
-        {
-            return Err(RespondError::InvalidSignature.into());
-        }
-        // First get the yield promise of the (potentially timed out) request.
+        // let expected_public_key = derive_key(
+        //     near_public_key_to_affine_point(pk),
+        //     request.epsilon().scalar,
+        // );
+
+        // // Check the signature is correct
+        // if check_ec_signature(
+        //     &expected_public_key,
+        //     &response.big_r.affine_point,
+        //     &response.s.scalar,
+        //     request.payload_hash.scalar,
+        //     response.recovery_id,
+        // )
+        // .is_err()
+        // {
+        //     return Err(RespondError::InvalidSignature.into());
+        // }
+        // // First get the yield promise of the (potentially timed out) request.
         if let Some(YieldIndex { data_id }) = self.get_pending_request(&request) {
             // Only then clean up the state.
             // This order of execution ensures that the state is cleaned of the current
@@ -400,6 +396,7 @@ impl VersionedMpcContract {
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
+        public_key_eddsa: PublicKey,
     ) -> Result<bool, Error> {
         log!(
             "vote_pk: signer={}, key_event_id={:?}, public_key={:?}",
@@ -409,7 +406,9 @@ impl VersionedMpcContract {
         );
         match self {
             Self::V0(contract_state) => {
-                if let Some(next_state) = contract_state.vote_pk(key_event_id, public_key)? {
+                if let Some(next_state) =
+                    contract_state.vote_pk(key_event_id, public_key, public_key_eddsa)?
+                {
                     contract_state.protocol_state = next_state;
                 }
                 Ok(false)
@@ -566,62 +565,62 @@ impl VersionedMpcContract {
         }))
     }
 
-    /// This will be called internally by the contract to migrate the state when a new contract
-    /// is deployed. This function should be changed every time state is changed to do the proper
-    /// migrate flow.
-    ///
-    /// If nothing is changed, then this function will just return the current state. If it fails
-    /// to read the state, then it will return an error.
-    #[private]
-    #[init(ignore_state)]
-    #[handle_result]
-    pub fn migrate() -> Result<Self, Error> {
-        if let Some(legacy_contract::VersionedMpcContract::V1(state)) =
-            env::state_read::<legacy_contract::VersionedMpcContract>()
-        {
-            // migrate config
-            let mut config = Config::default();
-            config.request_timeout_blocks = state.config.request_timeout_blocks;
-            config.max_num_requests_to_remove = state.config.max_num_requests_to_remove;
-            // migrate signature requests:
-            let mut request_by_block_height: Vector<(BlockHeight, SignatureRequest)> =
-                Vector::new(StorageKey::RequestsByTimestamp);
-            let mut pending_requests: LookupMap<SignatureRequest, YieldIndex> =
-                LookupMap::new(StorageKey::PendingRequests);
-            for (created, request) in &state.request_by_block_height {
-                // check if request is still valid:
-                if created + config.request_timeout_blocks > env::block_height() {
-                    // check if request is still pending:
-                    if let Some(data_id) = state.pending_requests.get(request) {
-                        let data_id = YieldIndex {
-                            data_id: data_id.data_id,
-                        };
-                        let request = SignatureRequest {
-                            epsilon: SerializableScalar {
-                                scalar: request.epsilon.scalar,
-                            },
-                            payload_hash: SerializableScalar {
-                                scalar: request.payload_hash.scalar,
-                            },
-                        };
-                        request_by_block_height.push((*created, request.clone()));
-                        pending_requests.insert(request, data_id);
-                    }
-                }
-            }
-            return Ok(VersionedMpcContract::V0(MpcContract {
-                config,
-                protocol_state: (&state.protocol_state).into(),
-                pending_requests,
-                request_by_block_height,
-                proposed_updates: ProposedUpdates::default(),
-            }));
-        }
-        if let Some(v2_contract) = env::state_read::<VersionedMpcContract>() {
-            return Ok(v2_contract);
-        }
-        Err(InvalidState::ContractStateIsMissing.into())
-    }
+    // /// This will be called internally by the contract to migrate the state when a new contract
+    // /// is deployed. This function should be changed every time state is changed to do the proper
+    // /// migrate flow.
+    // ///
+    // /// If nothing is changed, then this function will just return the current state. If it fails
+    // /// to read the state, then it will return an error.
+    // #[private]
+    // #[init(ignore_state)]
+    // #[handle_result]
+    // pub fn migrate() -> Result<Self, Error> {
+    //     if let Some(legacy_contract::VersionedMpcContract::V1(state)) =
+    //         env::state_read::<legacy_contract::VersionedMpcContract>()
+    //     {
+    //         // migrate config
+    //         let mut config = Config::default();
+    //         config.request_timeout_blocks = state.config.request_timeout_blocks;
+    //         config.max_num_requests_to_remove = state.config.max_num_requests_to_remove;
+    //         // migrate signature requests:
+    //         let mut request_by_block_height: Vector<(BlockHeight, SignatureRequest)> =
+    //             Vector::new(StorageKey::RequestsByTimestamp);
+    //         let mut pending_requests: LookupMap<SignatureRequest, YieldIndex> =
+    //             LookupMap::new(StorageKey::PendingRequests);
+    //         for (created, request) in &state.request_by_block_height {
+    //             // check if request is still valid:
+    //             if created + config.request_timeout_blocks > env::block_height() {
+    //                 // check if request is still pending:
+    //                 if let Some(data_id) = state.pending_requests.get(request) {
+    //                     let data_id = YieldIndex {
+    //                         data_id: data_id.data_id,
+    //                     };
+    //                     let request = SignatureRequest {
+    //                         epsilon: SerializableScalar {
+    //                             scalar: request.epsilon.scalar,
+    //                         },
+    //                         payload_hash: SerializableScalar {
+    //                             scalar: request.payload_hash.scalar,
+    //                         },
+    //                     };
+    //                     request_by_block_height.push((*created, request.clone()));
+    //                     pending_requests.insert(request, data_id);
+    //                 }
+    //             }
+    //         }
+    //         return Ok(VersionedMpcContract::V0(MpcContract {
+    //             config,
+    //             protocol_state: (&state.protocol_state).into(),
+    //             pending_requests,
+    //             request_by_block_height,
+    //             proposed_updates: ProposedUpdates::default(),
+    //         }));
+    //     }
+    //     if let Some(v2_contract) = env::state_read::<VersionedMpcContract>() {
+    //         return Ok(v2_contract);
+    //     }
+    //     Err(InvalidState::ContractStateIsMissing.into())
+    // }
 
     pub fn state(&self) -> &ProtocolContractState {
         match self {
@@ -629,7 +628,7 @@ impl VersionedMpcContract {
         }
     }
 
-    pub fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
+    pub fn get_pending_request(&self, request: &SignatureRequestMpc) -> Option<YieldIndex> {
         match self {
             Self::V0(mpc_contract) => mpc_contract.get_pending_request(request),
         }
@@ -667,7 +666,7 @@ impl VersionedMpcContract {
     #[handle_result]
     pub fn return_signature_and_clean_state_on_success(
         &mut self,
-        request: SignatureRequest, // this change here should actually be ok.
+        request: SignatureRequestMpc, // this change here should actually be ok.
         #[callback_result] signature: Result<SignatureResponse, PromiseError>,
     ) -> Result<SignatureResponse, Error> {
         let Self::V0(mpc_contract) = self;

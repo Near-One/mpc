@@ -5,6 +5,7 @@ use crate::primitives::key_state::{
     AuthenticatedParticipantId, DKState, EpochId, KeyEventId, KeyStateProposal,
 };
 use crate::primitives::votes::KeyStateVotes;
+use crypto_shared::types::Scheme;
 use near_sdk::{near, BlockHeight, PublicKey};
 
 #[near(serializers=[borsh, json])]
@@ -31,8 +32,8 @@ impl ResharingContractState {
     pub fn authenticate_participant(&self) -> Result<AuthenticatedParticipantId, Error> {
         self.current_state.authenticate_participant()
     }
-    pub fn public_key(&self) -> &PublicKey {
-        self.current_state.public_key()
+    pub fn public_key(&self, scheme: &Scheme) -> &PublicKey {
+        self.current_state.public_key(scheme)
     }
     /// Casts a vote for `proposal`, removing any exiting votes by `signer_account_id()`.
     /// Returns an error if `proposal` is invalid or signer not in the old partipicant set.
@@ -77,7 +78,8 @@ impl ResharingContractState {
         {
             return Ok(Some(RunningContractState {
                 key_state: DKState::new(
-                    self.public_key().clone(),
+                    self.public_key(&Scheme::Secp256k1).clone(),
+                    self.public_key(&Scheme::Ed25519).clone(),
                     key_event_id,
                     self.event_state.proposed_threshold_parameters().clone(),
                 )?,

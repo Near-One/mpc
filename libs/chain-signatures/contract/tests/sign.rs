@@ -10,13 +10,13 @@ use mpc_contract::{
     primitives::{
         key_state::KeyStateProposal,
         participants::Participants,
-        signature::SignRequest,
+        signature::SignatureRequestContract,
         thresholds::{DKGThreshold, Threshold, ThresholdParameters},
     },
 };
 use near_workspaces::types::NearToken;
 
-use crypto_shared::SignatureResponse;
+use crypto_shared::Secp256k1SignatureResponse;
 use std::mem;
 
 #[tokio::test]
@@ -37,7 +37,7 @@ async fn test_contract_sign_request() -> anyhow::Result<()> {
         println!("submitting: {msg}");
         let (payload_hash, respond_req, respond_resp) =
             create_response(predecessor_id, msg, path, &sk).await;
-        let request = SignRequest {
+        let request = SignatureRequestContract {
             payload: payload_hash,
             path: path.into(),
             key_version: 0,
@@ -50,7 +50,7 @@ async fn test_contract_sign_request() -> anyhow::Result<()> {
     let duplicate_msg = "welp";
     let (payload_hash, respond_req, respond_resp) =
         create_response(predecessor_id, duplicate_msg, path, &sk).await;
-    let request = SignRequest {
+    let request = SignatureRequestContract {
         payload: payload_hash,
         path: path.into(),
         key_version: 0,
@@ -81,7 +81,7 @@ async fn test_contract_sign_success_refund() -> anyhow::Result<()> {
     println!("submitting: {msg}");
     let (payload_hash, respond_req, respond_resp) =
         create_response(alice.id(), msg, path, &sk).await;
-    let request = SignRequest {
+    let request = SignatureRequestContract {
         payload: payload_hash,
         path: path.into(),
         key_version: 0,
@@ -117,7 +117,7 @@ async fn test_contract_sign_success_refund() -> anyhow::Result<()> {
     let execution = execution.into_result()?;
 
     // Finally wait the result:
-    let returned_resp: SignatureResponse = execution.json()?;
+    let returned_resp: Secp256k1SignatureResponse = execution.json()?;
     assert_eq!(
         returned_resp, respond_resp,
         "Returned signature request does not match"
@@ -155,7 +155,7 @@ async fn test_contract_sign_fail_refund() -> anyhow::Result<()> {
     let msg = "hello world!";
     println!("submitting: {msg}");
     let (payload_hash, _, _) = create_response(alice.id(), msg, path, &sk).await;
-    let request = SignRequest {
+    let request = SignatureRequestContract {
         payload: payload_hash,
         path: path.into(),
         key_version: 0,
@@ -215,7 +215,7 @@ async fn test_contract_sign_request_deposits() -> anyhow::Result<()> {
     let msg = "without-deposit";
     let (payload_hash, respond_req, respond_resp) =
         create_response(predecessor_id, msg, path, &sk).await;
-    let request = SignRequest {
+    let request = SignatureRequestContract {
         payload: payload_hash,
         path: path.into(),
         key_version: 0,

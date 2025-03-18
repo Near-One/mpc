@@ -1,3 +1,16 @@
 [toolchain]
-channel = "1.81.0" # seems to be required by near runtime (for now)
+channel = "1.84.0"
 targets = ["wasm32-unknown-unknown"]
+
+# Updated rust due to:
+# error[E0658]: raw address of syntax is experimental
+#    --> /home/dsharifi/.cargo/registry/src/index.crates.io-6f17d22bba15001f/near-vm-runner-0.28.0/src/logic/gas_counter.rs:185:9
+#     |
+# 185 |         &raw mut self.fast_counter
+#     |         ^^^^^^^^
+#     |
+#     = note: see issue #64490 <https://github.com/rust-lang/rust/issues/64490> for more information
+
+#     Checking near-time v0.28.0
+#     Checking near-primitives v0.28.0
+# For more information about this error, try `rustc --explain E0658`.

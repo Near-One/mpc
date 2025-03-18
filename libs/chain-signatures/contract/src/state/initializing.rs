@@ -53,6 +53,7 @@ impl InitializingContractState {
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
+        public_key_eddsa: PublicKey,
         event_max_idle_blocks: u64,
     ) -> Result<Option<RunningContractState>, Error> {
         let x = self
@@ -65,6 +66,7 @@ impl InitializingContractState {
                     return Ok(Some(RunningContractState {
                         key_state: DKState::new(
                             public_key,
+                            public_key_eddsa,
                             key_event_id,
                             self.keygen.proposed_threshold_parameters().clone(),
                         )?,

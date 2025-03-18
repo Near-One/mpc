@@ -6,6 +6,7 @@ use crate::primitives::key_state::{
 };
 use crate::primitives::participants::{ParticipantId, ParticipantInfo};
 use crate::primitives::votes::KeyStateVotes;
+use crypto_shared::types::Scheme;
 use near_sdk::{near, AccountId, PublicKey};
 use std::collections::BTreeMap;
 
@@ -28,8 +29,8 @@ impl RunningContractState {
     pub fn authenticate_participant(&self) -> Result<AuthenticatedParticipantId, Error> {
         self.key_state.authenticate()
     }
-    pub fn public_key(&self) -> &PublicKey {
-        self.key_state.public_key()
+    pub fn public_key(&self, scheme: &Scheme) -> &PublicKey {
+        self.key_state.public_key(scheme)
     }
     pub fn epoch_id(&self) -> EpochId {
         self.key_state.epoch_id()

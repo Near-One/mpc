@@ -1,7 +1,7 @@
-use crypto_shared::kdf::{check_ec_signature, derive_secret_key};
 use crypto_shared::{
-    derive_epsilon, derive_key, ScalarExt as _, SerializableAffinePoint, SerializableScalar,
-    SignatureResponse,
+    derive_epsilon, derive_key,
+    kdf::{secp256k1::check_ec_signature, secp256k1::derive_secret_key},
+    ScalarExt as _, Secp256k1SignatureResponse, SerializableAffinePoint, SerializableScalar,
 };
 use digest::{Digest, FixedOutput};
 use ecdsa::signature::Verifier;
@@ -14,7 +14,7 @@ use mpc_contract::primitives::key_state::{
     AttemptId, DKState, EpochId, KeyEventId, KeyStateProposal,
 };
 use mpc_contract::primitives::participants::{ParticipantInfo, Participants};
-use mpc_contract::primitives::signature::{SignRequest, SignatureRequest};
+use mpc_contract::primitives::signature::{SignatureRequestContract, SignatureRequestMpc};
 use mpc_contract::primitives::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 use mpc_contract::update::UpdateId;
 use near_sdk::log;
@@ -160,7 +160,7 @@ pub async fn create_response(
     msg: &str,
     path: &str,
     sk: &k256::SecretKey,
-) -> ([u8; 32], SignatureRequest, SignatureResponse) {
+) -> ([u8; 32], SignatureRequestMpc, Secp256k1SignatureResponse) {
     let (digest, scalar_hash, payload_hash) = process_message(msg).await;
     let pk = sk.public_key();
 
@@ -178,7 +178,7 @@ pub async fn create_response(
     let s = signature.s();
     let (r_bytes, _s_bytes) = signature.split_bytes();
     let payload_hash_s = Scalar::from_bytes(payload_hash).unwrap();
-    let respond_req = SignatureRequest::new(payload_hash_s, predecessor_id, path);
+    let respond_req = SignatureRequestMpc::new(payload_hash_s, predecessor_id, path);
     let big_r =
         AffinePoint::decompress(&r_bytes, k256::elliptic_curve::subtle::Choice::from(0)).unwrap();
     let s: k256::Scalar = *s.as_ref();
@@ -191,7 +191,7 @@ pub async fn create_response(
         panic!("unable to use recovery id of 0 or 1");
     };
 
-    let respond_resp = SignatureResponse {
+    let respond_resp = Secp256k1SignatureResponse {
         big_r: SerializableAffinePoint {
             affine_point: big_r,
         },
@@ -203,8 +203,8 @@ pub async fn create_response(
 }
 
 pub async fn sign_and_validate(
-    request: &SignRequest,
-    respond: Option<(&SignatureRequest, &SignatureResponse)>,
+    request: &SignatureRequestContract,
+    respond: Option<(&SignatureRequestMpc, &Secp256k1SignatureResponse)>,
     contract: &Contract,
 ) -> anyhow::Result<()> {
     let status = contract
@@ -239,7 +239,7 @@ pub async fn sign_and_validate(
     let execution = execution.into_result()?;
 
     // Finally wait the result:
-    let returned_resp: SignatureResponse = execution.json()?;
+    let returned_resp: Secp256k1SignatureResponse = execution.json()?;
     if let Some((_, respond_resp)) = respond {
         assert_eq!(
             &returned_resp, respond_resp,

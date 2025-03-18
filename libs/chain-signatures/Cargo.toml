@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "contract",
-]
+    "crypto-shared",
+] # temp addition to make linter lint crypto-shared
 resolver = "2"
 
 [workspace.metadata.test]
@@ -12,7 +13,7 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
-opt-level="s"
+opt-level = "s"
 
 
 [patch.crates-io]

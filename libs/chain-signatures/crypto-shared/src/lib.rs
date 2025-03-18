@@ -1,11 +1,17 @@
 pub mod kdf;
 pub mod types;
 
+use ed25519_dalek::VerifyingKey;
 use k256::elliptic_curve::sec1::FromEncodedPoint;
 use k256::EncodedPoint;
-pub use kdf::{derive_epsilon, derive_key, x_coordinate};
+pub use kdf::{
+    derive_epsilon,
+    secp256k1::{derive_key, x_coordinate},
+};
+use types::Scheme;
 pub use types::{
-    PublicKey, ScalarExt, SerializableAffinePoint, SerializableScalar, SignatureResponse,
+    curve25519_types, k256_types, Ed25519PublicKey, ScalarExt, Secp256k1PublicKey,
+    SignatureResponse,
 };
 
 // Our wasm runtime doesn't support good syncronous entropy.
@@ -20,9 +26,14 @@ pub fn randomness_unsupported(_: &mut [u8]) -> Result<(), Error> {
 #[cfg(target_arch = "wasm32")]
 register_custom_getrandom!(randomness_unsupported);
 
-pub fn near_public_key_to_affine_point(pk: near_sdk::PublicKey) -> PublicKey {
+pub fn near_public_key_to_affine_point(pk: near_sdk::PublicKey) -> Secp256k1PublicKey {
     let mut bytes = pk.into_bytes();
     bytes[0] = 0x04;
     let point = EncodedPoint::from_bytes(bytes).unwrap();
-    PublicKey::from_encoded_point(&point).unwrap()
+    Secp256k1PublicKey::from_encoded_point(&point).unwrap()
+}
+
+// TODO: Verify with Simon if this is needed
+pub fn near_public_key_to_edwards_point(pk: near_sdk::PublicKey) -> VerifyingKey {
+    todo!()
 }

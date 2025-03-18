@@ -6,6 +6,7 @@ pub mod running;
 use crate::errors::{Error, InvalidState};
 use crate::primitives::key_state::{KeyEventId, KeyStateProposal};
 use crate::primitives::thresholds::Threshold;
+use crypto_shared::types::Scheme;
 use initializing::InitializingContractState;
 use near_sdk::{near, PublicKey};
 use resharing::ResharingContractState;
@@ -21,10 +22,10 @@ pub enum ProtocolContractState {
 }
 
 impl ProtocolContractState {
-    pub fn public_key(&self) -> Result<PublicKey, Error> {
+    pub fn public_key(&self, scheme: &Scheme) -> Result<PublicKey, Error> {
         match self {
-            ProtocolContractState::Running(state) => Ok(state.public_key().clone()),
-            ProtocolContractState::Resharing(state) => Ok(state.public_key().clone()),
+            ProtocolContractState::Running(state) => Ok(state.public_key(scheme).clone()),
+            ProtocolContractState::Resharing(state) => Ok(state.public_key(scheme).clone()),
             _ => Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
         }
     }
@@ -71,13 +72,19 @@ impl ProtocolContractState {
         &mut self,
         key_event_id: KeyEventId,
         public_key: PublicKey,
+        public_key_eddsa: PublicKey,
         event_max_idle_blocks: u64,
     ) -> Result<Option<ProtocolContractState>, Error> {
         let ProtocolContractState::Initializing(state) = self else {
             return Err(InvalidState::ProtocolStateNotResharing.into());
         };
         state
-            .vote_pk(key_event_id, public_key, event_max_idle_blocks)
+            .vote_pk(
+                key_event_id,
+                public_key,
+                public_key_eddsa,
+                event_max_idle_blocks,
+            )
             .map(|x| x.map(ProtocolContractState::Running))
     }
     /// Casts a vote for `proposed_key_state`, returning the new protocol state if the proposal is

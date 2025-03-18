@@ -1,7 +1,7 @@
 pub mod common;
 use common::{create_response, init_env};
 
-use mpc_contract::primitives::signature::SignRequest;
+use mpc_contract::primitives::signature::SignatureRequestContract;
 use near_sdk::{CurveType, PublicKey};
 use near_workspaces::types::NearToken;
 use serde_json::json;
@@ -70,7 +70,7 @@ async fn test_experimental_signature_deposit() -> anyhow::Result<()> {
         let msg = format!("hello world {}", i);
         println!("submitting: {msg}");
         let (payload_hash, _, _) = create_response(alice.id(), &msg, path, &sk).await;
-        let request = SignRequest {
+        let request = SignatureRequestContract {
             payload: payload_hash,
             path: path.into(),
             key_version: 0,

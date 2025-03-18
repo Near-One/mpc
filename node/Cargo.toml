@@ -10,12 +10,18 @@ anyhow = "1.0.92"
 async-trait = "0.1.83"
 axum = "0.7.9"
 borsh = { version = "1.5.1", features = ["derive"] }
-cait-sith = { git = "https://github.com/Near-One/cait-sith.git", rev = "f5eca9dd715c53e19785c0300e50ae2686740811", features = ["k256", "internals"] }
+cait-sith = { git = "https://github.com/Near-One/cait-sith.git", rev = "f5eca9dd715c53e19785c0300e50ae2686740811", features = [
+    "k256",
+    "internals",
+] }
 clap = { version = "4.5.20", features = ["derive", "env"] }
 flume = "0.11.1"
 futures = "0.3.31"
 futures-util = "0.3.31"
-gcloud-sdk = { version = "0.26.2", default-features = false, features = ["google-cloud-secretmanager-v1", "tls-webpki-roots"] }
+gcloud-sdk = { version = "0.26.2", default-features = false, features = [
+    "google-cloud-secretmanager-v1",
+    "tls-webpki-roots",
+] }
 hex = { version = "0.4.3", features = ["serde"] }
 hex-literal = "0.4.1"
 hkdf = "0.12.4"
@@ -48,15 +54,15 @@ frost-ed25519 = "2.1.0"
 curve25519-dalek = "4.1.3"
 
 near-indexer = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
-near-indexer-primitives = { git = "https://github.com/near/nearcore",rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
-near-client = { git = "https://github.com/near/nearcore",rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
-near-config-utils = { git = "https://github.com/near/nearcore",rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
+near-indexer-primitives = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
+near-client = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
+near-config-utils = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
 near-crypto = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
 near-o11y = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
 near-time = { git = "https://github.com/near/nearcore", rev = "39882d8d34281fae2e5551c000eeeede2e75f8da" }
 # todo: update once 1.1.0 is pulbished (though the api did not change)
-legacy-mpc-contract = {package="mpc-contract", git = "https://github.com/Near-One/mpc/", version = "1.0.1" }
-mpc-contract = { path = "../libs/chain-signatures/contract/"}
+legacy-mpc-contract = { package = "mpc-contract", git = "https://github.com/Near-One/mpc/", rev = "1d4954dff28e8eb988fb7762eff414a602a2b124" }
+mpc-contract = { path = "../libs/chain-signatures/contract/" }
 
 [dev-dependencies]
 serial_test = "3.2.0"

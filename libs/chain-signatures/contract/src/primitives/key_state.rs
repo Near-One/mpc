@@ -1,6 +1,7 @@
 use super::participants::{ParticipantId, Participants};
 use super::thresholds::{DKGThreshold, Threshold, ThresholdParameters};
 use crate::errors::{Error, InvalidState};
+use crypto_shared::types::Scheme;
 use near_sdk::{env, near, PublicKey};
 
 #[near(serializers=[borsh, json])]
@@ -82,6 +83,7 @@ impl KeyEventId {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DKState {
     public_key: PublicKey,
+    public_key_eddsa: PublicKey,
     key_event_id: KeyEventId,
     threshold_parameters: ThresholdParameters,
 }
@@ -90,8 +92,11 @@ impl DKState {
     pub fn authenticate(&self) -> Result<AuthenticatedParticipantId, Error> {
         AuthenticatedParticipantId::new(self.threshold_parameters.participants())
     }
-    pub fn public_key(&self) -> &PublicKey {
-        &self.public_key
+    pub fn public_key(&self, scheme: &Scheme) -> &PublicKey {
+        match scheme {
+            Scheme::Secp256k1 => &self.public_key,
+            Scheme::Ed25519 => &self.public_key_eddsa,
+        }
     }
     pub fn epoch_id(&self) -> EpochId {
         self.key_event_id.epoch_id.clone()
@@ -110,12 +115,14 @@ impl DKState {
     }
     pub fn new(
         public_key: PublicKey,
+        public_key_eddsa: PublicKey,
         key_event_id: KeyEventId,
         threshold_parameters: ThresholdParameters,
     ) -> Result<Self, Error> {
         threshold_parameters.validate()?;
         Ok(DKState {
             public_key,
+            public_key_eddsa,
             key_event_id,
             threshold_parameters,
         })
@@ -184,6 +191,7 @@ impl From<&legacy_contract::ResharingContractState> for DKState {
     fn from(state: &legacy_contract::ResharingContractState) -> Self {
         DKState {
             public_key: state.public_key.clone(),
+            public_key_eddsa: todo!(),
             key_event_id: KeyEventId::new_migrated_key(state.old_epoch),
             threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),
@@ -196,6 +204,7 @@ impl From<&legacy_contract::RunningContractState> for DKState {
     fn from(state: &legacy_contract::RunningContractState) -> Self {
         DKState {
             public_key: state.public_key.clone(),
+            public_key_eddsa: todo!(),
             key_event_id: KeyEventId::new_migrated_key(state.epoch),
             threshold_parameters: ThresholdParameters::from((
                 Threshold::new(state.threshold as u64),
