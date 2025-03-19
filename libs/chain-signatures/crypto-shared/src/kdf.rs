@@ -12,7 +12,7 @@ use sha3::{Digest, Sha3_256};
 // near-mpc-recovery with key derivation protocol vX.Y.Z.
 const EPSILON_DERIVATION_PREFIX: &str = "near-mpc-recovery v0.1.0 epsilon derivation:";
 
-pub fn derive_epsilon(predecessor_id: &AccountId, path: &str) -> Scalar {
+pub fn derive_epsilon(predecessor_id: &AccountId, path: &str) -> [u8; 32] {
     // TODO: Use a key derivation library instead of doing this manually.
     // https://crates.io/crates/hkdf might be a good option?
     //
@@ -25,7 +25,7 @@ pub fn derive_epsilon(predecessor_id: &AccountId, path: &str) -> Scalar {
     let mut hasher = Sha3_256::new();
     hasher.update(derivation_path);
     let hash: [u8; 32] = hasher.finalize().into();
-    Scalar::from_non_biased(hash)
+    hash
 }
 
 pub fn derive_key(public_key: PublicKey, epsilon: Scalar) -> PublicKey {
