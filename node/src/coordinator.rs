@@ -10,16 +10,20 @@ use crate::indexer::types::{
     ChainVoteResharedArgs,
 };
 use crate::indexer::IndexerAPI;
-use crate::keyshare::{KeyShare, KeyshareStorage, KeyshareStorageFactory};
-use crate::metrics;
+use crate::keyshare::{
+    KeyShare, KeyShareData, KeyshareStorage, KeyshareStorageFactory, Secp256k1Data,
+};
 use crate::mpc_client::MpcClient;
-use crate::network::{run_network_client, MeshNetworkTransportSender};
+use crate::network::computation::MpcLeaderCentricComputation;
+use crate::network::{run_network_client, MeshNetworkClient, MeshNetworkTransportSender};
 use crate::p2p::new_tls_mesh_network;
-use crate::providers::{EcdsaSignatureProvider, SignatureProvider};
+use crate::primitives::MpcTaskId;
+use crate::providers::{EcdsaSignatureProvider, EcdsaTaskId, SignatureProvider};
 use crate::runtime::AsyncDroppableRuntime;
 use crate::sign_request::SignRequestStorage;
 use crate::tracking::{self};
 use crate::web::SignatureDebugRequest;
+use crate::{metrics, providers};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use mpc_contract::primitives::domain::SignatureScheme;
@@ -312,40 +316,13 @@ impl Coordinator {
             tracing::info!("We are not a participant in the initial candidates list; doing nothing until contract state change");
             return Ok(MpcJobResult::HaltUntilInterrupted);
         };
-        let n_participants = mpc_config.participants.participants.len();
-        let mut current_event = key_event_receiver.borrow_and_update().clone();
-        let is_leader = mpc_config.is_leader_for_keygen();
-        let existing_key = keyshare_storage.load().await?;
-        if let Some(existing_key) = existing_key {
-            if current_event.id == existing_key.key_id {
-                if !current_event
-                    .completed
-                    .contains(&mpc_config.my_participant_id)
-                {
-                    tracing::info!("Contract is in initialization state. We have our keyshare. Sending vote_pk to vote for our public key");
-                    // we have the key, vote for completion and stop:
-                    let my_public_key = affine_point_to_public_key(existing_key.public_key)?;
-                    chain_txn_sender
-                        .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
-                            key_event_id: existing_key.key_id,
-                            public_key: my_public_key,
-                        }))
-                        .await?;
-                }
-                tracing::info!("Contract is in initialization state. We have our keyshare. Waiting for other participants to complete.");
-                return Ok(MpcJobResult::HaltUntilInterrupted);
-            }
-        }
 
-        tracking::set_progress(&format!(
-            "Generating key as participant {}",
-            mpc_config.my_participant_id
-        ));
+        // Get existing keyshares. This call is expected to throw an error if not all keyshares are available.
+        let existing_keyshare = keyshare_storage.load_keyset(&contract_state.keyset).await?;
+        tracing::info!("Contract is in initialization state. We have our keyshares.");
 
-        // TODO(#195): We do not have proper retry or failure handling for key generation.
-        // To lower the risk of test flakiness, we will sleep 2 seconds to avoid repeated
-        // failures like the scenario described in #151.
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await; // remove?
+        // todo: lets see if this timout can be removed.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         let (sender, receiver) =
             new_tls_mesh_network(&mpc_config, &secrets.p2p_private_key).await?;
 
@@ -355,6 +332,79 @@ impl Coordinator {
             .await?;
         let (network_client, mut channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
+
+        // follower loop:
+
+        loop {
+            //let task_id = expected_task_id.into();
+            'awaiting_task: loop {
+                let channel = channel_receiver.recv().await.unwrap();
+                let task_id = channel.task_id();
+                let MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing {
+                    key_event: task_key_event_id,
+                }) = task_id
+                else {
+                    tracing::info!(
+                        "Expected Resharing task id, received: {:?}; ignoring.",
+                        task_id,
+                    );
+                    continue 'awaiting_task;
+                };
+                let contract_event = key_event_receiver.borrow_and_update().clone();
+                if task_key_event_id == contract_event.id && contract_event.started_in.is_some() {
+                    tracing::info!(
+                        "Joining ecdsa secp256k1 key generation for key id {:?}",
+                        contract_event.id
+                    );
+                    // join computation
+                    let threshold = mpc_config.participants.threshold as usize;
+                    let comp =
+                        providers::ecdsa::key_generation::KeyGenerationComputation { threshold };
+                    let res = MpcLeaderCentricComputation::perform_leader_centric_computation(
+                        comp,
+                        channel,
+                        std::time::Duration::from_secs(60),
+                    )
+                    .await?;
+                    tracing::info!("Ecdsa secp256k1 key generation completed.");
+                    let keyshare = KeyShare {
+                        key_id: contract_event.id,
+                        data: KeyShareData::Secp256k1(Secp256k1Data {
+                            private_share: res.private_share,
+                            public_key: res.public_key,
+                        }),
+                    };
+                    keyshare_storage.store(&keyshare);
+                    let my_public_key = affine_point_to_public_key(res.public_key)?;
+                    tracing::info!("Key generation complete; Follower calls vote_pk.");
+                    chain_txn_sender
+                        .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
+                            key_event_id: contract_event.id,
+                            public_key: my_public_key,
+                        }))
+                        .await?;
+                    continue;
+                }
+
+                break;
+            }
+            break;
+            //   let channel = MeshNetworkClient::wait_for_task(
+            //       channel_receiver,
+            //       EcdsaTaskId::KeyGeneration { key_event: key_id },
+            //   )
+            //   .await;
+        }
+
+        // start key generation:
+        let is_leader = mpc_config.is_leader_for_keygen();
+
+        loop {
+            let mut current_event = key_event_receiver.borrow_and_update().clone();
+        }
+
+        let n_participants = mpc_config.participants.participants.len();
+
         let started_in = current_event.last_updated;
         while !current_event.started_in.is_some() {
             if is_leader {
@@ -383,6 +433,32 @@ impl Coordinator {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             current_event = key_event_receiver.borrow_and_update().clone();
         }
+
+        //    let channel = if is_leader {
+        //        network_client.new_channel_for_task(
+        //            EcdsaTaskId::KeyGeneration { key_event: key_id },
+        //            network_client.all_participant_ids(),
+        //        )?
+        //    } else {
+        //        MeshNetworkClient::wait_for_task(
+        //            channel_receiver,
+        //            EcdsaTaskId::KeyGeneration { key_event: key_id },
+        //        )
+        //        .await
+        //    };
+
+        //    let threshold = mpc_config.participants.threshold as usize;
+        //    let key = KeyGenerationComputation { threshold }
+        //        .perform_leader_centric_computation(
+        //            channel,
+        //            // TODO(#195): Move timeout here instead of in Coordinator.
+        //            std::time::Duration::from_secs(60),
+        //        )
+        //        .await?;
+        //    tracing::info!("Ecdsa secp256k1 key generation completed");
+
+        //    Ok(key)
+        //}
         let key = EcdsaSignatureProvider::run_key_generation_client(
             mpc_config,
             network_client,

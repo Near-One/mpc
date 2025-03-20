@@ -47,7 +47,7 @@ impl EcdsaSignatureProvider {
 /// Runs the key generation protocol, returning the key generated.
 /// This protocol is identical for the leader and the followers.
 pub struct KeyGenerationComputation {
-    threshold: usize,
+    pub threshold: usize,
 }
 
 #[async_trait::async_trait]

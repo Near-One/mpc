@@ -6,7 +6,7 @@
 //!
 //! As a reference, check the existing implementations.
 
-mod ecdsa;
+pub mod ecdsa;
 pub use ecdsa::EcdsaSignatureProvider;
 pub use ecdsa::EcdsaTaskId;
 use mpc_contract::primitives::key_state::KeyEventId;

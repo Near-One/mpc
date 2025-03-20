@@ -126,10 +126,9 @@ pub fn convert_key_event_to_instance(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractInitializingState {
-    pub epoch_id: EpochId,
+    pub keyset: ContractKeyset,
     pub participants: ParticipantsConfig,
-    //pub domains: Vec<DomainConfig>, // included for sanity checks
-    pub generated_keys: Vec<ContractKeyForDomain>, // included for sanity checks
+    //pub domains: Vec<DomainConfig>, // include for sanity checks?
     pub key_event: ContractKeyEventInstance,
 }
 
@@ -139,13 +138,15 @@ pub fn convert_init_state(
     block_height: u64,
 ) -> anyhow::Result<ContractInitializingState> {
     Ok(ContractInitializingState {
-        epoch_id: state.epoch_id,
+        keyset: ContractKeyset {
+            epoch_id: state.epoch_id,
+            domains: convert_domains(&state.generated_keys, &state.domains)?,
+        },
         participants: convert_participant_infos(
             state.generating_key.proposed_parameters().clone(),
             port_override,
         )?,
         //domains: state.domains.domains().to_vec(),
-        generated_keys: convert_domains(&state.generated_keys, &state.domains)?,
         key_event: convert_key_event_to_instance(&state.generating_key, block_height),
     })
 }
