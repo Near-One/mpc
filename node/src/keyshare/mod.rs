@@ -9,12 +9,22 @@ use mpc_contract::primitives::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::indexer::participants::ContractKeyset;
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Secp256k1Data {
+    pub private_share: Scalar,
+    pub public_key: AffinePoint,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub enum KeyShareData {
+    Secp256k1(Secp256k1Data),
+}
+
 // The keystore is a mess right now, because changes will depend on PR #278.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeyShare {
     pub key_id: KeyEventId,
-    pub private_share: Scalar,
-    pub public_key: AffinePoint,
+    pub data: KeyShareData,
 }
 impl KeyShare {
     //pub fn domain_id(&self) -> DomainId {
@@ -90,7 +100,9 @@ pub trait KeyshareStorage: Send {
 
     /// Stores the most recent root keyshare data. This can only succeed if the
     /// keyshare didn't exist before or if the new data has a higher epoch.
-    async fn store(&self, data: &KeyShare) -> anyhow::Result<()>;
+    async fn store(&self, key_share: &KeyShare) -> anyhow::Result<()>;
+
+    async fn load_keyset(&self, keyset: &ContractKeyset) -> anyhow::Result<Vec<KeyShare>>;
 }
 
 /// Factory to construct a KeyshareStorage implementation.
