@@ -334,8 +334,7 @@ impl Coordinator {
             run_network_client(Arc::new(sender), Box::new(receiver));
 
         // follower loop:
-
-        loop {
+        'follower: loop {
             //let task_id = expected_task_id.into();
             'awaiting_task: loop {
                 let channel = channel_receiver.recv().await.unwrap();
@@ -351,6 +350,13 @@ impl Coordinator {
                     continue 'awaiting_task;
                 };
                 let contract_event = key_event_receiver.borrow_and_update().clone();
+                if contract_event
+                    .completed
+                    .contains(&mpc_config.my_participant_id)
+                {
+                    tracing::info!("Already completed this key event {:?}", contract_event.id);
+                    continue 'awaiting_task;
+                }
                 if task_key_event_id == contract_event.id && contract_event.started_in.is_some() {
                     tracing::info!(
                         "Joining ecdsa secp256k1 key generation for key id {:?}",
@@ -384,55 +390,154 @@ impl Coordinator {
                         }))
                         .await?;
                     continue;
+                } else {
+                    // we might just have to wait for it on the contract. Do not drop though
                 }
-
                 break;
             }
             break;
-            //   let channel = MeshNetworkClient::wait_for_task(
-            //       channel_receiver,
-            //       EcdsaTaskId::KeyGeneration { key_event: key_id },
-            //   )
-            //   .await;
         }
-
-        // start key generation:
-        let is_leader = mpc_config.is_leader_for_keygen();
-
-        loop {
-            let mut current_event = key_event_receiver.borrow_and_update().clone();
-        }
-
+        // leader loop:
         let n_participants = mpc_config.participants.participants.len();
-
-        let started_in = current_event.last_updated;
-        while !current_event.started_in.is_some() {
-            if is_leader {
-                tracing::info!("We are waiting for all other participants");
-                let indexer_heights = network_client.get_indexer_heights();
-                let mut ready = true;
-                for (p_id, h) in indexer_heights {
-                    if h < started_in {
-                        tracing::info!(
-                            "Waiting on participant {:?}, who is still at height {}",
-                            p_id,
-                            h
-                        );
-                        ready = false;
-                    }
-                }
-                if ready {
+        'leader: loop {
+            'starting_task: {
+                let mut contract_event = key_event_receiver.borrow_and_update().clone();
+                if contract_event.started_in.is_none() {
+                    tracing::info!(
+                        "Leader is starting ecdsa secp256k1 key generation for key id {:?}",
+                        contract_event.id
+                    );
+                    // open the channel
+                    let channel = network_client.new_channel_for_task(
+                        EcdsaTaskId::KeyGeneration {
+                            key_event: contract_event.id.clone(),
+                        },
+                        network_client.all_participant_ids(),
+                    )?;
+                    // start the keygen on the contract
+                    //tracing::info!("We are waiting for all other participants");
+                    //loop {
+                    //    let indexer_heights = network_client.get_indexer_heights();
+                    //    let mut ready = true;
+                    //    for (p_id, h) in indexer_heights {
+                    //        if h < started_in {
+                    //            tracing::info!(
+                    //                "Waiting on participant {:?}, who is still at height {}",
+                    //                p_id,
+                    //                h
+                    //            );
+                    //            ready = false;
+                    //        }
+                    //    }
+                    //    if ready {
                     chain_txn_sender
                         .send(ChainSendTransactionRequest::StartKeygen(
                             ChainStartKeygenArgs {},
                         ))
                         .await?;
+                    //        break;
+                    //    }
+                    //}
+                    // initiate the computation
+                    let threshold = mpc_config.participants.threshold as usize;
+                    let comp =
+                        providers::ecdsa::key_generation::KeyGenerationComputation { threshold };
+                    let res = MpcLeaderCentricComputation::perform_leader_centric_computation(
+                        comp,
+                        channel,
+                        std::time::Duration::from_secs(60),
+                    )
+                    .await?;
+                    tracing::info!("Ecdsa secp256k1 key generation completed.");
+                    let keyshare = KeyShare {
+                        key_id: contract_event.id.clone(),
+                        data: KeyShareData::Secp256k1(Secp256k1Data {
+                            private_share: res.private_share,
+                            public_key: res.public_key,
+                        }),
+                    };
+                    keyshare_storage.store(&keyshare);
+                    while contract_event.completed.len() != n_participants - 1 {
+                        contract_event = key_event_receiver.borrow_and_update().clone();
+                        // sleep a bit
+                        // todo: checks if domain id changed for some reason?? It shouldn't though,
+                        // right?
+                    }
+                    let my_public_key = affine_point_to_public_key(res.public_key)?;
+                    tracing::info!("Key generation complete; Leader calls vote_pk.");
+                    chain_txn_sender
+                        .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
+                            key_event_id: contract_event.id,
+                            public_key: my_public_key,
+                        }))
+                        .await?;
+                    continue 'leader;
                 }
             }
-            // wait for the reshare to start:
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            current_event = key_event_receiver.borrow_and_update().clone();
         }
+        //if contract_event.started_in.is_some() {
+        //    if contract_event.completed.len() = n_participants - 1 {
+        //        tracing::info!("Key generation complete; Leader calls vote_pk.");
+        //        chain_txn_sender
+        //            .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
+        //                key_event_id: contract_event.id,
+        //                public_key: my_public_key,
+        //            }))
+        //            .await?;
+        //    }
+        //}
+        //if contract_event
+        //    .completed
+        //    .contains(&mpc_config.my_participant_id)
+        //{
+        //    tracing::info!("Already completed this key event {:?}", contract_event.id);
+        //    continue 'awaiting_task;
+        //}
+        //if task_key_event_id == contract_event.id && contract_event.started_in.is_some() {
+        //    tracing::info!(
+        //        "Joining ecdsa secp256k1 key generation for key id {:?}",
+        //        contract_event.id
+        //    );
+        //    // join computation
+        //continue;
+        //}
+        //break;
+
+        // start key generation:
+        //let is_leader = mpc_config.is_leader_for_keygen();
+
+        //loop {
+        //    let mut current_event = key_event_receiver.borrow_and_update().clone();
+        //}
+
+        //let started_in = current_event.last_updated;
+        //while !current_event.started_in.is_some() {
+        //    if is_leader {
+        //        tracing::info!("We are waiting for all other participants");
+        //        let indexer_heights = network_client.get_indexer_heights();
+        //        let mut ready = true;
+        //        for (p_id, h) in indexer_heights {
+        //            if h < started_in {
+        //                tracing::info!(
+        //                    "Waiting on participant {:?}, who is still at height {}",
+        //                    p_id,
+        //                    h
+        //                );
+        //                ready = false;
+        //            }
+        //        }
+        //        if ready {
+        //            chain_txn_sender
+        //                .send(ChainSendTransactionRequest::StartKeygen(
+        //                    ChainStartKeygenArgs {},
+        //                ))
+        //                .await?;
+        //        }
+        //    }
+        //    // wait for the reshare to start:
+        //    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        //    current_event = key_event_receiver.borrow_and_update().clone();
+        //}
 
         //    let channel = if is_leader {
         //        network_client.new_channel_for_task(
@@ -459,55 +564,55 @@ impl Coordinator {
 
         //    Ok(key)
         //}
-        let key = EcdsaSignatureProvider::run_key_generation_client(
-            mpc_config,
-            network_client,
-            &mut channel_receiver,
-            current_event.id,
-            is_leader,
-        )
-        .await?;
+        //let key = EcdsaSignatureProvider::run_key_generation_client(
+        //    mpc_config,
+        //    network_client,
+        //    &mut channel_receiver,
+        //    current_event.id,
+        //    is_leader,
+        //)
+        //.await?;
 
-        let my_public_key = affine_point_to_public_key(key.public_key)?;
-        // todo: store to temporary keystore here
-        if !is_leader {
-            tracing::info!("Key generation complete; Follower calls vote_pk.");
-            chain_txn_sender
-                .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
-                    key_event_id: current_event.id,
-                    public_key: my_public_key,
-                }))
-                .await?;
-            while current_event.completed.len() != n_participants {
-                // wait for the reshare to start:
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                current_event = key_event_receiver.borrow_and_update().clone();
-                tracing::info!("Key generation complete; Follower waiting for leader.");
-            }
-        } else {
-            // as the leader, we wait for everyone else to vote
-            while current_event.completed.len() != n_participants - 1 {
-                // wait for the reshare to start:
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                current_event = key_event_receiver.borrow_and_update().clone();
-                tracing::info!("Key generation complete; Leader waiting for followers.");
-            }
-            tracing::info!("Key generation complete; Leader calls vote_pk.");
-            chain_txn_sender
-                .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
-                    key_event_id: current_event.id,
-                    public_key: my_public_key,
-                }))
-                .await?;
-        }
+        //let my_public_key = affine_point_to_public_key(key.public_key)?;
+        //// todo: store to temporary keystore here
+        //if !is_leader {
+        //    tracing::info!("Key generation complete; Follower calls vote_pk.");
+        //    chain_txn_sender
+        //        .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
+        //            key_event_id: current_event.id,
+        //            public_key: my_public_key,
+        //        }))
+        //        .await?;
+        //    while current_event.completed.len() != n_participants {
+        //        // wait for the reshare to start:
+        //        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        //        current_event = key_event_receiver.borrow_and_update().clone();
+        //        tracing::info!("Key generation complete; Follower waiting for leader.");
+        //    }
+        //} else {
+        //    // as the leader, we wait for everyone else to vote
+        //    while current_event.completed.len() != n_participants - 1 {
+        //        // wait for the reshare to start:
+        //        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        //        current_event = key_event_receiver.borrow_and_update().clone();
+        //        tracing::info!("Key generation complete; Leader waiting for followers.");
+        //    }
+        //    tracing::info!("Key generation complete; Leader calls vote_pk.");
+        //    chain_txn_sender
+        //        .send(ChainSendTransactionRequest::VotePk(ChainVotePkArgs {
+        //            key_event_id: current_event.id,
+        //            public_key: my_public_key,
+        //        }))
+        //        .await?;
+        //}
 
-        keyshare_storage
-            .store(&KeyShare::new(current_event.id, key.clone()))
-            .await?;
+        //keyshare_storage
+        //    .store(&KeyShare::new(current_event.id, key.clone()))
+        //    .await?;
 
-        tracing::info!("Key generation complete;");
-        // Exit; we'll immediately re-enter the same function and send vote_pk.
-        anyhow::Ok(MpcJobResult::Done)
+        //tracing::info!("Key generation complete;");
+        //// Exit; we'll immediately re-enter the same function and send vote_pk.
+        //anyhow::Ok(MpcJobResult::Done)
     }
 
     /// Entry point to handle the Running state of the contract.
