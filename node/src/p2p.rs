@@ -721,6 +721,7 @@ mod tests {
     use crate::tracking::testing::start_root_task_with_periodic_dump;
     use mpc_contract::primitives::domain::DomainId;
     use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId};
+    use rand::Rng;
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -757,13 +758,14 @@ mod tests {
             sender0.wait_for_ready(2).await.unwrap();
             sender1.wait_for_ready(2).await.unwrap();
 
-            for i in 0..100 {
+            for _ in 0..100 {
                 // todo: adjust test?
-                let key_id = KeyEventId::new(
-                    EpochId::new(i),
-                    DomainId::legacy_ecdsa_id(),
-                    AttemptId::legacy_attempt_id(),
-                );
+                let domain_id = rand::thread_rng().gen();
+                let epoch_id = rand::thread_rng().gen();
+                let attempt_id: u64 = rand::thread_rng().gen();
+                let attempt_id: AttemptId = unsafe { std::mem::transmute(attempt_id) };
+                let key_id =
+                    KeyEventId::new(EpochId::new(epoch_id), DomainId(domain_id), attempt_id);
                 let msg0to1 = MpcMessage {
                     task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing {
                         key_event: key_id,
