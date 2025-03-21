@@ -3,6 +3,7 @@ use crate::metrics;
 use crate::sign_request::SignatureId;
 use crate::signing::recent_blocks_tracker::BlockViewLite;
 use futures::StreamExt;
+use mpc_contract::primitives::signature::PayloadHash;
 use near_indexer_primitives::types::AccountId;
 use near_indexer_primitives::views::{
     ActionView, ExecutionOutcomeWithIdView, ExecutionStatusView, ReceiptEnumView, ReceiptView,
@@ -10,7 +11,6 @@ use near_indexer_primitives::views::{
 use near_indexer_primitives::CryptoHash;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use mpc_contract::primitives::signature::PayloadHash;
 use tokio::sync::{mpsc, Mutex};
 
 /// Arguments passed to a `sign` function call on-chain

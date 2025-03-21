@@ -58,10 +58,10 @@ pub fn derive_randomness(
         hk.expand(&concatenation, &mut okm).unwrap();
 
         // derive the randomness delta
-        delta = Scalar::from_bytes(okm).unwrap_or_else(||
+        delta = Scalar::from_bytes(okm).unwrap_or(
             // if delta falls outside the field
             // probability is negligible: in the order of 1/2^224
-            Scalar::ZERO
+            Scalar::ZERO,
         )
     }
     delta

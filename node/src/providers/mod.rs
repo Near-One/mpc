@@ -7,9 +7,9 @@
 //! As a reference, check the existing implementations.
 
 mod ecdsa;
+pub use ecdsa::affine_point_to_public_key;
 pub use ecdsa::EcdsaSignatureProvider;
 pub use ecdsa::EcdsaTaskId;
-pub use ecdsa::affine_point_to_public_key;
 
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::sign_request::SignatureId;

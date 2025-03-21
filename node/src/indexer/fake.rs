@@ -8,14 +8,13 @@ use crate::config::ParticipantsConfig;
 use crate::sign_request::SignatureId;
 use crate::signing::recent_blocks_tracker::tests::TestBlockMaker;
 use crate::tracking::{AutoAbortTask, AutoAbortTaskCollection};
-use k256::Scalar;
+use mpc_contract::primitives::signature::PayloadHash;
 use near_crypto::PublicKey;
 use near_sdk::AccountId;
 use near_time::{Clock, Duration};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use mpc_contract::primitives::signature::PayloadHash;
 use tokio::sync::{broadcast, mpsc, watch};
 
 /// A simplification of the real MPC contract state for testing.

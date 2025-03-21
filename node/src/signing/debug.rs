@@ -194,10 +194,10 @@ impl Debug for PendingSignatureRequests {
 
 #[cfg(test)]
 mod tests {
-    use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
     use super::CompletedSignatureRequest;
     use crate::sign_request::SignatureRequest;
     use crate::signing::debug::CompletedSignatureRequests;
+    use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
     use near_indexer_primitives::CryptoHash;
     use rand::seq::SliceRandom;
 

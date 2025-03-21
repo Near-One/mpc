@@ -1,9 +1,9 @@
 use crate::db::{DBCol, SecretDB};
 use crate::metrics;
+use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
 use near_indexer_primitives::CryptoHash;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
 use tokio::sync::broadcast;
 
 pub type SignatureId = CryptoHash;

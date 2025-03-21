@@ -17,13 +17,13 @@ use crate::primitives::MpcTaskId;
 use crate::providers::{HasParticipants, KeyshareId, SignatureProvider};
 use crate::sign_request::{SignRequestStorage, SignatureId};
 use crate::tracking;
+use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use cait_sith::{FullSignature, KeygenOutput};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{AffinePoint, Scalar, Secp256k1};
 use near_time::Clock;
 use std::sync::Arc;
-use anyhow::Context;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
 use tokio::sync::mpsc;
 
 #[derive(Clone)]

@@ -18,15 +18,14 @@ use crate::p2p::testing::{generate_test_p2p_configs, PortSeed};
 use crate::primitives::ParticipantId;
 use crate::tracking::{self, start_root_task, AutoAbortTask};
 use crate::web::start_web_server;
-use k256::elliptic_curve::Field;
+use mpc_contract::primitives::signature::PayloadHash;
 use near_indexer_primitives::types::Finality;
 use near_indexer_primitives::CryptoHash;
 use near_sdk::AccountId;
 use near_time::Clock;
+use rand::RngCore;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use mpc_contract::primitives::signature::PayloadHash;
-use rand::RngCore;
 use tokio::time::timeout;
 
 mod basic_cluster;

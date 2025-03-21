@@ -190,7 +190,7 @@ mod recovery_id_tests {
     use cait_sith::FullSignature;
     use k256::ecdsa::{RecoveryId, SigningKey};
     use k256::elliptic_curve::{point::DecompressPoint, PrimeField};
-    use k256::{AffinePoint};
+    use k256::AffinePoint;
     use mpc_contract::primitives::signature::PayloadHash;
     use rand::rngs::OsRng;
 

@@ -443,12 +443,11 @@ mod tests {
     use crate::signing::recent_blocks_tracker::tests::TestBlockMaker;
     use crate::tests::TestGenerators;
     use crate::tracing::init_logging;
-    use k256::Scalar;
+    use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
     use near_indexer_primitives::CryptoHash;
     use near_time::{Duration, FakeClock};
     use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
-    use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
 
     /// Generates a signature request for testing, brute-forcing the signature ID until the leader
     /// selection order starts with the given.

@@ -7,14 +7,14 @@ use crate::protocol::run_protocol;
 use crate::providers::ecdsa::kdf::{derive_public_key, derive_randomness};
 use crate::providers::ecdsa::{EcdsaSignatureProvider, EcdsaTaskId, PresignatureStorage};
 use crate::sign_request::{SignatureId, SignatureRequest};
+use anyhow::Context;
 use cait_sith::protocol::Participant;
 use cait_sith::{FullSignature, KeygenOutput, PresignOutput};
 use k256::{AffinePoint, Scalar, Secp256k1};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use anyhow::Context;
 use mpc_contract::crypto_shared::ScalarExt;
 use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::time::timeout;
 
 impl EcdsaSignatureProvider {
@@ -111,8 +111,10 @@ impl MpcLeaderCentricComputation<(FullSignature<Secp256k1>, AffinePoint)> for Si
             .collect::<Vec<_>>();
         let me = channel.my_participant_id();
 
-        let tweak = Scalar::from_bytes(self.tweak.as_bytes()).context("Couldn't construct k256 point")?;
-        let msg_hash = Scalar::from_bytes(self.msg_hash.as_bytes()).context("Couldn't construct k256 point")?;
+        let tweak =
+            Scalar::from_bytes(self.tweak.as_bytes()).context("Couldn't construct k256 point")?;
+        let msg_hash = Scalar::from_bytes(self.msg_hash.as_bytes())
+            .context("Couldn't construct k256 point")?;
 
         let public_key = derive_public_key(self.keygen_out.public_key, tweak);
 
