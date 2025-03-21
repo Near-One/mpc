@@ -2,8 +2,7 @@ use crate::config::{ParticipantInfo, ParticipantsConfig};
 use crate::indexer::lib::{get_mpc_contract_state, wait_for_contract_code, wait_for_full_sync};
 use crate::primitives::ParticipantId;
 use anyhow::Context;
-use mpc_contract::primitives::domain::{DomainConfig, DomainRegistry};
-use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId, KeyForDomain, Keyset};
+use mpc_contract::primitives::key_state::{KeyEventId, Keyset};
 use mpc_contract::primitives::thresholds::ThresholdParameters;
 use mpc_contract::state::initializing::InitializingContractState;
 use mpc_contract::state::key_event::KeyEvent;
@@ -16,51 +15,8 @@ use std::str::FromStr;
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContractKeyForDomain {
-    pub domain: DomainConfig,
-    pub attempt: AttemptId,
-    pub key: near_crypto::PublicKey,
-}
-
-pub fn convert_key(
-    val: &KeyForDomain,
-    domains: &DomainRegistry,
-) -> anyhow::Result<ContractKeyForDomain> {
-    let domain = domains
-        .get_domain_by_index(val.domain_id.0 as usize)
-        .unwrap()
-        .clone();
-    Ok(ContractKeyForDomain {
-        domain,
-        attempt: val.attempt,
-        key: near_crypto::PublicKey::from_str(&String::from(&val.key))
-            .context("parse public key")?,
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContractKeyset {
-    pub epoch_id: EpochId,
-    pub domains: Vec<ContractKeyForDomain>,
-}
-
-pub fn convert_domains(
-    val: &[KeyForDomain],
-    domains: &DomainRegistry,
-) -> anyhow::Result<Vec<ContractKeyForDomain>> {
-    val.iter().map(|p| convert_key(p, domains)).collect()
-}
-
-pub fn convert_keyset(val: &Keyset, domains: &DomainRegistry) -> anyhow::Result<ContractKeyset> {
-    Ok(ContractKeyset {
-        epoch_id: val.epoch_id,
-        domains: convert_domains(&val.domains, domains)?,
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractRunningState {
-    pub keyset: ContractKeyset,
+    pub keyset: Keyset,
     pub participants: ParticipantsConfig,
 }
 
@@ -68,86 +24,68 @@ pub fn convert_running_state(
     state: &RunningContractState,
     port_override: Option<u16>,
 ) -> anyhow::Result<ContractRunningState> {
-    let participants = convert_participant_infos(state.parameters.clone(), port_override)?;
-    let keyset = convert_keyset(&state.keyset, &state.domains)?;
     Ok(ContractRunningState {
-        keyset,
-        participants,
+        keyset: state.keyset.clone(),
+        participants: convert_participant_infos(state.parameters.clone(), port_override)?,
     })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractKeyEventInstance {
     pub id: KeyEventId,
-    // the block from which the key event was last updated
-    pub last_updated: u64,
-    pub started_in: Option<u64>,
+    pub started: bool,
     pub completed: BTreeSet<ParticipantId>,
 }
 
-pub fn convert_key_event_to_instance(
-    key_event: &KeyEvent,
-    block_height: u64,
-) -> ContractKeyEventInstance {
+pub fn convert_key_event_to_instance(key_event: &KeyEvent) -> ContractKeyEventInstance {
     let epoch_id = key_event.epoch_id();
     let domain_id = key_event.domain_id();
-    if let Some(current_instance) = key_event.instance() {
-        if block_height < current_instance.expires_on() {
-            let id = KeyEventId {
-                epoch_id,
-                domain_id,
-                attempt_id: current_instance.attempt_id(),
-            };
-            let completed = current_instance
+    let (attempt_id, started, completed) = if let Some(current_instance) = key_event.instance() {
+        (
+            current_instance.attempt_id(),
+            true,
+            current_instance
                 .completed()
                 .iter()
                 .map(|p| p.get().into())
-                .collect();
-            return ContractKeyEventInstance {
-                id,
-                last_updated: block_height,
-                started_in: Some(current_instance.started_in()),
-                completed,
-            };
-        }
-    }
+                .collect(),
+        )
+    } else {
+        (key_event.next_attempt_id(), false, BTreeSet::new())
+    };
     let id = KeyEventId {
         epoch_id,
         domain_id,
-        attempt_id: key_event.next_attempt_id(),
+        attempt_id,
     };
     ContractKeyEventInstance {
         id,
-        last_updated: block_height,
-        started_in: None,
-        completed: BTreeSet::new(),
+        started,
+        completed,
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractInitializingState {
-    pub keyset: ContractKeyset,
+    pub generated_keyset: Keyset,
     pub participants: ParticipantsConfig,
-    //pub domains: Vec<DomainConfig>, // include for sanity checks?
     pub key_event: ContractKeyEventInstance,
 }
 
 pub fn convert_init_state(
     state: &InitializingContractState,
     port_override: Option<u16>,
-    block_height: u64,
 ) -> anyhow::Result<ContractInitializingState> {
     Ok(ContractInitializingState {
-        keyset: ContractKeyset {
+        generated_keyset: Keyset {
             epoch_id: state.epoch_id,
-            domains: convert_domains(&state.generated_keys, &state.domains)?,
+            domains: state.generated_keys.clone(),
         },
         participants: convert_participant_infos(
             state.generating_key.proposed_parameters().clone(),
             port_override,
         )?,
-        //domains: state.domains.domains().to_vec(),
-        key_event: convert_key_event_to_instance(&state.generating_key, block_height),
+        key_event: convert_key_event_to_instance(&state.generating_key),
     })
 }
 
@@ -155,27 +93,24 @@ pub fn convert_init_state(
 pub struct ContractResharingState {
     pub current_state: ContractRunningState,
     pub new_participants: ParticipantsConfig,
-    //pub reshared_keys: Vec<ContractKeyForDomain>,
+    pub reshared_keys: Keyset,
     pub key_event: ContractKeyEventInstance,
 }
 pub fn convert_resharing_state(
     state: &ResharingContractState,
     port_override: Option<u16>,
-    block_height: u64,
 ) -> anyhow::Result<ContractResharingState> {
-    let current_state = convert_running_state(&state.previous_running_state, port_override)?;
-    let new_participants = convert_participant_infos(
-        state.resharing_key.proposed_parameters().clone(),
-        port_override,
-    )?;
     Ok(ContractResharingState {
-        current_state,
-        new_participants,
-        //reshared_keys: convert_domains(
-        //    &state.reshared_keys,
-        //    &state.previous_running_state.domains,
-        //)?,
-        key_event: convert_key_event_to_instance(&state.resharing_key, block_height),
+        current_state: convert_running_state(&state.previous_running_state, port_override)?,
+        new_participants: convert_participant_infos(
+            state.resharing_key.proposed_parameters().clone(),
+            port_override,
+        )?,
+        reshared_keys: Keyset {
+            epoch_id: state.prospective_epoch_id(),
+            domains: state.reshared_keys.clone(),
+        },
+        key_event: convert_key_event_to_instance(&state.resharing_key),
     })
 }
 
@@ -240,18 +175,18 @@ async fn read_contract_state_from_chain(
     tracing::debug!(target: "indexer", "awaiting mpc contract state");
     wait_for_contract_code(mpc_contract_id.clone(), &view_client).await;
 
-    let (state, height) = get_mpc_contract_state(mpc_contract_id.clone(), &view_client).await?;
+    let state = get_mpc_contract_state(mpc_contract_id.clone(), &view_client).await?;
     tracing::debug!(target: "indexer", "got mpc contract state {:?}", state);
     let state = match state {
         ProtocolContractState::NotInitialized => ContractState::Invalid,
         ProtocolContractState::Initializing(state) => {
-            ContractState::Initializing(convert_init_state(&state, port_override, height)?)
+            ContractState::Initializing(convert_init_state(&state, port_override)?)
         }
         ProtocolContractState::Running(state) => {
             ContractState::Running(convert_running_state(&state, port_override)?)
         }
         ProtocolContractState::Resharing(state) => {
-            ContractState::Resharing(convert_resharing_state(&state, port_override, height)?)
+            ContractState::Resharing(convert_resharing_state(&state, port_override)?)
         }
     };
     Ok(state)
