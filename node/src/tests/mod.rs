@@ -25,6 +25,8 @@ use near_sdk::AccountId;
 use near_time::Clock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use mpc_contract::primitives::signature::PayloadHash;
+use rand::RngCore;
 use tokio::time::timeout;
 
 mod basic_cluster;
@@ -313,6 +315,8 @@ pub async fn request_signature_and_await_response(
     user: &str,
     timeout_sec: std::time::Duration,
 ) -> Option<std::time::Duration> {
+    let mut payload = [0; 32];
+    rand::thread_rng().fill_bytes(payload.as_mut());
     let request = SignatureRequestFromChain {
         entropy: rand::random(),
         signature_id: CryptoHash(rand::random()),
@@ -322,7 +326,7 @@ pub async fn request_signature_and_await_response(
         request: SignArgs {
             key_version: 0,
             path: "m/44'/60'/0'/0/0".to_string(),
-            payload: Scalar::random(&mut rand::thread_rng()),
+            payload: PayloadHash::new(payload),
         },
     };
     tracing::info!(
@@ -335,7 +339,7 @@ pub async fn request_signature_and_await_response(
     loop {
         match timeout(timeout_sec, indexer.next_response()).await {
             Ok(signature) => {
-                if signature.request.payload_hash.scalar != request.request.payload {
+                if signature.request.payload_hash != request.request.payload {
                     // This can legitimately happen when multiple nodes submit responses
                     // for the same signature request. In tests this can happen if the
                     // secondary leader thinks the primary leader is offline when in fact
@@ -345,7 +349,7 @@ pub async fn request_signature_and_await_response(
                          Expected {:?}, actual {:?}",
                         user,
                         request.request.payload,
-                        signature.request.payload_hash.scalar
+                        signature.request.payload_hash
                     );
                     continue;
                 }

@@ -186,12 +186,12 @@ impl ChainRespondArgs {
 
 #[cfg(test)]
 mod recovery_id_tests {
-    use crate::hkdf::ScalarExt;
     use crate::indexer::types::ChainRespondArgs;
     use cait_sith::FullSignature;
     use k256::ecdsa::{RecoveryId, SigningKey};
     use k256::elliptic_curve::{point::DecompressPoint, PrimeField};
-    use k256::{AffinePoint, Scalar};
+    use k256::{AffinePoint};
+    use mpc_contract::primitives::signature::PayloadHash;
     use rand::rngs::OsRng;
 
     #[test]
@@ -207,7 +207,6 @@ mod recovery_id_tests {
                 // match signing_key.sign_digest_recoverable(digest) {
                 Ok((signature, recid)) => {
                     let (r, s) = signature.split_scalars();
-                    let msg_hash = Scalar::from_bytes(prehash).unwrap();
 
                     // create a full signature
                     // any big_r creation works here as we only need it's x coordinate during bruteforce (big_r.x())
@@ -223,7 +222,7 @@ mod recovery_id_tests {
                     let tested_recid = ChainRespondArgs::brute_force_recovery_id(
                         signing_key.verifying_key().as_affine(),
                         &full_sig,
-                        &msg_hash,
+                        &PayloadHash::new(prehash),
                     )
                     .unwrap();
 

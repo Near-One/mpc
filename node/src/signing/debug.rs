@@ -194,6 +194,7 @@ impl Debug for PendingSignatureRequests {
 
 #[cfg(test)]
 mod tests {
+    use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
     use super::CompletedSignatureRequest;
     use crate::sign_request::SignatureRequest;
     use crate::signing::debug::CompletedSignatureRequests;
@@ -210,8 +211,8 @@ mod tests {
                 request: SignatureRequest {
                     id: CryptoHash(rand::random()),
                     receipt_id: CryptoHash(rand::random()),
-                    msg_hash: Default::default(),
-                    tweak: Default::default(),
+                    msg_hash: PayloadHash::new([0; 32]),
+                    tweak: Epsilon::new([0; 32]),
                     entropy: Default::default(),
                     timestamp_nanosec: Default::default(),
                 },

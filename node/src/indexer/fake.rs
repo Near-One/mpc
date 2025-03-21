@@ -15,6 +15,7 @@ use near_time::{Clock, Duration};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use mpc_contract::primitives::signature::PayloadHash;
 use tokio::sync::{broadcast, mpsc, watch};
 
 /// A simplification of the real MPC contract state for testing.
@@ -22,7 +23,7 @@ pub struct FakeMpcContractState {
     pub state: ContractState,
     // Not a real MPC contract; here we only index by the payload.
     // We don't test signatures with the same payload anyway.
-    pub pending_signatures: BTreeMap<Scalar, SignatureId>,
+    pub pending_signatures: BTreeMap<PayloadHash, SignatureId>,
 }
 
 impl FakeMpcContractState {
@@ -207,7 +208,7 @@ impl FakeIndexerCore {
                 let signature_id = signature_request.signature_id;
                 contract
                     .pending_signatures
-                    .insert(signature_request.request.payload, signature_id);
+                    .insert(signature_request.request.payload.clone(), signature_id);
             }
 
             let mut block_update = ChainBlockUpdate {
@@ -225,14 +226,14 @@ impl FakeIndexerCore {
                         let mut contract = contract.lock().await;
                         let signature_id = contract
                             .pending_signatures
-                            .remove(&respond.request.payload_hash.scalar);
+                            .remove(&respond.request.payload_hash);
                         if let Some(signature_id) = signature_id {
                             self.sign_response_sender.send(respond.clone()).unwrap();
                             block_update.completed_signatures.push(signature_id);
                         } else {
                             tracing::warn!(
                                 "Ignoring respond transaction for unknown (possibly already-responded-to) signature: {:?}",
-                                respond.request.payload_hash.scalar
+                                respond.request.payload_hash
                             );
                         }
                     }

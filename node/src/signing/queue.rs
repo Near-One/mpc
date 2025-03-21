@@ -448,6 +448,7 @@ mod tests {
     use near_time::{Duration, FakeClock};
     use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
+    use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
 
     /// Generates a signature request for testing, brute-forcing the signature ID until the leader
     /// selection order starts with the given.
@@ -465,9 +466,9 @@ mod tests {
                 // All other fields are irrelevant for the test.
                 receipt_id: CryptoHash([0; 32]),
                 entropy: [0; 32],
-                msg_hash: Scalar::ZERO,
+                msg_hash: PayloadHash::new([0; 32]),
                 timestamp_nanosec: 0,
-                tweak: Scalar::ZERO,
+                tweak: Epsilon::new([0; 32]),
             };
             let leader_selection_order =
                 QueuedSignatureRequest::leader_selection_order(participants, request.id);
