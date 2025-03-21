@@ -20,9 +20,9 @@ pub struct Secp256k1KeyshareData {
     pub private_share: Scalar,
     pub public_key: AffinePoint,
 }
-#[derive(Clone, Serialize, Deserialize)]
-pub enum KeyShareData {
-    Secp256k1(Secp256k1Data),
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum KeyshareData {
+    Secp256k1(Secp256k1KeyshareData),
 }
 
 /// A single keyshare, corresponding to one epoch, one domain, one attempt.
