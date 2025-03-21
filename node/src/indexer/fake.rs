@@ -108,7 +108,18 @@ impl FakeMpcContractState {
             );
         }
     }
-
+    pub fn vote_start_keygen(&mut self) {
+        if let ContractState::Initializing(state) = &mut self.state {
+            assert!(!state.key_event.started);
+            state.key_event.started = true;
+        }
+    }
+    pub fn vote_start_reshare(&mut self) {
+        if let ContractState::Resharing(state) = &mut self.state {
+            assert!(!state.key_event.started);
+            state.key_event.started = true;
+        }
+    }
     pub fn vote_reshared(&mut self, account_id: AccountId, key_id: KeyEventId) {
         if let ContractState::Resharing(config) = &mut self.state {
             assert_eq!(key_id, config.key_event.id);
@@ -269,8 +280,13 @@ impl FakeIndexerCore {
                         let mut contract = contract.lock().await;
                         contract.vote_reshared(account_id, reshared.key_event_id);
                     }
-                    _ => {
-                        panic!("Unexpected txn: {:?}", txn);
+                    ChainSendTransactionRequest::StartKeygen(_) => {
+                        let mut contract = contract.lock().await;
+                        contract.vote_start_keygen();
+                    }
+                    ChainSendTransactionRequest::StartReshare(_) => {
+                        let mut contract = contract.lock().await;
+                        contract.vote_start_reshare();
                     }
                 }
             }
