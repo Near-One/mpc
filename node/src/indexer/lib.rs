@@ -39,7 +39,7 @@ pub(crate) async fn wait_for_full_sync(client: &Addr<ClientActor>) {
 pub(crate) async fn get_mpc_contract_state(
     mpc_contract_id: AccountId,
     client: &actix::Addr<near_client::ViewClientActor>,
-) -> anyhow::Result<(ProtocolContractState, u64)> {
+) -> anyhow::Result<ProtocolContractState> {
     let request = QueryRequest::CallFunction {
         account_id: mpc_contract_id,
         method_name: "state".to_string(),
@@ -51,10 +51,7 @@ pub(crate) async fn get_mpc_contract_state(
     };
     let response = client.send(query.with_span_context()).await??;
     match response.kind {
-        CallResult(result) => {
-            let state = serde_json::from_slice::<ProtocolContractState>(&result.result)?;
-            Ok((state, response.block_height))
-        }
+        CallResult(result) => Ok(serde_json::from_slice(&result.result)?),
         _ => {
             bail!("got unexpected response querying mpc contract state")
         }
