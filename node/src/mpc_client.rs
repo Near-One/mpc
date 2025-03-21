@@ -1,5 +1,4 @@
 use crate::config::ConfigFile;
-use crate::hkdf::derive_tweak;
 use crate::indexer::handler::{ChainBlockUpdate, SignatureRequestFromChain};
 use crate::indexer::types::{ChainRespondArgs, ChainSendTransactionRequest};
 use crate::metrics;
@@ -13,6 +12,7 @@ use crate::web::{SignatureDebugRequest, SignatureDebugRequestKind};
 use near_time::Clock;
 use std::sync::Arc;
 use std::time::Duration;
+use mpc_contract::crypto_shared::derive_epsilon;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -142,7 +142,7 @@ impl MpcClient {
                                 id: signature_id,
                                 receipt_id,
                                 msg_hash: request.payload,
-                                tweak: derive_tweak(&predecessor_id, &request.path),
+                                tweak: derive_epsilon(&predecessor_id, &request.path),
                                 entropy,
                                 timestamp_nanosec,
                             }

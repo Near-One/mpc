@@ -7,6 +7,7 @@ use k256::{
     AffinePoint, Scalar, Secp256k1,
 };
 use legacy_mpc_contract;
+use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::Gas;
 use serde::{Deserialize, Serialize};
@@ -36,16 +37,12 @@ struct SerializableAffinePoint {
  */
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChainSignatureRequest {
-    pub epsilon: SerializableScalar,
-    pub payload_hash: SerializableScalar,
+    pub epsilon: Epsilon,
+    pub payload_hash: PayloadHash,
 }
 
 impl ChainSignatureRequest {
-    pub fn new(payload_hash: Scalar, tweak: Scalar) -> Self {
-        let epsilon = SerializableScalar { scalar: tweak };
-        let payload_hash = SerializableScalar {
-            scalar: payload_hash,
-        };
+    pub fn new(epsilon: Epsilon, payload_hash: PayloadHash) -> Self {
         ChainSignatureRequest {
             epsilon,
             payload_hash,
@@ -155,7 +152,7 @@ impl ChainRespondArgs {
     ) -> anyhow::Result<Self> {
         let recovery_id = Self::brute_force_recovery_id(public_key, response, &request.msg_hash)?;
         Ok(ChainRespondArgs {
-            request: ChainSignatureRequest::new(request.msg_hash, request.tweak),
+            request: ChainSignatureRequest::new(request.tweak.clone(), request.msg_hash.clone()),
             response: ChainSignatureResponse::new(response.big_r, response.s, recovery_id)?,
         })
     }
@@ -164,7 +161,7 @@ impl ChainRespondArgs {
     pub(crate) fn brute_force_recovery_id(
         expected_pk: &AffinePoint,
         signature: &FullSignature<Secp256k1>,
-        msg_hash: &Scalar,
+        msg_hash: &PayloadHash,
     ) -> anyhow::Result<u8> {
         let partial_signature = k256::ecdsa::Signature::from_scalars(
             <<Secp256k1 as CurveArithmetic>::Scalar as Reduce<<Secp256k1 as Curve>::Uint>>
@@ -176,7 +173,7 @@ impl ChainRespondArgs {
         };
         match RecoveryId::trial_recovery_from_prehash(
             &expected_pk,
-            &msg_hash.to_bytes(),
+            &msg_hash.as_bytes(),
             &partial_signature,
         ) {
             Ok(rec_id) => Ok(rec_id.to_byte()),

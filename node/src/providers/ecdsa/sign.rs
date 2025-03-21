@@ -12,6 +12,9 @@ use cait_sith::{FullSignature, KeygenOutput, PresignOutput};
 use k256::{AffinePoint, Scalar, Secp256k1};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use anyhow::Context;
+use mpc_contract::crypto_shared::ScalarExt;
+use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
 use tokio::time::timeout;
 
 impl EcdsaSignatureProvider {
@@ -89,8 +92,8 @@ impl EcdsaSignatureProvider {
 pub struct SignComputation {
     pub keygen_out: KeygenOutput<Secp256k1>,
     pub presign_out: PresignOutput<Secp256k1>,
-    pub msg_hash: Scalar,
-    pub tweak: Scalar,
+    pub msg_hash: PayloadHash,
+    pub tweak: Epsilon,
     pub entropy: [u8; 32],
 }
 
@@ -108,13 +111,16 @@ impl MpcLeaderCentricComputation<(FullSignature<Secp256k1>, AffinePoint)> for Si
             .collect::<Vec<_>>();
         let me = channel.my_participant_id();
 
-        let public_key = derive_public_key(self.keygen_out.public_key, self.tweak);
+        let tweak = Scalar::from_bytes(self.tweak.as_bytes()).context("Couldn't construct k256 point")?;
+        let msg_hash = Scalar::from_bytes(self.msg_hash.as_bytes()).context("Couldn't construct k256 point")?;
+
+        let public_key = derive_public_key(self.keygen_out.public_key, tweak);
 
         // rerandomize the presignature: a variant of [GS21]
         let PresignOutput { big_r, k, sigma } = self.presign_out;
         let delta = derive_randomness(
             public_key,
-            self.msg_hash,
+            msg_hash,
             big_r,
             channel.participants().to_vec(),
             self.entropy,
@@ -128,7 +134,7 @@ impl MpcLeaderCentricComputation<(FullSignature<Secp256k1>, AffinePoint)> for Si
             // k' = k/delta
             k: k * inverted_delta,
             // sigma = sigma/delta + k tweak/delta
-            sigma: (sigma + self.tweak * k) * inverted_delta,
+            sigma: (sigma + tweak * k) * inverted_delta,
         };
 
         let protocol = cait_sith::sign::<Secp256k1>(
@@ -136,7 +142,7 @@ impl MpcLeaderCentricComputation<(FullSignature<Secp256k1>, AffinePoint)> for Si
             me.into(),
             public_key,
             presign_out,
-            self.msg_hash,
+            msg_hash,
         )?;
         let _timer = metrics::MPC_SIGNATURE_TIME_ELAPSED.start_timer();
         let signature = run_protocol("sign", channel, protocol).await?;
@@ -154,8 +160,8 @@ pub struct FollowerSignComputation {
     pub keygen_out: KeygenOutput<Secp256k1>,
     pub presignature_id: UniqueId,
     pub presignature_store: Arc<PresignatureStorage>,
-    pub msg_hash: Scalar,
-    pub tweak: Scalar,
+    pub msg_hash: PayloadHash,
+    pub tweak: Epsilon,
     pub entropy: [u8; 32],
 }
 
