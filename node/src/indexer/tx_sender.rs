@@ -121,19 +121,20 @@ async fn observe_tx_result(
             }
         }
         ChainSendTransactionRequest::StartKeygen(_) => {
-            Ok(ChainTransactionState::Unknown) // not implemented
+            // we don't care. The contract state change will handle this.
+            Ok(ChainTransactionState::Unknown)
         }
         ChainSendTransactionRequest::StartReshare(_) => {
-            Ok(ChainTransactionState::Unknown) // not implemented
-        }
-        ChainSendTransactionRequest::Join(_) => {
-            Ok(ChainTransactionState::Unknown) // not implemented
+            // we don't care. The contract state change will handle this.
+            Ok(ChainTransactionState::Unknown)
         }
         ChainSendTransactionRequest::VotePk(_) => {
-            Ok(ChainTransactionState::Unknown) // not implemented
+            // we don't care. The contract state change will handle this.
+            Ok(ChainTransactionState::Unknown)
         }
         ChainSendTransactionRequest::VoteReshared(_) => {
-            Ok(ChainTransactionState::Unknown) // not implemented
+            // we don't care. The contract state change will handle this.
+            Ok(ChainTransactionState::Unknown)
         }
     }
 }

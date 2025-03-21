@@ -124,21 +124,16 @@ pub struct ChainStartKeygenArgs {}
 #[serde(untagged)]
 pub enum ChainSendTransactionRequest {
     Respond(ChainRespondArgs),
-    // TODO(#150): Implement join.
-    #[allow(dead_code)]
-    Join(ChainJoinArgs),
     VotePk(ChainVotePkArgs),
-    // TODO(#43): Implement vote_reshared.
+    StartKeygen(ChainStartKeygenArgs),
     VoteReshared(ChainVoteResharedArgs),
     StartReshare(ChainStartReshareArgs),
-    StartKeygen(ChainStartKeygenArgs),
 }
 
 impl ChainSendTransactionRequest {
     pub fn method(&self) -> &'static str {
         match self {
             ChainSendTransactionRequest::Respond(_) => "respond",
-            ChainSendTransactionRequest::Join(_) => "join",
             ChainSendTransactionRequest::VotePk(_) => "vote_pk",
             ChainSendTransactionRequest::VoteReshared(_) => "vote_reshared",
             ChainSendTransactionRequest::StartReshare(_) => "start_reshare_instance",
@@ -149,7 +144,6 @@ impl ChainSendTransactionRequest {
     pub fn gas_required(&self) -> Gas {
         match self {
             Self::Respond(_)
-            | Self::Join(_)
             | Self::VotePk(_)
             | Self::VoteReshared(_)
             | Self::StartReshare(_)
