@@ -7,7 +7,7 @@ use k256::{
     AffinePoint, Scalar, Secp256k1,
 };
 use legacy_mpc_contract;
-use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
+use mpc_contract::primitives::signature::{PayloadHash, Tweak};
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::Gas;
 use serde::{Deserialize, Serialize};
@@ -37,12 +37,12 @@ struct SerializableAffinePoint {
  */
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChainSignatureRequest {
-    pub epsilon: Epsilon,
+    pub epsilon: Tweak,
     pub payload_hash: PayloadHash,
 }
 
 impl ChainSignatureRequest {
-    pub fn new(epsilon: Epsilon, payload_hash: PayloadHash) -> Self {
+    pub fn new(epsilon: Tweak, payload_hash: PayloadHash) -> Self {
         ChainSignatureRequest {
             epsilon,
             payload_hash,

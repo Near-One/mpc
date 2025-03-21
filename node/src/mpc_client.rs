@@ -9,7 +9,7 @@ use crate::sign_request::{SignRequestStorage, SignatureRequest};
 use crate::signing::queue::{PendingSignatureRequests, CHECK_EACH_SIGNATURE_REQUEST_INTERVAL};
 use crate::tracking::{self, AutoAbortTaskCollection};
 use crate::web::{SignatureDebugRequest, SignatureDebugRequestKind};
-use mpc_contract::crypto_shared::derive_epsilon;
+use mpc_contract::crypto_shared::derive_tweak;
 use near_time::Clock;
 use std::sync::Arc;
 use std::time::Duration;
@@ -142,7 +142,7 @@ impl MpcClient {
                                 id: signature_id,
                                 receipt_id,
                                 msg_hash: request.payload,
-                                tweak: derive_epsilon(&predecessor_id, &request.path),
+                                tweak: derive_tweak(&predecessor_id, &request.path),
                                 entropy,
                                 timestamp_nanosec,
                             }

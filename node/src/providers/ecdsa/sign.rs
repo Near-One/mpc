@@ -12,7 +12,7 @@ use cait_sith::protocol::Participant;
 use cait_sith::{FullSignature, KeygenOutput, PresignOutput};
 use k256::{AffinePoint, Scalar, Secp256k1};
 use mpc_contract::crypto_shared::ScalarExt;
-use mpc_contract::primitives::signature::{Epsilon, PayloadHash};
+use mpc_contract::primitives::signature::{PayloadHash, Tweak};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -93,7 +93,7 @@ pub struct SignComputation {
     pub keygen_out: KeygenOutput<Secp256k1>,
     pub presign_out: PresignOutput<Secp256k1>,
     pub msg_hash: PayloadHash,
-    pub tweak: Epsilon,
+    pub tweak: Tweak,
     pub entropy: [u8; 32],
 }
 
@@ -163,7 +163,7 @@ pub struct FollowerSignComputation {
     pub presignature_id: UniqueId,
     pub presignature_store: Arc<PresignatureStorage>,
     pub msg_hash: PayloadHash,
-    pub tweak: Epsilon,
+    pub tweak: Tweak,
     pub entropy: [u8; 32],
 }
 
