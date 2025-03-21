@@ -2,7 +2,6 @@ pub mod key_generation;
 mod presign;
 mod sign;
 use mpc_contract::primitives::key_state::KeyEventId;
-use near_crypto::PublicKey;
 pub use presign::PresignatureStorage;
 mod kdf;
 pub mod key_resharing;
@@ -23,7 +22,6 @@ use cait_sith::{FullSignature, KeygenOutput};
 use k256::{AffinePoint, Scalar, Secp256k1};
 use near_time::Clock;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct EcdsaSignatureProvider {
@@ -131,40 +129,24 @@ impl SignatureProvider for EcdsaSignatureProvider {
 
     async fn run_key_generation_client(
         mpc_config: MpcConfig,
-        network_client: Arc<MeshNetworkClient>,
-        channel_receiver: &mut mpsc::UnboundedReceiver<NetworkTaskChannel>,
-        key_id: KeyEventId,
-        is_leader: bool,
+        channel: NetworkTaskChannel,
     ) -> anyhow::Result<Self::KeygenOutput> {
-        EcdsaSignatureProvider::run_key_generation_client_internal(
-            mpc_config,
-            network_client,
-            channel_receiver,
-            key_id,
-            is_leader,
-        )
-        .await
+        EcdsaSignatureProvider::run_key_generation_client_internal(mpc_config, channel).await
     }
 
     async fn run_key_resharing_client(
         config: Arc<MpcConfig>,
-        client: Arc<MeshNetworkClient>,
-        public_key: PublicKey,
-        old_participants: &ParticipantsConfig,
         my_share: Option<Scalar>,
-        channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
-        key_id: KeyEventId,
-        is_leader: bool,
+        public_key: AffinePoint,
+        old_participants: &ParticipantsConfig,
+        channel: NetworkTaskChannel,
     ) -> anyhow::Result<Self::KeygenOutput> {
         EcdsaSignatureProvider::run_key_resharing_client_internal(
             config,
-            client,
+            my_share,
             public_key,
             old_participants,
-            my_share,
-            channel_receiver,
-            key_id,
-            is_leader,
+            channel,
         )
         .await
     }

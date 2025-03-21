@@ -61,7 +61,7 @@ pub struct ContractInitializingState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractResharingState {
-    pub current_state: ContractRunningState,
+    pub previous_running_state: ContractRunningState,
     pub new_participants: ParticipantsConfig,
     pub reshared_keys: Keyset,
     pub key_event: ContractKeyEventInstance,
@@ -151,7 +151,7 @@ async fn read_contract_state_from_chain(
         }),
         ProtocolContractState::Resharing(state) => {
             ContractState::Resharing(ContractResharingState {
-                current_state: ContractRunningState {
+                previous_running_state: ContractRunningState {
                     keyset: state.previous_running_state.keyset.clone(),
                     participants: convert_participant_infos(
                         state.previous_running_state.parameters.clone(),

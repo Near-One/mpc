@@ -1,36 +1,24 @@
 use crate::config::{MpcConfig, ParticipantsConfig};
 use crate::network::computation::MpcLeaderCentricComputation;
-use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+use crate::network::NetworkTaskChannel;
 use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
-use crate::providers::ecdsa::{EcdsaSignatureProvider, EcdsaTaskId};
+use crate::providers::ecdsa::EcdsaSignatureProvider;
 use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
 use k256::elliptic_curve::sec1::FromEncodedPoint;
 use k256::{AffinePoint, EncodedPoint, Scalar, Secp256k1};
-use mpc_contract::primitives::key_state::KeyEventId;
 use near_crypto::PublicKey;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 impl EcdsaSignatureProvider {
     pub(super) async fn run_key_resharing_client_internal(
         config: Arc<MpcConfig>,
-        client: Arc<MeshNetworkClient>,
-        public_key: PublicKey,
-        old_participants: &ParticipantsConfig,
         my_share: Option<Scalar>,
-        mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
-        key_id: KeyEventId,
-        is_leader: bool,
+        public_key: AffinePoint,
+        old_participants: &ParticipantsConfig,
+        channel: NetworkTaskChannel,
     ) -> anyhow::Result<KeygenOutput<Secp256k1>> {
-        let task_id = EcdsaTaskId::KeyResharing { key_event: key_id };
-        let channel = if is_leader {
-            client.new_channel_for_task(task_id, client.all_participant_ids())?
-        } else {
-            MeshNetworkClient::wait_for_task(&mut channel_receiver, task_id).await
-        };
-        let public_key = public_key_to_affine_point(public_key)?;
         let new_keyshare = KeyResharingComputation {
             threshold: config.participants.threshold as usize,
             old_participants: old_participants.participants.iter().map(|p| p.id).collect(),
@@ -62,11 +50,11 @@ impl EcdsaSignatureProvider {
 ///       the old threshold; or
 ///     - the threshold is larger than the number of participants.
 pub struct KeyResharingComputation {
-    threshold: usize,
-    old_participants: Vec<ParticipantId>,
-    old_threshold: usize,
-    my_share: Option<Scalar>,
-    public_key: AffinePoint,
+    pub threshold: usize,
+    pub old_participants: Vec<ParticipantId>,
+    pub old_threshold: usize,
+    pub my_share: Option<Scalar>,
+    pub public_key: AffinePoint,
 }
 
 #[async_trait::async_trait]

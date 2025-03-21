@@ -20,6 +20,16 @@ pub struct Secp256k1KeyshareData {
     pub private_share: Scalar,
     pub public_key: AffinePoint,
 }
+
+impl Secp256k1KeyshareData {
+    pub fn keygen_output(&self) -> cait_sith::KeygenOutput<k256::Secp256k1> {
+        cait_sith::KeygenOutput {
+            private_share: self.private_share,
+            public_key: self.public_key,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum KeyshareData {
     Secp256k1(Secp256k1KeyshareData),

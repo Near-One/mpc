@@ -12,24 +12,8 @@ use std::sync::Arc;
 impl EcdsaSignatureProvider {
     pub(super) async fn run_key_generation_client_internal(
         mpc_config: MpcConfig,
-        network_client: Arc<MeshNetworkClient>,
-        channel_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<NetworkTaskChannel>,
-        key_id: KeyEventId,
-        is_leader: bool,
+        channel: NetworkTaskChannel,
     ) -> anyhow::Result<KeygenOutput<Secp256k1>> {
-        let channel = if is_leader {
-            network_client.new_channel_for_task(
-                EcdsaTaskId::KeyGeneration { key_event: key_id },
-                network_client.all_participant_ids(),
-            )?
-        } else {
-            MeshNetworkClient::wait_for_task(
-                channel_receiver,
-                EcdsaTaskId::KeyGeneration { key_event: key_id },
-            )
-            .await
-        };
-
         let threshold = mpc_config.participants.threshold as usize;
         let key = KeyGenerationComputation { threshold }
             .perform_leader_centric_computation(
