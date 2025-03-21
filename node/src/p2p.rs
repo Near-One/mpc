@@ -762,8 +762,11 @@ mod tests {
                 // todo: adjust test?
                 let domain_id = rand::thread_rng().gen();
                 let epoch_id = rand::thread_rng().gen();
-                let attempt_id: u64 = rand::thread_rng().gen();
-                let attempt_id: AttemptId = unsafe { std::mem::transmute(attempt_id) };
+                let n_attempts = rand::thread_rng().gen::<usize>() % 100;
+                let mut attempt_id = AttemptId::new();
+                for _ in 0..n_attempts {
+                    attempt_id = attempt_id.next();
+                }
                 let key_id =
                     KeyEventId::new(EpochId::new(epoch_id), DomainId(domain_id), attempt_id);
                 let msg0to1 = MpcMessage {
