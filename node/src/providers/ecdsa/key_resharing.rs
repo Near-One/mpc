@@ -8,7 +8,6 @@ use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
 use k256::elliptic_curve::sec1::FromEncodedPoint;
 use k256::{AffinePoint, EncodedPoint, Scalar, Secp256k1};
-use near_crypto::PublicKey;
 use std::sync::Arc;
 
 impl EcdsaSignatureProvider {

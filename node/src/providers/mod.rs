@@ -10,16 +10,12 @@ pub mod ecdsa;
 pub use ecdsa::EcdsaSignatureProvider;
 pub use ecdsa::EcdsaTaskId;
 use k256::AffinePoint;
-use mpc_contract::primitives::key_state::KeyEventId;
-use near_crypto::PublicKey;
 
 use crate::config::ParticipantsConfig;
-use crate::keyshare::KeyshareData;
-use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+use crate::network::NetworkTaskChannel;
 use crate::sign_request::SignatureId;
 use k256::Scalar;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use crate::config::MpcConfig;
 use crate::primitives::{MpcTaskId, ParticipantId};

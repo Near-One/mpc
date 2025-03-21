@@ -103,15 +103,6 @@ pub struct LegacyRootKeyshareData {
     pub public_key: AffinePoint,
 }
 
-impl LegacyRootKeyshareData {
-    pub fn keygen_output(&self) -> cait_sith::KeygenOutput<k256::Secp256k1> {
-        cait_sith::KeygenOutput {
-            private_share: self.private_share,
-            public_key: self.public_key,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::PermanentKeyshareData;

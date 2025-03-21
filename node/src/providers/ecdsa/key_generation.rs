@@ -1,13 +1,11 @@
 use crate::config::MpcConfig;
 use crate::network::computation::MpcLeaderCentricComputation;
-use crate::network::{MeshNetworkClient, NetworkTaskChannel};
+use crate::network::NetworkTaskChannel;
 use crate::protocol::run_protocol;
-use crate::providers::ecdsa::{EcdsaSignatureProvider, EcdsaTaskId};
+use crate::providers::ecdsa::EcdsaSignatureProvider;
 use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
 use k256::Secp256k1;
-use mpc_contract::primitives::key_state::KeyEventId;
-use std::sync::Arc;
 
 impl EcdsaSignatureProvider {
     pub(super) async fn run_key_generation_client_internal(

@@ -1,8 +1,8 @@
 use super::permanent::LegacyRootKeyshareData;
-use super::{Keyshare, KeyshareData, KeyshareStorage};
+use super::{Keyshare, KeyshareData};
 use cait_sith::KeygenOutput;
 use mpc_contract::primitives::domain::DomainId;
-use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId, KeyForDomain, Keyset};
+use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId};
 
 /// For compatibility while we perform the refactoring.
 /// Converts the new format keyshares array to the old format.
@@ -27,26 +27,26 @@ pub fn legacy_ecdsa_key_from_keyshares(
     })
 }
 
-impl KeyshareStorage {
-    /// For compatibility with the rest of the MPC codebase while we perform refactoring.
-    /// Loads the keyshare and converts it to legacy format.
-    pub async fn compat_load_legacy_keyshare(
-        &self,
-        epoch_id: u64,
-        public_key: near_crypto::PublicKey,
-    ) -> anyhow::Result<LegacyRootKeyshareData> {
-        let keyset = Keyset {
-            epoch_id: EpochId::new(epoch_id),
-            domains: vec![KeyForDomain {
-                domain_id: DomainId::legacy_ecdsa_id(),
-                key: public_key.to_string().parse()?,
-                attempt: AttemptId::legacy_attempt_id(),
-            }],
-        };
-        let keyshares = self.load_keyset(&keyset).await?;
-        legacy_ecdsa_key_from_keyshares(&keyshares)
-    }
-}
+//impl KeyshareStorage {
+//    /// For compatibility with the rest of the MPC codebase while we perform refactoring.
+//    /// Loads the keyshare and converts it to legacy format.
+//    pub async fn compat_load_legacy_keyshare(
+//        &self,
+//        epoch_id: u64,
+//        public_key: near_crypto::PublicKey,
+//    ) -> anyhow::Result<LegacyRootKeyshareData> {
+//        let keyset = Keyset {
+//            epoch_id: EpochId::new(epoch_id),
+//            domains: vec![KeyForDomain {
+//                domain_id: DomainId::legacy_ecdsa_id(),
+//                key: public_key.to_string().parse()?,
+//                attempt: AttemptId::legacy_attempt_id(),
+//            }],
+//        };
+//        let keyshares = self.load_keyset(&keyset).await?;
+//        legacy_ecdsa_key_from_keyshares(&keyshares)
+//    }
+//}
 
 impl Keyshare {
     /// Converts the legacy keyshare to a keyshare in the new format.

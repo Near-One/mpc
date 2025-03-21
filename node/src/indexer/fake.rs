@@ -5,19 +5,18 @@ use super::participants::{
 use super::types::{ChainRespondArgs, ChainSendTransactionRequest};
 use super::IndexerAPI;
 use crate::config::ParticipantsConfig;
-use crate::indexer::participants::{
-    ContractKeyEventInstance, ContractKeyForDomain, ContractKeyset,
-};
+use crate::indexer::participants::ContractKeyEventInstance;
 use crate::sign_request::SignatureId;
 use crate::signing::recent_blocks_tracker::tests::TestBlockMaker;
 use crate::tracking::{AutoAbortTask, AutoAbortTaskCollection};
 use k256::Scalar;
-use mpc_contract::primitives::domain::{DomainConfig, DomainId, SignatureScheme};
-use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId};
+use mpc_contract::primitives::domain::DomainId;
+use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId, KeyForDomain, Keyset};
 use near_crypto::PublicKey;
 use near_sdk::AccountId;
 use near_time::{Clock, Duration};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -44,13 +43,10 @@ impl FakeMpcContractState {
             DomainId::legacy_ecdsa_id(),
             AttemptId::legacy_attempt_id(),
         );
-        let last_updated = 0;
-        let started_in = None;
         let completed = BTreeSet::new();
         ContractKeyEventInstance {
             id,
-            last_updated,
-            started_in,
+            started: false,
             completed,
         }
     }
@@ -58,9 +54,11 @@ impl FakeMpcContractState {
         assert_eq!(self.state, ContractState::WaitingForSync);
 
         self.state = ContractState::Initializing(ContractInitializingState {
-            epoch_id: EpochId::new(0),
+            generated_keyset: Keyset {
+                epoch_id: EpochId::new(0),
+                domains: Vec::new(),
+            },
             participants: participants.clone(),
-            generated_keys: Vec::new(),
             key_event: Self::gen_key_event(0),
         });
     }
@@ -70,9 +68,9 @@ impl FakeMpcContractState {
             _ => panic!("Cannot start resharing from non-running state"),
         };
         self.state = ContractState::Resharing(ContractResharingState {
-            current_state: running_state.clone(),
+            previous_running_state: running_state.clone(),
             new_participants: new_participants.clone(),
-            //reshared_keys: Vec::new(),
+            reshared_keys: Keyset::new(running_state.keyset.epoch_id.next(), Vec::new()),
             key_event: Self::gen_key_event(0),
         });
     }
@@ -89,20 +87,17 @@ impl FakeMpcContractState {
             config.key_event.completed.insert(id);
             // assert pk matches
             if config.key_event.completed.len() == config.participants.participants.len() {
-                let contract_keyset = ContractKeyset {
+                let keyset = Keyset {
                     epoch_id: key_id.epoch_id,
-                    domains: [ContractKeyForDomain {
-                        domain: DomainConfig {
-                            id: key_id.domain_id,
-                            scheme: SignatureScheme::Secp256k1,
-                        },
+                    domains: [KeyForDomain {
+                        domain_id: key_id.domain_id,
+                        key: near_sdk::PublicKey::from_str(&pk.to_string()).unwrap(),
                         attempt: key_id.attempt_id,
-                        key: pk,
                     }]
                     .into(),
                 };
                 let new_config = ContractState::Running(ContractRunningState {
-                    keyset: contract_keyset,
+                    keyset,
                     participants: config.participants.clone(),
                 });
                 self.state = new_config;
@@ -127,28 +122,11 @@ impl FakeMpcContractState {
             config.key_event.completed.insert(id);
             // assert pk matches
             if config.key_event.completed.len() == config.new_participants.participants.len() {
-                let contract_keyset = ContractKeyset {
-                    epoch_id: key_id.epoch_id,
-                    domains: [ContractKeyForDomain {
-                        domain: DomainConfig {
-                            id: key_id.domain_id,
-                            scheme: SignatureScheme::Secp256k1,
-                        },
-                        attempt: key_id.attempt_id,
-                        key: config
-                            .current_state
-                            .keyset
-                            .domains
-                            .first()
-                            .unwrap()
-                            .key
-                            .clone(),
-                    }]
-                    .into(),
-                };
+                let mut keyset = config.previous_running_state.keyset.clone();
+                keyset.epoch_id = keyset.epoch_id.next();
                 // todo: prepare for multiple keys
                 let new_config = ContractState::Running(ContractRunningState {
-                    keyset: contract_keyset,
+                    keyset,
                     participants: config.new_participants.clone(),
                 });
                 self.state = new_config;
