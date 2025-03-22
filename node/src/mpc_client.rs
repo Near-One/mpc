@@ -1,5 +1,4 @@
 use crate::config::ConfigFile;
-use crate::hkdf::derive_tweak;
 use crate::indexer::handler::{ChainBlockUpdate, SignatureRequestFromChain};
 use crate::indexer::types::{ChainRespondArgs, ChainSendTransactionRequest};
 use crate::metrics;
@@ -10,6 +9,7 @@ use crate::sign_request::{SignRequestStorage, SignatureRequest};
 use crate::signing::queue::{PendingSignatureRequests, CHECK_EACH_SIGNATURE_REQUEST_INTERVAL};
 use crate::tracking::{self, AutoAbortTaskCollection};
 use crate::web::{SignatureDebugRequest, SignatureDebugRequestKind};
+use mpc_contract::crypto_shared::derive_tweak;
 use near_time::Clock;
 use std::sync::Arc;
 use std::time::Duration;

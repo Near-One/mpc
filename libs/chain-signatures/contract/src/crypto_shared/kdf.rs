@@ -1,18 +1,21 @@
-use crate::crypto_shared::types::{PublicKey, ScalarExt};
+use crate::{
+    crypto_shared::types::{PublicKey, ScalarExt},
+    primitives::signature::{PayloadHash, Tweak},
+};
 use anyhow::Context;
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::{point::AffineCoordinates, sec1::ToEncodedPoint, CurveArithmetic},
-    Scalar, Secp256k1, SecretKey,
+    Scalar, Secp256k1,
 };
 use near_account_id::AccountId;
 use sha3::{Digest, Sha3_256};
 
-// Constant prefix that ensures epsilon derivation values are used specifically for
+// Constant prefix that ensures tweak derivation values are used specifically for
 // near-mpc-recovery with key derivation protocol vX.Y.Z.
-const EPSILON_DERIVATION_PREFIX: &str = "near-mpc-recovery v0.1.0 epsilon derivation:";
+const EPSILON_DERIVATION_PREFIX: &str = "near-mpc-recovery v0.1.0 tweak derivation:";
 
-pub fn derive_epsilon(predecessor_id: &AccountId, path: &str) -> Scalar {
+pub fn derive_tweak(predecessor_id: &AccountId, path: &str) -> Tweak {
     // TODO: Use a key derivation library instead of doing this manually.
     // https://crates.io/crates/hkdf might be a good option?
     //
@@ -25,15 +28,12 @@ pub fn derive_epsilon(predecessor_id: &AccountId, path: &str) -> Scalar {
     let mut hasher = Sha3_256::new();
     hasher.update(derivation_path);
     let hash: [u8; 32] = hasher.finalize().into();
-    Scalar::from_non_biased(hash)
+    Tweak::new(hash)
 }
 
-pub fn derive_key(public_key: PublicKey, epsilon: Scalar) -> PublicKey {
-    (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * epsilon + public_key).to_affine()
-}
-
-pub fn derive_secret_key(secret_key: &SecretKey, epsilon: Scalar) -> SecretKey {
-    SecretKey::new((epsilon + secret_key.to_nonzero_scalar().as_ref()).into())
+pub fn derive_key(public_key: PublicKey, tweak: &Tweak) -> PublicKey {
+    let tweak = Scalar::from_non_biased(tweak.as_bytes());
+    (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * tweak + public_key).to_affine()
 }
 
 /// Get the x coordinate of a point, as a scalar
@@ -49,14 +49,14 @@ pub fn check_ec_signature(
     expected_pk: &k256::AffinePoint,
     big_r: &k256::AffinePoint,
     s: &k256::Scalar,
-    msg_hash: Scalar,
+    msg_hash: &PayloadHash,
     recovery_id: u8,
 ) -> anyhow::Result<()> {
     let public_key = expected_pk.to_encoded_point(false);
     let signature = k256::ecdsa::Signature::from_scalars(x_coordinate(big_r), s)
         .context("cannot create signature from cait_sith signature")?;
     let found_pk = recover(
-        &msg_hash.to_bytes(),
+        &msg_hash.as_bytes(),
         &signature,
         RecoveryId::try_from(recovery_id).context("invalid recovery ID")?,
     )?

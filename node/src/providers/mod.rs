@@ -7,6 +7,7 @@
 //! As a reference, check the existing implementations.
 
 mod ecdsa;
+pub use ecdsa::affine_point_to_public_key;
 pub use ecdsa::EcdsaSignatureProvider;
 pub use ecdsa::EcdsaTaskId;
 

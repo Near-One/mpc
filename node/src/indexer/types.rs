@@ -7,6 +7,7 @@ use k256::{
     AffinePoint, Scalar, Secp256k1,
 };
 use legacy_mpc_contract;
+use mpc_contract::primitives::signature::{PayloadHash, Tweak};
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::Gas;
 use serde::{Deserialize, Serialize};
@@ -36,16 +37,12 @@ struct SerializableAffinePoint {
  */
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChainSignatureRequest {
-    pub epsilon: SerializableScalar,
-    pub payload_hash: SerializableScalar,
+    pub epsilon: Tweak,
+    pub payload_hash: PayloadHash,
 }
 
 impl ChainSignatureRequest {
-    pub fn new(payload_hash: Scalar, tweak: Scalar) -> Self {
-        let epsilon = SerializableScalar { scalar: tweak };
-        let payload_hash = SerializableScalar {
-            scalar: payload_hash,
-        };
+    pub fn new(epsilon: Tweak, payload_hash: PayloadHash) -> Self {
         ChainSignatureRequest {
             epsilon,
             payload_hash,
@@ -155,7 +152,7 @@ impl ChainRespondArgs {
     ) -> anyhow::Result<Self> {
         let recovery_id = Self::brute_force_recovery_id(public_key, response, &request.msg_hash)?;
         Ok(ChainRespondArgs {
-            request: ChainSignatureRequest::new(request.msg_hash, request.tweak),
+            request: ChainSignatureRequest::new(request.tweak.clone(), request.msg_hash.clone()),
             response: ChainSignatureResponse::new(response.big_r, response.s, recovery_id)?,
         })
     }
@@ -164,7 +161,7 @@ impl ChainRespondArgs {
     pub(crate) fn brute_force_recovery_id(
         expected_pk: &AffinePoint,
         signature: &FullSignature<Secp256k1>,
-        msg_hash: &Scalar,
+        msg_hash: &PayloadHash,
     ) -> anyhow::Result<u8> {
         let partial_signature = k256::ecdsa::Signature::from_scalars(
             <<Secp256k1 as CurveArithmetic>::Scalar as Reduce<<Secp256k1 as Curve>::Uint>>
@@ -176,7 +173,7 @@ impl ChainRespondArgs {
         };
         match RecoveryId::trial_recovery_from_prehash(
             &expected_pk,
-            &msg_hash.to_bytes(),
+            &msg_hash.as_bytes(),
             &partial_signature,
         ) {
             Ok(rec_id) => Ok(rec_id.to_byte()),
@@ -189,12 +186,12 @@ impl ChainRespondArgs {
 
 #[cfg(test)]
 mod recovery_id_tests {
-    use crate::hkdf::ScalarExt;
     use crate::indexer::types::ChainRespondArgs;
     use cait_sith::FullSignature;
     use k256::ecdsa::{RecoveryId, SigningKey};
     use k256::elliptic_curve::{point::DecompressPoint, PrimeField};
-    use k256::{AffinePoint, Scalar};
+    use k256::AffinePoint;
+    use mpc_contract::primitives::signature::PayloadHash;
     use rand::rngs::OsRng;
 
     #[test]
@@ -210,7 +207,6 @@ mod recovery_id_tests {
                 // match signing_key.sign_digest_recoverable(digest) {
                 Ok((signature, recid)) => {
                     let (r, s) = signature.split_scalars();
-                    let msg_hash = Scalar::from_bytes(prehash).unwrap();
 
                     // create a full signature
                     // any big_r creation works here as we only need it's x coordinate during bruteforce (big_r.x())
@@ -226,7 +222,7 @@ mod recovery_id_tests {
                     let tested_recid = ChainRespondArgs::brute_force_recovery_id(
                         signing_key.verifying_key().as_affine(),
                         &full_sig,
-                        &msg_hash,
+                        &PayloadHash::new(prehash),
                     )
                     .unwrap();
 

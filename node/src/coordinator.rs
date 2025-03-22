@@ -1,6 +1,5 @@
 use crate::config::{ConfigFile, MpcConfig, SecretsConfig};
 use crate::db::{DBCol, SecretDB};
-use crate::hkdf::affine_point_to_public_key;
 use crate::indexer::handler::ChainBlockUpdate;
 use crate::indexer::participants::{
     ContractInitializingState, ContractResharingState, ContractRunningState, ContractState,
@@ -13,7 +12,7 @@ use crate::metrics;
 use crate::mpc_client::MpcClient;
 use crate::network::{run_network_client, MeshNetworkTransportSender};
 use crate::p2p::new_tls_mesh_network;
-use crate::providers::{EcdsaSignatureProvider, SignatureProvider};
+use crate::providers::{affine_point_to_public_key, EcdsaSignatureProvider, SignatureProvider};
 use crate::runtime::AsyncDroppableRuntime;
 use crate::sign_request::SignRequestStorage;
 use crate::tracking::{self};

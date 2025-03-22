@@ -443,7 +443,7 @@ mod tests {
     use crate::signing::recent_blocks_tracker::tests::TestBlockMaker;
     use crate::tests::TestGenerators;
     use crate::tracing::init_logging;
-    use k256::Scalar;
+    use mpc_contract::primitives::signature::{Tweak, PayloadHash};
     use near_indexer_primitives::CryptoHash;
     use near_time::{Duration, FakeClock};
     use std::collections::{HashMap, HashSet};
@@ -465,9 +465,9 @@ mod tests {
                 // All other fields are irrelevant for the test.
                 receipt_id: CryptoHash([0; 32]),
                 entropy: [0; 32],
-                msg_hash: Scalar::ZERO,
+                msg_hash: PayloadHash::new([0; 32]),
                 timestamp_nanosec: 0,
-                tweak: Scalar::ZERO,
+                tweak: Tweak::new([0; 32]),
             };
             let leader_selection_order =
                 QueuedSignatureRequest::leader_selection_order(participants, request.id);

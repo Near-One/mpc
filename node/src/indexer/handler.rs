@@ -1,10 +1,9 @@
-use crate::hkdf::ScalarExt;
 use crate::indexer::stats::IndexerStats;
 use crate::metrics;
 use crate::sign_request::SignatureId;
 use crate::signing::recent_blocks_tracker::BlockViewLite;
 use futures::StreamExt;
-use k256::Scalar;
+use mpc_contract::primitives::signature::PayloadHash;
 use near_indexer_primitives::types::AccountId;
 use near_indexer_primitives::views::{
     ActionView, ExecutionOutcomeWithIdView, ExecutionStatusView, ReceiptEnumView, ReceiptView,
@@ -30,7 +29,7 @@ struct UnvalidatedSignArgs {
 /// A validated version of the signature request
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct SignArgs {
-    pub payload: Scalar,
+    pub payload: PayloadHash,
     pub path: String,
     pub key_version: u32,
 }
@@ -174,14 +173,6 @@ fn maybe_get_sign_args(
             return None;
         }
     };
-    let Some(payload) = Scalar::from_bytes(sign_args.request.payload) else {
-        tracing::warn!(
-            target: "mpc",
-            "`sign` did not produce payload correctly: {:?}",
-            sign_args.request.payload,
-        );
-        return None;
-    };
 
     tracing::info!(
         target: "mpc",
@@ -195,7 +186,7 @@ fn maybe_get_sign_args(
     Some((
         next_receipt_id,
         SignArgs {
-            payload,
+            payload: PayloadHash::new(sign_args.request.payload),
             path: sign_args.request.path,
             key_version: sign_args.request.key_version,
         },

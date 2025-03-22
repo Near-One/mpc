@@ -197,6 +197,7 @@ mod tests {
     use super::CompletedSignatureRequest;
     use crate::sign_request::SignatureRequest;
     use crate::signing::debug::CompletedSignatureRequests;
+    use mpc_contract::primitives::signature::{Tweak, PayloadHash};
     use near_indexer_primitives::CryptoHash;
     use rand::seq::SliceRandom;
 
@@ -210,8 +211,8 @@ mod tests {
                 request: SignatureRequest {
                     id: CryptoHash(rand::random()),
                     receipt_id: CryptoHash(rand::random()),
-                    msg_hash: Default::default(),
-                    tweak: Default::default(),
+                    msg_hash: PayloadHash::new([0; 32]),
+                    tweak: Tweak::new([0; 32]),
                     entropy: Default::default(),
                     timestamp_nanosec: Default::default(),
                 },

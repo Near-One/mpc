@@ -26,7 +26,7 @@ impl ScalarExt for Scalar {
         // This should never happen.
         // The space of inputs is 2^256, the space of the field is ~2^256 - 2^129.
         // This mean that you'd have to run 2^127 hashes to find a value that causes this to fail.
-        Scalar::from_bytes(hash).expect("Derived epsilon value falls outside of the field")
+        Scalar::from_bytes(hash).expect("Derived tweak value falls outside of the field")
     }
 }
 

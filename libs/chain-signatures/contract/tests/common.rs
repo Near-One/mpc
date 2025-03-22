@@ -1,21 +1,20 @@
 use digest::{Digest, FixedOutput};
 use ecdsa::signature::Verifier;
 use k256::{
-    elliptic_curve::{ops::Reduce, point::DecompressPoint as _, sec1::ToEncodedPoint},
-    AffinePoint, FieldBytes, Scalar, Secp256k1,
+    elliptic_curve::{point::DecompressPoint as _, sec1::ToEncodedPoint},
+    AffinePoint, FieldBytes, Scalar, Secp256k1, SecretKey,
 };
 use mpc_contract::{
     config::InitConfig,
     crypto_shared::{
-        derive_epsilon, derive_key,
-        kdf::{check_ec_signature, derive_secret_key},
-        ScalarExt, SerializableAffinePoint, SerializableScalar, SignatureResponse,
+        derive_key, derive_tweak, kdf::check_ec_signature, ScalarExt, SerializableAffinePoint,
+        SerializableScalar, SignatureResponse,
     },
     primitives::{
         domain::{DomainConfig, DomainId, SignatureScheme},
         key_state::{AttemptId, EpochId, KeyForDomain, Keyset},
         participants::{ParticipantInfo, Participants},
-        signature::{SignRequest, SignatureRequest},
+        signature::{PayloadHash, SignRequest, SignatureRequest, Tweak},
         thresholds::{Threshold, ThresholdParameters},
     },
     update::UpdateId,
@@ -165,18 +164,19 @@ pub async fn init_env_secp256k1(
     (worker, contract, accounts, secret_keys)
 }
 
-/// Process the message, creating the same hash with type of Digest, Scalar, and [u8; 32]
-pub async fn process_message(msg: &str) -> (impl Digest, k256::Scalar, [u8; 32]) {
+/// Process the message, creating the same hash with type of [`Digest`] and [`PayloadHash`]
+pub async fn process_message(msg: &str) -> (impl Digest, PayloadHash) {
     let msg = msg.as_bytes();
     let digest = <k256::Secp256k1 as ecdsa::hazmat::DigestPrimitive>::Digest::new_with_prefix(msg);
     let bytes: FieldBytes = digest.clone().finalize_fixed();
-    let scalar_hash =
-        <k256::Scalar as Reduce<<Secp256k1 as k256::elliptic_curve::Curve>::Uint>>::reduce_bytes(
-            &bytes,
-        );
 
-    let payload_hash: [u8; 32] = bytes.into();
-    (digest, scalar_hash, payload_hash)
+    let payload_hash = PayloadHash::new(bytes.into());
+    (digest, payload_hash)
+}
+
+pub fn derive_secret_key(secret_key: &SecretKey, tweak: &Tweak) -> SecretKey {
+    let tweak = Scalar::from_non_biased(tweak.as_bytes());
+    SecretKey::new((tweak + secret_key.to_nonzero_scalar().as_ref()).into())
 }
 
 pub async fn create_response(
@@ -184,13 +184,13 @@ pub async fn create_response(
     msg: &str,
     path: &str,
     sk: &k256::SecretKey,
-) -> ([u8; 32], SignatureRequest, SignatureResponse) {
-    let (digest, scalar_hash, payload_hash) = process_message(msg).await;
+) -> (PayloadHash, SignatureRequest, SignatureResponse) {
+    let (digest, payload_hash) = process_message(msg).await;
     let pk = sk.public_key();
 
-    let epsilon = derive_epsilon(predecessor_id, path);
-    let derived_sk = derive_secret_key(sk, epsilon);
-    let derived_pk = derive_key(pk.into(), epsilon);
+    let tweak = derive_tweak(predecessor_id, path);
+    let derived_sk = derive_secret_key(sk, &tweak);
+    let derived_pk = derive_key(pk.into(), &tweak);
     let signing_key = k256::ecdsa::SigningKey::from(&derived_sk);
     let verifying_key =
         k256::ecdsa::VerifyingKey::from(&k256::PublicKey::from_affine(derived_pk).unwrap());
@@ -201,15 +201,14 @@ pub async fn create_response(
 
     let s = signature.s();
     let (r_bytes, _s_bytes) = signature.split_bytes();
-    let payload_hash_s = Scalar::from_bytes(payload_hash).unwrap();
-    let respond_req = SignatureRequest::new(payload_hash_s, predecessor_id, path);
+    let respond_req = SignatureRequest::new(payload_hash.clone(), predecessor_id, path);
     let big_r =
         AffinePoint::decompress(&r_bytes, k256::elliptic_curve::subtle::Choice::from(0)).unwrap();
     let s: k256::Scalar = *s.as_ref();
 
-    let recovery_id = if check_ec_signature(&derived_pk, &big_r, &s, scalar_hash, 0).is_ok() {
+    let recovery_id = if check_ec_signature(&derived_pk, &big_r, &s, &payload_hash, 0).is_ok() {
         0
-    } else if check_ec_signature(&derived_pk, &big_r, &s, scalar_hash, 1).is_ok() {
+    } else if check_ec_signature(&derived_pk, &big_r, &s, &payload_hash, 1).is_ok() {
         1
     } else {
         panic!("unable to use recovery id of 0 or 1");
