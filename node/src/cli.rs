@@ -21,6 +21,7 @@ use near_crypto::SecretKey;
 use near_indexer_primitives::types::Finality;
 use near_sdk::AccountId;
 use near_time::Clock;
+use std::panic;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -153,10 +154,19 @@ impl StartCmd {
             .worker_threads(1)
             .build()?;
 
+        // we want the panic in the indexer thread to cause the process to exit
+        // https://stackoverflow.com/questions/35988775/how-can-i-cause-a-panic-on-a-thread-to-immediately-end-the-main-thread
+        let orig_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |panic_info| {
+            // invoke the default handler and exit the process
+            orig_hook(panic_info);
+            std::process::exit(1);
+        }));
+
         let root_task = root_runtime.spawn(start_root_task("root", root_future).0);
         let indexer_handle = root_runtime.spawn_blocking(move || {
             if let Err(e) = indexer_handle.join() {
-                anyhow::bail!("Indexer thread failed: {:?}", e);
+                panic!("Indexer thread failed: {:?}", e);
             }
             anyhow::Ok(())
         });
