@@ -81,11 +81,13 @@ def test_contract_update_trailing_sigs(initial_contract_path, update_args):
     """
     num_requests = 100
     initial_contract = load_binary_file(initial_contract_path)
-    cluster = shared.start_cluster_with_mpc(2, 2, 1, initial_contract)
+    cluster, mpc_nodes = shared.start_cluster_with_mpc(2, 2, 1, initial_contract)
+    cluster.set_active_mpc_nodes(mpc_nodes)
 
     # assert correct contract is deployed
     cluster.assert_is_deployed(initial_contract)
     cluster.init_contract(threshold=2)
+    cluster.add_domains(['secp256k1'])
     # propose and vote on contract update (avoid nonce conflicts)
     time.sleep(2)
 

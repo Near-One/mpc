@@ -54,9 +54,11 @@ def test_sign_request_cleanup_logic():
     This test verifies that a sign call removes exactly one delayed signature from the state.
     Note that this test is slow.
     """
-    cluster = shared.start_cluster_with_mpc(2, 2, 1, load_mpc_contract())
+    cluster, mpc_nodes = shared.start_cluster_with_mpc(2, 2, 1, load_mpc_contract())
+    cluster.set_active_mpc_nodes(mpc_nodes)
     init_args = {'init_config': {'request_timeout_blocks': 1}}
     cluster.init_contract(threshold=2, additional_init_args=init_args)
+    cluster.add_domains(['secp256k1'])
     hashes, _ = cluster.generate_and_send_signature_requests(1)
     time.sleep(2)
     hash_2, _ = cluster.generate_and_send_signature_requests(1)
@@ -82,9 +84,11 @@ def test_remove_timed_out_requests():
 
     num_requests = 150
     num_requests_to_remove = 100
-    cluster = shared.start_cluster_with_mpc(2, 2, 1, load_mpc_contract())
+    cluster, mpc_nodes = shared.start_cluster_with_mpc(2, 2, 1, load_mpc_contract())
+    cluster.set_active_mpc_nodes(mpc_nodes)
     init_args = {'init_config': {'request_timeout_blocks': 2}}
     cluster.init_contract(threshold=2, additional_init_args=init_args)
+    cluster.add_domains(['secp256k1'])
 
     # Submit sigature requestst
     started = time.time()

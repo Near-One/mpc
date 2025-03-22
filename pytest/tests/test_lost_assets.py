@@ -20,10 +20,12 @@ PRESIGNATURES_TO_BUFFER = 8
 
 @pytest.mark.parametrize("num_requests, num_respond_access_keys", [(10, 1)])
 def test_lost_assets(num_requests, num_respond_access_keys):
-    cluster = shared.start_cluster_with_mpc(2, 3, num_respond_access_keys,
+    cluster, mpc_nodes = shared.start_cluster_with_mpc(2, 3, num_respond_access_keys,
                                             load_mpc_contract(),
                                             presignatures_to_buffer=PRESIGNATURES_TO_BUFFER)
+    cluster.set_active_mpc_nodes(mpc_nodes)
     cluster.init_contract(threshold=2)
+    cluster.add_domains(['secp256k1'])
 
     # Cluster should connect in a full mesh, including self-connections
     cluster.mpc_nodes[0].wait_for_connection_count(3)

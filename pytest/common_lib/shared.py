@@ -1,4 +1,5 @@
 import base64
+import random
 import base58
 import os
 import sys
@@ -16,7 +17,7 @@ from common_lib import constants
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
-from cluster import CONFIG_ENV_VAR, BaseNode
+from cluster import CONFIG_ENV_VAR, BaseNode, LocalNode
 from typing import List
 
 from cluster import start_cluster
@@ -58,7 +59,7 @@ def assert_txn_success(res):
 
 class NearNode:
 
-    def __init__(self, near_node: BaseNode):
+    def __init__(self, near_node: LocalNode):
         self.near_node = near_node
 
     def signer_key(self):
@@ -100,14 +101,22 @@ class NearNode:
                                    function_name, encoded_args, gas, deposit,
                                    nonce, last_block_hash)
         return tx
+    
+    def call_function(self, contract_id, method_name, args):
+        res = self.near_node.call_function(contract_id, method_name,
+                                            base64.b64encode(json.dumps(args).encode('utf-8')).decode('utf-8'))
+        assert 'error' not in res, res
+        return json.loads(res['result']['result'])
 
 
 class MpcNode(NearNode):
 
-    def __init__(self, near_node: BaseNode, candidate):
+    def __init__(self, near_node: LocalNode, url, sign_pk):
         super().__init__(near_node)
-        assert candidate['account_id'] == near_node.signer_key.account_id
-        self.candidate = candidate
+        self.account_id = near_node.signer_key.account_id
+        self.url = url
+        self.sign_pk = sign_pk
+        self.participant_id = None
         self.home_dir = self.near_node.node_dir
         self.is_running = False
         self.metrics = MetricsTracker(near_node)
@@ -180,9 +189,9 @@ def assert_signature_success(res):
 class MpcCluster:
     """Helper class"""
 
-    def __init__(self, near_nodes: List[NearNode], mpc_nodes: List[MpcNode]):
-        self.mpc_nodes = mpc_nodes
-
+    def __init__(self, near_nodes: List[NearNode]):
+        self.mpc_nodes: List[MpcNode] = []
+        self.next_participant_id = 0
         self.contract_node = near_nodes[0]
         self.secondary_contract_node = near_nodes[1]
         self.sign_request_node = near_nodes[1]
@@ -227,19 +236,46 @@ class MpcCluster:
             args,
             gas=300 * TGAS)
         return self.secondary_contract_node.near_node.send_tx_and_wait(tx, 20)
+    
+    def set_active_mpc_nodes(self, mpc_nodes: List[MpcNode]):
+        for node in mpc_nodes:
+            if node not in self.mpc_nodes:
+                node.participant_id = self.next_participant_id
+                print(f"MpcCluster: Adding node {node.account_id} as participant {node.participant_id}")
+                self.next_participant_id += 1
+        
+        for node in self.mpc_nodes:
+            if node not in mpc_nodes:
+                print(f"MpcCluster: Kicking out node {node.account_id}")
+                node.participant_id = None
 
-    """
-    Initializes the contract by calling init. This needs to be done before
-    the contract is usable.
-    """
+        self.mpc_nodes = mpc_nodes
+
+    def make_threshold_parameters(self, threshold: int):
+        return {
+            'threshold': threshold,
+            'participants': {
+                'next_id': self.next_participant_id,
+                'participants': [
+                    [
+                        node.account_id,
+                        node.participant_id,
+                        {
+                            'sign_pk': node.sign_pk,
+                            'url': node.url,
+                        }
+                    ] for node in self.mpc_nodes
+                ]
+            }
+        }
 
     def init_contract(self, threshold, additional_init_args=None):
+        """
+        Initializes the contract by calling init. This needs to be done before
+        the contract is usable.
+        """
         args = {
-            'threshold': threshold,
-            'candidates': {
-                node.candidate['account_id']: node.candidate
-                for node in self.mpc_nodes
-            },
+            'parameters': self.make_threshold_parameters(range(len(self.mpc_nodes)), threshold)
         }
         if additional_init_args is not None:
             args.update(additional_init_args)
@@ -247,16 +283,52 @@ class MpcCluster:
                                         'init', args)
         self.contract_node.send_txn_and_check_success(tx)
 
-    """
-    creates on signature transaction for each payload in payloads.
-    returns a list of signed transactions
-    """
+        state = self.contract_node.call_function(self.mpc_contract_account(), 'state', {})
+        assert 'Running' in state
+
+    def add_domains(self, signature_schemes: List[str]):
+        state = self.contract_node.call_function(self.mpc_contract_account(), 'state', {})
+        assert 'Running' in state, f'Contract not in Running state: {state}'
+        domains = state['Running']['domains']
+        threshold = state['Running']['parameters']['threshold']
+        domains_to_add = []
+        for scheme in signature_schemes:
+            domains_to_add.append({
+                'id': domains['next_domain_id'],
+                'scheme': scheme,
+            })
+            domains['next_domain_id'] += 1
+        args = {
+            'domains': domains_to_add,
+        }
+        for node in random.choices(self.mpc_nodes, k=threshold):
+            tx = node.sign_tx(self.mpc_contract_account(), 'vote_add_domains', args)
+            node.send_txn_and_check_success(tx)
+        state = self.contract_node.call_function(self.mpc_contract_account(), 'state', {})
+        assert 'Initializing' in state, f'Contract did not transition to Initializing: {state}'
+        
+    def start_resharing(self, new_threshold: int):
+        args = {
+            'proposal': self.make_threshold_parameters(new_threshold)
+        }
+        state = self.contract_node.call_function(self.mpc_contract_account(), 'state', {})
+        assert 'Running' in state, f'Contract not in Running state: {state}'
+        old_threshold = state['Running']['parameters']['threshold']
+        for node in random.choices(self.mpc_nodes, k=old_threshold):
+            tx = node.sign_tx(self.mpc_contract_account(), 'vote_new_parameters', args)
+            node.send_txn_and_check_success(tx)
+        state = self.contract_node.call_function(self.mpc_contract_account(), 'state', {})
+        assert 'Resharing' in state, f'Contract did not transition to resharing: {state}'
 
     def make_sign_request_txns(self,
                                payloads,
                                nonce_offset=1,
                                add_gas=None,
                                add_deposit=None):
+        """
+        creates a signature transaction for each payload in payloads.
+        returns a list of signed transactions
+        """
         nonce_offset = 1
         txs = []
         gas = constants.GAS_FOR_SIGN_CALL * TGAS
@@ -402,33 +474,6 @@ class MpcCluster:
         node = self.mpc_nodes[node_id]
         tx = node.sign_tx(self.mpc_contract_account(), 'vote_update',
                           vote_update_args)
-        node.send_txn_and_check_success(tx)
-
-    def propose_join(self, mpc_node):
-        join_args = {
-            'url': mpc_node.candidate['url'],
-            'cipher_pk': mpc_node.candidate['cipher_pk'],
-            'sign_pk': mpc_node.candidate['sign_pk'],
-        }
-        tx = mpc_node.sign_tx(self.mpc_contract_account(), 'join', join_args)
-        mpc_node.send_txn_and_check_success(tx)
-
-    def vote_join(self, node_id, account_id):
-        vote_join_args = {
-            'candidate': account_id,
-        }
-        node = self.mpc_nodes[node_id]
-        tx = node.sign_tx(self.mpc_contract_account(), 'vote_join',
-                          vote_join_args)
-        node.send_txn_and_check_success(tx)
-
-    def vote_leave(self, node_id, account_id):
-        vote_leave_args = {
-            'kick': account_id,
-        }
-        node = self.mpc_nodes[node_id]
-        tx = node.sign_tx(self.mpc_contract_account(), 'vote_leave',
-                          vote_leave_args)
         node.send_txn_and_check_success(tx)
 
     def assert_is_deployed(self, contract):
@@ -584,15 +629,15 @@ def start_cluster_with_mpc(num_validators, num_mpc_nodes, num_respond_aks,
             subprocess.run(('mv', os.path.join(mpc_config_dir,
                                                fname), nodes[i].node_dir))
 
-    cluster = MpcCluster(near_nodes=[NearNode(node) for node in nodes],
-                         mpc_nodes=[
-                             MpcNode(nodes[i], candidates[i - num_validators])
-                             for i in mpc_node_indices
-                         ])
+    mpc_nodes=[
+        MpcNode(nodes[i], candidates[i - num_validators])
+        for i in mpc_node_indices
+    ]
+    cluster = MpcCluster(near_nodes=[NearNode(node) for node in nodes])
 
     last_block_hash = cluster.contract_node.last_block_hash()
     # Set up the node's home directories
-    for mpc_node in cluster.mpc_nodes:
+    for mpc_node in mpc_nodes:
         # Indexer config must explicitly specify tracked shard
         fname = os.path.join(mpc_node.near_node.node_dir, 'config.json')
         with open(fname) as fd:
@@ -624,8 +669,8 @@ def start_cluster_with_mpc(num_validators, num_mpc_nodes, num_respond_aks,
     cluster.deploy_contract(contract)
 
     # Start the mpc nodes
-    for i, mpc_node in enumerate(cluster.mpc_nodes):
+    for i, mpc_node in enumerate(mpc_nodes):
         mpc_node.set_secret_store_key(str(chr(ord('A') + i) * 32))
         mpc_node.run()
 
-    return cluster
+    return cluster, mpc_nodes

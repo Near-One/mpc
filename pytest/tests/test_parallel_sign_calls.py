@@ -29,8 +29,10 @@ def load_parallel_sign_contract() -> bytearray:
 def test_parallel_sign_calls(num_parallel_signatures):
     # start cluster and deploy mpc contract
     mpc_contract = contracts.load_mpc_contract()
-    cluster = shared.start_cluster_with_mpc(2, 2, 1, mpc_contract)
+    cluster, mpc_nodes = shared.start_cluster_with_mpc(2, 2, 1, mpc_contract)
+    cluster.set_active_mpc_nodes(mpc_nodes)
     cluster.init_contract(threshold=2)
+    cluster.add_domains(['secp256k1'])
 
     # deploy contract with function that makes parallel sign calls
     contract = load_parallel_sign_contract()
