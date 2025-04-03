@@ -57,6 +57,9 @@ pub struct ProposeUpdateArgs {
 #[near(serializers=[borsh ])]
 #[derive(Debug)]
 struct UpdateEntry {
+    // todo:
+    // - allow only one vote per participant.
+    // - an update should be either a code update, or a config update, not both.
     updates: Vec<Update>,
     votes: HashSet<AccountId>,
     bytes_used: u128,
@@ -72,7 +75,7 @@ pub struct ProposedUpdates {
 impl Default for ProposedUpdates {
     fn default() -> Self {
         Self {
-            entries: IterableMap::new(StorageKey::ProposedUpdatesEntries),
+            entries: IterableMap::new(StorageKey::ProposedUpdatesEntriesV2),
             id: UpdateId::default(),
         }
     }

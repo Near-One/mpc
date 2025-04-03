@@ -78,7 +78,6 @@ async fn test_propose_update_config() {
 
     // have each participant propose a new update:
     let new_config = Config {
-        request_timeout_blocks: 200,
         key_event_timeout_blocks: 20,
     };
 

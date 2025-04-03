@@ -607,7 +607,10 @@ class MpcCluster:
                                  'propose_update',
                                  args,
                                  deposit=9124860000000000000000000)
-        participant.send_txn_and_check_success(tx)
+        res = participant.send_txn_and_check_success(tx)
+        return int(
+            base64.b64decode(res['result']['status']['SuccessValue']).decode(
+                'utf-8').strip(""))
 
     def get_deployed_contract_hash(self, finality='optimistic'):
         account_id = self.mpc_contract_account()

@@ -8,8 +8,9 @@ use near_sdk::{near, BorshStorageKey};
 pub enum StorageKey {
     _DeprecatedPendingRequests,
     /// Proposed updates to the contract code and config.
-    ProposedUpdatesEntries,
+    _DeprecatedProposedUpdatesEntries,
     _DeprecatedRequestsByTimestamp,
     /// Pending signature requests.
     PendingRequestsV2,
+    ProposedUpdatesEntriesV2,
 }
