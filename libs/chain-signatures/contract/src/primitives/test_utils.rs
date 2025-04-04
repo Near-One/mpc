@@ -15,20 +15,20 @@ pub fn bogus_edd25519_public_key_extended() -> PublicKeyExtended {
 
     let edwards_point = EdwardsPoint::random(rng);
     let compressed_edwards_point = edwards_point.compress();
-    let near_public_key = PublicKey::from_parts(
+    let near_public_key_compressed = PublicKey::from_parts(
         CurveType::ED25519,
         compressed_edwards_point.as_bytes().into(),
     )
     .unwrap();
 
     PublicKeyExtended::Ed25519 {
-        near_public_key,
+        near_public_key_compressed,
         edwards_point,
     }
 }
 
 pub fn bogus_edd25519_near_public_key() -> PublicKey {
-    bogus_edd25519_public_key_extended().near_public_key()
+    bogus_edd25519_public_key_extended().into()
 }
 
 #[test]

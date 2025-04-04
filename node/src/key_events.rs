@@ -17,7 +17,6 @@ use crate::{
     providers::{EcdsaSignatureProvider, SignatureProvider},
 };
 use cait_sith::{frost_ed25519, frost_secp256k1};
-use mpc_contract::crypto_shared::types::PublicKeyExtended;
 use mpc_contract::primitives::domain::{DomainConfig, SignatureScheme};
 use mpc_contract::primitives::key_state::{KeyEventId, KeyForDomain, Keyset};
 use std::sync::Arc;
@@ -178,8 +177,10 @@ async fn resharing_computation_inner(
         .public_key(key_id.domain_id)
         .map_err(|_| anyhow::anyhow!("Previous keyset does not contain key for {:?}", key_id))?;
 
-    let keyshare_data = match previous_public_key {
-        PublicKeyExtended::Secp256k1 { near_public_key } => {
+    let near_public_key = previous_public_key.near_public_key_ref();
+
+    let keyshare_data = match domain.scheme {
+        SignatureScheme::Secp256k1 => {
             let public_key = frost_secp256k1::VerifyingKey::from_near_sdk(near_public_key)?;
             let my_share = existing_keyshare
                 .map(|keyshare| match keyshare.data {
@@ -197,9 +198,7 @@ async fn resharing_computation_inner(
             .await?;
             KeyshareData::Secp256k1(res)
         }
-        PublicKeyExtended::Ed25519 {
-            near_public_key, ..
-        } => {
+        SignatureScheme::Ed25519 => {
             let public_key = frost_ed25519::VerifyingKey::from_near_sdk(near_public_key)?;
             let my_share = existing_keyshare
                 .map(|keyshare| match keyshare.data {
@@ -218,10 +217,12 @@ async fn resharing_computation_inner(
             KeyshareData::Ed25519(res)
         }
     };
-    let data = keyshare_data;
     tracing::info!("Key resharing attempt {:?}: committing keyshare.", key_id);
     keyshare_handle
-        .commit_keyshare(Keyshare { key_id, data })
+        .commit_keyshare(Keyshare {
+            key_id,
+            data: keyshare_data,
+        })
         .await?;
     tracing::info!(
         "Key resharing attempt {:?}: sending vote_reshared transaction.",

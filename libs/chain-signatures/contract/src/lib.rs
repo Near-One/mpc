@@ -300,8 +300,7 @@ impl VersionedMpcContract {
     /// the default is the first domain.
     #[handle_result]
     pub fn public_key(&self, domain_id: Option<DomainId>) -> Result<PublicKey, Error> {
-        self.public_key_extended(domain_id)
-            .map(PublicKeyExtended::near_public_key)
+        self.public_key_extended(domain_id).map(Into::into)
     }
 
     fn public_key_extended(&self, domain_id: Option<DomainId>) -> Result<PublicKeyExtended, Error> {

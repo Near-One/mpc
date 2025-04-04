@@ -21,8 +21,11 @@ pub enum PublicKeyExtended {
     Secp256k1 {
         near_public_key: near_sdk::PublicKey,
     },
+    // Invariant: `edwards_point` is always the decompressed representation of `near_public_key_compressed`.
     Ed25519 {
-        near_public_key: near_sdk::PublicKey,
+        /// Serialized compressed Edwards-y point.
+        near_public_key_compressed: near_sdk::PublicKey,
+        /// Decompressed Edwards point used for curve arithmetic operations.
         edwards_point: EdwardsPoint,
     },
 }
@@ -51,8 +54,9 @@ impl From<PublicKeyExtended> for near_sdk::PublicKey {
         match public_key_extended {
             PublicKeyExtended::Secp256k1 { near_public_key } => near_public_key,
             PublicKeyExtended::Ed25519 {
-                near_public_key, ..
-            } => near_public_key,
+                near_public_key_compressed,
+                ..
+            } => near_public_key_compressed,
         }
     }
 }
@@ -74,7 +78,7 @@ impl TryFrom<near_sdk::PublicKey> for PublicKeyExtended {
                     .ok_or(PublicKeyExtendedConversionError::FailedDecompressingToEdwardsPoint)?;
 
                 Self::Ed25519 {
-                    near_public_key,
+                    near_public_key_compressed: near_public_key,
                     edwards_point,
                 }
             }
@@ -85,70 +89,50 @@ impl TryFrom<near_sdk::PublicKey> for PublicKeyExtended {
     }
 }
 
+impl PublicKeyExtended {
+    pub fn near_public_key_ref(&self) -> &near_sdk::PublicKey {
+        match self {
+            PublicKeyExtended::Secp256k1 { near_public_key } => near_public_key,
+            PublicKeyExtended::Ed25519 {
+                near_public_key_compressed,
+                ..
+            } => near_public_key_compressed,
+        }
+    }
+}
+
+/// Module that adds implementation of [`BorshSerialize`] and [`BorshDeserialize`] for
+/// [`PublicKeyExtended`].
 mod serialize {
     use super::*;
 
     #[near(serializers=[borsh, json])]
     #[derive(Debug, PartialEq, Eq, Clone)]
-    pub enum PublicKeyExtendedHelper {
+    enum PublicKeyExtendedHelper {
         Secp256k1 {
-            key: near_sdk::PublicKey,
+            near_public_key: near_sdk::PublicKey,
         },
-        Edd25519 {
-            key: near_sdk::PublicKey,
+        Ed25519 {
+            near_public_key_compressed: near_sdk::PublicKey,
             edwards_point: SerializableEdwardsPoint,
         },
     }
 
-    impl From<PublicKeyExtended> for PublicKeyExtendedHelper {
-        fn from(value: PublicKeyExtended) -> Self {
-            match value {
-                PublicKeyExtended::Secp256k1 {
-                    near_public_key: key,
-                } => Self::Secp256k1 { key },
-                PublicKeyExtended::Ed25519 {
-                    near_public_key: key,
-                    edwards_point,
-                } => Self::Edd25519 {
-                    key,
-                    edwards_point: SerializableEdwardsPoint(edwards_point),
-                },
-            }
-        }
-    }
-
-    impl From<PublicKeyExtendedHelper> for PublicKeyExtended {
-        fn from(value: PublicKeyExtendedHelper) -> Self {
-            match value {
-                PublicKeyExtendedHelper::Secp256k1 { key } => Self::Secp256k1 {
-                    near_public_key: key,
-                },
-                PublicKeyExtendedHelper::Edd25519 { key, edwards_point } => Self::Ed25519 {
-                    near_public_key: key,
-                    edwards_point: edwards_point.0,
-                },
-            }
-        }
-    }
-
-    impl PublicKeyExtended {
-        pub fn near_public_key(self) -> near_sdk::PublicKey {
-            match self {
-                PublicKeyExtended::Secp256k1 {
-                    near_public_key: key,
-                } => key,
-                PublicKeyExtended::Ed25519 {
-                    near_public_key: key,
-                    ..
-                } => key,
-            }
-        }
-    }
-
     impl BorshSerialize for PublicKeyExtended {
         fn serialize<W: std::io::prelude::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-            let helper_representation: PublicKeyExtendedHelper = self.clone().into();
-            let to_ser: Vec<u8> = serde_json::to_vec(&helper_representation)?;
+            let serializable_helper_representation = match self.clone() {
+                PublicKeyExtended::Secp256k1 { near_public_key } => {
+                    PublicKeyExtendedHelper::Secp256k1 { near_public_key }
+                }
+                PublicKeyExtended::Ed25519 {
+                    near_public_key_compressed,
+                    edwards_point,
+                } => PublicKeyExtendedHelper::Ed25519 {
+                    near_public_key_compressed,
+                    edwards_point: SerializableEdwardsPoint(edwards_point),
+                },
+            };
+            let to_ser: Vec<u8> = serde_json::to_vec(&serializable_helper_representation)?;
             BorshSerialize::serialize(&to_ser, writer)
         }
     }
@@ -156,8 +140,23 @@ mod serialize {
     impl BorshDeserialize for PublicKeyExtended {
         fn deserialize_reader<R: std::io::prelude::Read>(reader: &mut R) -> std::io::Result<Self> {
             let from_ser: Vec<u8> = BorshDeserialize::deserialize_reader(reader)?;
-            let public_key_extended: PublicKeyExtendedHelper = serde_json::from_slice(&from_ser)?;
-            Ok(public_key_extended.into())
+            let deserializable_helper_representation: PublicKeyExtendedHelper =
+                serde_json::from_slice(&from_ser)?;
+
+            let public_key_extended = match deserializable_helper_representation {
+                PublicKeyExtendedHelper::Secp256k1 { near_public_key } => {
+                    PublicKeyExtended::Secp256k1 { near_public_key }
+                }
+                PublicKeyExtendedHelper::Ed25519 {
+                    near_public_key_compressed,
+                    edwards_point,
+                } => PublicKeyExtended::Ed25519 {
+                    near_public_key_compressed,
+                    edwards_point: edwards_point.0,
+                },
+            };
+
+            Ok(public_key_extended)
         }
     }
 
