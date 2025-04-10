@@ -53,7 +53,6 @@ pub struct DevnetSetupRepository {
 pub struct MpcNetworkSetup {
     pub participants: Vec<AccountId>,
     pub contract: Option<AccountId>,
-    pub threshold: usize,
     // These desired fields are used when updating the network.
     pub desired_balance_per_account: u128,
     pub num_responding_access_keys: usize,

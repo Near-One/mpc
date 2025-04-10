@@ -162,9 +162,6 @@ pub struct NewMpcNetworkCmd {
     /// because initializing new machines is slow.
     #[clap(long)]
     pub num_participants: usize,
-    /// The threshold to initialize the contract with.
-    #[clap(long)]
-    pub threshold: usize,
     /// The amount of NEAR to give to each MPC account. This is NOT the account that will be used
     /// to send signature responses, so you do NOT need to give a lot to these accounts.
     #[clap(long, default_value = "1")]
@@ -184,8 +181,6 @@ pub struct UpdateMpcNetworkCmd {
     #[clap(long)]
     pub num_participants: Option<usize>,
     #[clap(long)]
-    pub threshold: Option<usize>,
-    #[clap(long)]
     pub near_per_account: Option<u128>,
     #[clap(long)]
     pub num_responding_access_keys: Option<usize>,
@@ -196,15 +191,19 @@ pub struct UpdateMpcNetworkCmd {
 #[derive(clap::Parser)]
 pub struct MpcDeployContractCmd {
     /// File path that contains the contract code.
-    #[clap(
-        long,
-        default_value = "../libs/chain-signatures/compiled-contracts/v1.0.1.wasm"
-    )]
-    pub path: String,
+    /// The default is `constants::DEFAULT_MPC_CONTRACT_PATH`.
+    #[clap(long)]
+    pub path: Option<String>,
+    /// TODO(#357): Change this flag to --v1 when v2 is released.
+    #[clap(long)]
+    pub v2: bool,
     /// The number of participants to initialize with; the participants will be from 0 to
     /// init_participants-1.
     #[clap(long)]
     pub init_participants: usize,
+    /// The threshold to initialize with.
+    #[clap(long)]
+    pub threshold: u64,
     /// The number of NEAR to deposit into the contract account, for storage deposit.
     #[clap(long, default_value = "20")]
     pub deposit_near: u128,
@@ -302,10 +301,11 @@ pub struct MpcTerraformDeployInfraCmd {
 
 #[derive(clap::Parser)]
 pub struct MpcTerraformDeployNomadCmd {
-    /// If true, shuts down the nodes and deletes the database.
+    /// If true, shuts down and reset the MPC nodes, leaving only the nearcore data.
     #[clap(long)]
-    pub shutdown_and_reset_db: bool,
+    pub shutdown_and_reset: bool,
     /// Overrides the docker image to use for MPC nodes.
+    /// The default is `constants::DEFAULT_MPC_DOCKER_IMAGE`.
     #[clap(long)]
     pub docker_image: Option<String>,
 }
@@ -351,11 +351,9 @@ pub struct UpdateLoadtestCmd {
 #[derive(clap::Parser)]
 pub struct DeployParallelSignContractCmd {
     /// File path that contains the parallel signature request contract code.
-    #[clap(
-        long,
-        default_value = "../pytest/tests/test_contracts/parallel/res/contract.wasm"
-    )]
-    pub path: String,
+    /// Defaults to `constants::DEFAULT_PARALLEL_SIGN_CONTRACT_PATH`.
+    #[clap(long)]
+    pub path: Option<String>,
     #[clap(long, default_value = "2")]
     pub deposit_near: u128,
 }

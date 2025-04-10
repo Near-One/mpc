@@ -7,6 +7,7 @@ use crate::cli::{
     MpcDescribeCmd, MpcTerraformDeployInfraCmd, MpcTerraformDeployNomadCmd,
     MpcTerraformDestroyInfraCmd,
 };
+use crate::constants::DEFAULT_MPC_DOCKER_IMAGE;
 use crate::devnet::OperatingDevnetSetup;
 use crate::types::{MpcNetworkSetup, ParsedConfig};
 use describe::TerraformInfraShowOutput;
@@ -198,22 +199,18 @@ impl MpcTerraformDeployNomadCmd {
             .env("NOMAD_ADDR", &nomad_server_url)
             .print_and_run();
 
-        let mut command = std::process::Command::new("terraform");
-        command
+        let docker_image = self
+            .docker_image
+            .clone()
+            .unwrap_or(DEFAULT_MPC_DOCKER_IMAGE.to_string());
+        std::process::Command::new("terraform")
             .arg("apply")
             .arg("-var-file")
             .arg(terraform_vars_file)
             .arg("-var")
-            .arg(format!(
-                "shutdown_and_reset_db={}",
-                self.shutdown_and_reset_db
-            ));
-        if let Some(docker_image) = &self.docker_image {
-            command
-                .arg("-var")
-                .arg(format!("docker_image={}", docker_image));
-        }
-        command
+            .arg(format!("shutdown_and_reset={}", self.shutdown_and_reset))
+            .arg("-var")
+            .arg(format!("docker_image={}", docker_image))
             .current_dir(&infra_dir)
             .env("NOMAD_ADDR", &nomad_server_url)
             .print_and_run();

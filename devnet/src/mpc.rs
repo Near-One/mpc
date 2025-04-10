@@ -6,7 +6,7 @@ use crate::cli::{
     MpcVoteNewParametersCmd, MpcVoteUpdateCmd, NewMpcNetworkCmd, RemoveContractCmd,
     UpdateMpcNetworkCmd,
 };
-use crate::constants::ONE_NEAR;
+use crate::constants::{DEFAULT_MPC_CONTRACT_PATH, ONE_NEAR};
 use crate::devnet::OperatingDevnetSetup;
 use crate::funding::{fund_accounts, AccountToFund};
 use crate::tx::IntoReturnValueExt;
@@ -14,9 +14,10 @@ use crate::types::{MpcNetworkSetup, MpcParticipantSetup, NearAccount, ParsedConf
 use borsh::{BorshDeserialize, BorshSerialize};
 use legacy_mpc_contract::config::InitConfigV1;
 use legacy_mpc_contract::primitives::{self, CandidateInfo};
+use mpc_contract::config::InitConfig;
 use mpc_contract::primitives::domain::{DomainConfig, DomainId, SignatureScheme};
 use mpc_contract::primitives::key_state::EpochId;
-use mpc_contract::primitives::participants::ParticipantInfo;
+use mpc_contract::primitives::participants::{ParticipantInfo, Participants};
 use mpc_contract::primitives::thresholds::{Threshold, ThresholdParameters};
 use mpc_contract::state::ProtocolContractState;
 use near_crypto::SecretKey;
@@ -107,10 +108,9 @@ async fn update_mpc_network(
 
 impl NewMpcNetworkCmd {
     pub async fn run(&self, name: &str, config: ParsedConfig) {
-        println!("Going to create MPC network {} with {} participants, threshold {}, {} NEAR per account, and {} additional access keys per participant for responding",
+        println!("Going to create MPC network {} with {} maximum participants, {} NEAR per account, and {} additional access keys per participant for responding",
             name,
             self.num_participants,
-            self.threshold,
             self.near_per_account,
             self.num_responding_access_keys,
         );
@@ -125,7 +125,6 @@ impl NewMpcNetworkCmd {
             .or_insert(MpcNetworkSetup {
                 participants: Vec::new(),
                 contract: None,
-                threshold: self.threshold,
                 desired_balance_per_account: self.near_per_account * ONE_NEAR,
                 num_responding_access_keys: self.num_responding_access_keys,
                 desired_balance_per_responding_account: self.near_per_responding_account * ONE_NEAR,
@@ -156,10 +155,6 @@ impl UpdateMpcNetworkCmd {
             .num_participants
             .unwrap_or(mpc_setup.participants.len());
 
-        if let Some(threshold) = self.threshold {
-            mpc_setup.threshold = threshold;
-        }
-
         if let Some(near_per_account) = self.near_per_account {
             mpc_setup.desired_balance_per_account = near_per_account * ONE_NEAR;
         }
@@ -186,8 +181,15 @@ impl UpdateMpcNetworkCmd {
 
 impl MpcDeployContractCmd {
     pub async fn run(&self, name: &str, config: ParsedConfig) {
-        println!("Going to deploy contract for MPC network {}", name);
-        let contract_data = std::fs::read(&self.path).unwrap();
+        let contract_path = self
+            .path
+            .clone()
+            .unwrap_or(DEFAULT_MPC_CONTRACT_PATH.to_string());
+        println!(
+            "Going to deploy contract for MPC network {} using {}",
+            name, contract_path
+        );
+        let contract_data = std::fs::read(&contract_path).unwrap();
         let mut setup = OperatingDevnetSetup::load(config.rpc).await;
         let mpc_setup = setup
             .mpc_setups
@@ -233,7 +235,7 @@ impl MpcDeployContractCmd {
         setup
             .accounts
             .account_mut(&contract_account)
-            .deploy_contract(contract_data, &self.path)
+            .deploy_contract(contract_data, &contract_path)
             .await;
 
         let mut access_key = setup
@@ -241,30 +243,61 @@ impl MpcDeployContractCmd {
             .account(&contract_account)
             .any_access_key()
             .await;
+
+        let args = if self.v2 {
+            let mut participants = Participants::new();
+            for (i, account_id) in mpc_setup
+                .participants
+                .iter()
+                .enumerate()
+                .take(self.init_participants)
+            {
+                let info = mpc_account_to_candidate_info(&setup.accounts, account_id, i);
+                participants
+                    .insert(
+                        account_id.clone(),
+                        ParticipantInfo {
+                            url: info.url,
+                            sign_pk: info.sign_pk,
+                        },
+                    )
+                    .unwrap();
+            }
+            let parameters =
+                ThresholdParameters::new(participants, Threshold::new(self.threshold)).unwrap();
+            serde_json::to_vec(&InitV2Args {
+                parameters,
+                init_config: None,
+            })
+            .unwrap()
+        } else {
+            serde_json::to_vec(&InitV1Args {
+                threshold: self.threshold,
+                init_config: Some(InitConfigV1 {
+                    max_num_requests_to_remove: self.max_requests_to_remove,
+                    request_timeout_blocks: None,
+                }),
+                candidates: mpc_setup
+                    .participants
+                    .iter()
+                    .take(self.init_participants)
+                    .enumerate()
+                    .map(|(i, account_id)| {
+                        (
+                            account_id.clone(),
+                            mpc_account_to_candidate_info(&setup.accounts, account_id, i),
+                        )
+                    })
+                    .collect(),
+            })
+            .unwrap()
+        };
+
         access_key
             .submit_tx_to_call_function(
                 &contract_account,
                 "init",
-                &serde_json::to_vec(&InitArgs {
-                    threshold: mpc_setup.threshold,
-                    init_config: Some(InitConfigV1 {
-                        max_num_requests_to_remove: self.max_requests_to_remove,
-                        request_timeout_blocks: None,
-                    }),
-                    candidates: mpc_setup
-                        .participants
-                        .iter()
-                        .take(self.init_participants)
-                        .enumerate()
-                        .map(|(i, account_id)| {
-                            (
-                                account_id.clone(),
-                                mpc_account_to_candidate_info(&setup.accounts, account_id, i),
-                            )
-                        })
-                        .collect(),
-                })
-                .unwrap(),
+                &args,
                 300,
                 0,
                 near_primitives::views::TxExecutionStatus::Final,
@@ -277,10 +310,16 @@ impl MpcDeployContractCmd {
 }
 
 #[derive(Serialize)]
-struct InitArgs {
-    threshold: usize,
+struct InitV1Args {
+    threshold: u64,
     candidates: BTreeMap<AccountId, CandidateInfo>,
     init_config: Option<InitConfigV1>,
+}
+
+#[derive(Serialize)]
+struct InitV2Args {
+    parameters: ThresholdParameters,
+    init_config: Option<InitConfig>,
 }
 
 fn mpc_account_to_candidate_info(
@@ -819,25 +858,17 @@ impl MpcVoteNewParametersCmd {
                 "Participant {} is already in the network",
                 account_id
             );
+            let info = mpc_account_to_candidate_info(
+                &setup.accounts,
+                &mpc_setup.participants[*participant_index],
+                *participant_index,
+            );
             participants
                 .insert(
                     account_id.clone(),
                     ParticipantInfo {
-                        url: format!(
-                            "http://mpc-node-{}.service.mpc.consul:3000",
-                            participant_index
-                        ),
-                        sign_pk: near_sdk::PublicKey::from_str(
-                            &setup
-                                .accounts
-                                .account(&account_id)
-                                .get_mpc_participant()
-                                .unwrap()
-                                .p2p_private_key
-                                .public_key()
-                                .to_string(),
-                        )
-                        .unwrap(),
+                        url: info.url,
+                        sign_pk: info.sign_pk,
                     },
                 )
                 .unwrap();

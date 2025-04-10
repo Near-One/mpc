@@ -4,7 +4,7 @@ use crate::cli::{
     DeployParallelSignContractCmd, DrainExpiredRequestsCmd, NewLoadtestCmd, RunLoadtestCmd,
     UpdateLoadtestCmd,
 };
-use crate::constants::ONE_NEAR;
+use crate::constants::{DEFAULT_PARALLEL_SIGN_CONTRACT_PATH, ONE_NEAR};
 use crate::devnet::OperatingDevnetSetup;
 use crate::funding::{fund_accounts, AccountToFund};
 use crate::mpc::read_contract_state_v2;
@@ -18,6 +18,7 @@ use near_jsonrpc_client::methods::tx::RpcTransactionResponse;
 use near_sdk::AccountId;
 use rand::RngCore;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::OwnedMutexGuard;
@@ -128,7 +129,11 @@ impl DeployParallelSignContractCmd {
             "Going to deploy parallel sign contract for loadtest setup {}",
             name
         );
-        let contract_data = std::fs::read(&self.path).unwrap();
+        let contract_path = self
+            .path
+            .clone()
+            .unwrap_or(DEFAULT_PARALLEL_SIGN_CONTRACT_PATH.to_string());
+        let contract_data = std::fs::read(&contract_path).unwrap();
 
         let mut setup = OperatingDevnetSetup::load(config.rpc).await;
         let loadtest_setup = setup
@@ -174,7 +179,7 @@ impl DeployParallelSignContractCmd {
         setup
             .accounts
             .account_mut(&contract_account)
-            .deploy_contract(contract_data, &self.path)
+            .deploy_contract(contract_data, &contract_path)
             .await;
     }
 }
@@ -199,9 +204,6 @@ impl RunLoadtestCmd {
             name, self.mpc_network, mpc_account, self.qps
         );
 
-        if self.domain_id.is_some() && self.signatures_per_contract_call.is_some() {
-            panic!("Parallel signature contract does not yet support domain ID.");
-        }
         let domain_config = if let Some(domain_id) = self.domain_id {
             let contract_state = read_contract_state_v2(&setup.accounts, &mpc_account).await;
             match contract_state {
@@ -250,16 +252,45 @@ impl RunLoadtestCmd {
             Arc::new(move |key: &mut OperatingAccessKey| {
                 let contract = contract.clone();
                 let mpc_contract = mpc_account.clone();
+                let domain_config = domain_config.clone();
                 async move {
+                    let args = if let Some(domain_config) = domain_config {
+                        let mut ecdsa_calls_by_domain = BTreeMap::new();
+                        let mut eddsa_calls_by_domain = BTreeMap::new();
+                        match domain_config.scheme {
+                            SignatureScheme::Secp256k1 => {
+                                ecdsa_calls_by_domain.insert(
+                                    domain_config.id.0,
+                                    signatures_per_contract_call as u64,
+                                );
+                            }
+                            SignatureScheme::Ed25519 => {
+                                eddsa_calls_by_domain.insert(
+                                    domain_config.id.0,
+                                    signatures_per_contract_call as u64,
+                                );
+                            }
+                        }
+                        serde_json::to_vec(&ParallelSignArgsV2 {
+                            target_contract: mpc_contract,
+                            ecdsa_calls_by_domain,
+                            eddsa_calls_by_domain,
+                            seed: rand::random(),
+                        })
+                        .unwrap()
+                    } else {
+                        serde_json::to_vec(&ParallelSignArgsV1 {
+                            target_contract: mpc_contract,
+                            num_calls: signatures_per_contract_call as u64,
+                            seed: rand::random(),
+                        })
+                        .unwrap()
+                    };
+
                     key.submit_tx_to_call_function(
                         &contract,
                         "make_parallel_sign_calls",
-                        &serde_json::to_vec(&ParallelSignArgs {
-                            num_calls: signatures_per_contract_call as u64,
-                            seed: rand::random(),
-                            target_contract: mpc_contract,
-                        })
-                        .unwrap(),
+                        &args,
                         300,
                         1,
                         near_primitives::views::TxExecutionStatus::Included,
@@ -493,8 +524,16 @@ async fn send_load<R: 'static>(
 }
 
 #[derive(Serialize)]
-struct ParallelSignArgs {
+struct ParallelSignArgsV1 {
     target_contract: AccountId,
     num_calls: u64,
+    seed: u64,
+}
+
+#[derive(Serialize)]
+struct ParallelSignArgsV2 {
+    target_contract: AccountId,
+    ecdsa_calls_by_domain: BTreeMap<u64, u64>,
+    eddsa_calls_by_domain: BTreeMap<u64, u64>,
     seed: u64,
 }
