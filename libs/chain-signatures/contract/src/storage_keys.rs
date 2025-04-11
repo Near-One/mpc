@@ -13,4 +13,5 @@ pub enum StorageKey {
     /// Pending signature requests.
     PendingRequestsV2,
     ProposedUpdatesEntriesV2,
+    ProposedUpdatesVotesV2,
 }

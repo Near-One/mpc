@@ -378,11 +378,15 @@ pub async fn vote_update_till_completion(
             .await
             .unwrap();
 
-        // Met the threshold, voting completed.
-        if execution.is_failure() {
-            break;
+        dbg!(&execution);
+
+        let update_occurred: bool = execution.json().expect("Vote cast was unsuccessful");
+
+        if update_occurred {
+            return;
         }
     }
+    panic!("Update didn't occurred")
 }
 
 pub fn check_call_success(result: ExecutionFinalResult) {

@@ -8,7 +8,7 @@ pub mod storage_keys;
 pub mod update;
 
 use crate::errors::Error;
-use crate::update::{ProposeUpdateArgs, ProposedUpdates, UpdateId};
+use crate::update::{ProposeUpdateArgs, ProposedUpdates, Update, UpdateId};
 use config::{Config, InitConfig};
 use crypto_shared::types::{PublicKeyExtended, PublicKeyExtendedConversionError};
 use crypto_shared::{
@@ -18,8 +18,7 @@ use crypto_shared::{
     types::SignatureResponse,
 };
 use errors::{
-    ConversionError, DomainError, InvalidParameters, InvalidState, PublicKeyError, RespondError,
-    SignError,
+    DomainError, InvalidParameters, InvalidState, PublicKeyError, RespondError, SignError,
 };
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::elliptic_curve::PrimeField;
@@ -598,6 +597,7 @@ impl VersionedMpcContract {
         }
     }
 
+    /// Propose update to either code or config, but not both of them at the same time.
     #[payable]
     #[handle_result]
     pub fn propose_update(
@@ -606,9 +606,10 @@ impl VersionedMpcContract {
     ) -> Result<UpdateId, Error> {
         // Only voters can propose updates:
         let proposer = self.voter_or_panic();
+        let update: Update = args.try_into()?;
 
         let attached = env::attached_deposit();
-        let required = ProposedUpdates::required_deposit(&args.code, &args.config);
+        let required = ProposedUpdates::required_deposit(&update);
         if attached < required {
             return Err(InvalidParameters::InsufficientDeposit.message(format!(
                 "Attached {}, Required {}",
@@ -617,10 +618,7 @@ impl VersionedMpcContract {
             )));
         }
 
-        let Some(id) = self.proposed_updates().propose(args.code, args.config) else {
-            return Err(ConversionError::DataConversion
-                .message("Cannot propose update due to incorrect parameters."));
-        };
+        let id = self.proposed_updates().propose(update);
 
         log!(
             "propose_update: signer={}, id={:?}",
@@ -628,7 +626,7 @@ impl VersionedMpcContract {
             id,
         );
 
-        // Refund the difference if the propser attached more than required.
+        // Refund the difference if the proposer attached more than required.
         if let Some(diff) = attached.checked_sub(required) {
             if diff > NearToken::from_yoctonear(0) {
                 Promise::new(proposer).transfer(diff);

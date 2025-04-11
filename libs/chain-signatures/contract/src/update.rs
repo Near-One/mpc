@@ -4,6 +4,7 @@ use std::hash::Hash;
 use crate::config::Config;
 use crate::storage_keys::StorageKey;
 
+use crate::errors::{ConversionError, Error};
 use borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::store::IterableMap;
@@ -54,13 +55,31 @@ pub struct ProposeUpdateArgs {
     pub config: Option<Config>,
 }
 
+impl TryFrom<ProposeUpdateArgs> for Update {
+    type Error = Error;
+
+    fn try_from(value: ProposeUpdateArgs) -> Result<Self, Self::Error> {
+        let ProposeUpdateArgs { code, config } = value;
+        let update = match (code, config) {
+            (Some(contract), None) => Update::Contract(contract),
+            (None, Some(config)) => Update::Config(config),
+            (Some(_), Some(_)) => {
+                return Err(ConversionError::DataConversion
+                    .message("Code and config updates are not allowed at the same time"))
+            }
+            _ => {
+                return Err(ConversionError::DataConversion
+                    .message("Expected either code or config update, received none of them"))
+            }
+        };
+        Ok(update)
+    }
+}
+
 #[near(serializers=[borsh ])]
 #[derive(Debug)]
 struct UpdateEntry {
-    // todo:
-    // - allow only one vote per participant.
-    // - an update should be either a code update, or a config update, not both.
-    updates: Vec<Update>,
+    update: Update,
     votes: HashSet<AccountId>,
     bytes_used: u128,
 }
@@ -68,6 +87,7 @@ struct UpdateEntry {
 #[near(serializers=[borsh ])]
 #[derive(Debug)]
 pub struct ProposedUpdates {
+    vote_by_participant: IterableMap<AccountId, UpdateId>,
     entries: IterableMap<UpdateId, UpdateEntry>,
     id: UpdateId,
 }
@@ -75,6 +95,7 @@ pub struct ProposedUpdates {
 impl Default for ProposedUpdates {
     fn default() -> Self {
         Self {
+            vote_by_participant: IterableMap::new(StorageKey::ProposedUpdatesVotesV2),
             entries: IterableMap::new(StorageKey::ProposedUpdatesEntriesV2),
             id: UpdateId::default(),
         }
@@ -82,94 +103,91 @@ impl Default for ProposedUpdates {
 }
 
 impl ProposedUpdates {
-    pub fn required_deposit(code: &Option<Vec<u8>>, config: &Option<Config>) -> NearToken {
-        required_deposit(bytes_used(code, config))
+    pub fn required_deposit(update: &Update) -> NearToken {
+        required_deposit(bytes_used(update))
     }
 
     /// Propose an update given the new contract code and/or config.
     ///
-    /// Returns Some(UpdateId) if the update was successfully proposed, otherwise None.
-    pub fn propose(&mut self, code: Option<Vec<u8>>, config: Option<Config>) -> Option<UpdateId> {
-        let bytes_used = bytes_used(&code, &config);
-        let updates = match (code, config) {
-            (Some(contract), Some(config)) => {
-                vec![Update::Contract(contract), Update::Config(config)]
-            }
-            (Some(contract), None) => vec![Update::Contract(contract)],
-            (None, Some(config)) => vec![Update::Config(config)],
-            (None, None) => return None,
-        };
+    /// Returns UpdateId
+    pub fn propose(&mut self, update: Update) -> UpdateId {
+        let bytes_used = bytes_used(&update);
 
         let id = self.id.generate();
         self.entries.insert(
             id,
             UpdateEntry {
-                updates,
+                update,
                 votes: HashSet::new(),
                 bytes_used,
             },
         );
 
-        Some(id)
+        id
     }
 
     /// Vote for the update with the given id.
     ///
     /// Returns Some(votes) if the given [`UpdateId`] exists, otherwise None.
     pub fn vote(&mut self, id: &UpdateId, voter: AccountId) -> Option<&HashSet<AccountId>> {
+        // If participant has voted before, remove their vote
+        if let Some(previous_id) = self.vote_by_participant.get(&voter) {
+            self.entries.get_mut(previous_id)?.votes.remove(&voter);
+        }
+        self.vote_by_participant.insert(voter.clone(), *id);
+
         let entry = self.entries.get_mut(id)?;
         entry.votes.insert(voter);
         Some(&entry.votes)
     }
 
-    fn remove(&mut self, id: &UpdateId) -> Option<UpdateEntry> {
-        self.entries.remove(id)
-    }
-
     pub fn do_update(&mut self, id: &UpdateId, gas: Gas) -> Option<Promise> {
-        let entry = self.remove(id)?;
+        let entry = self.entries.remove(id)?;
+
+        // Clear all entries as they might be no longer valid
+        self.entries.clear();
+        self.vote_by_participant.clear();
 
         let mut promise = Promise::new(env::current_account_id());
-        for update in entry.updates {
-            // does it make sense to update both code & config
-            // simultaneously?
-            match update {
-                Update::Contract(code) => {
-                    // deploy contract then do a `migrate` call to migrate state.
-                    promise = promise.deploy_contract(code).function_call(
-                        "migrate".into(),
-                        Vec::new(),
-                        NearToken::from_near(0),
-                        gas,
-                    );
-                }
-                Update::Config(config) => {
-                    promise = promise.function_call(
-                        "update_config".into(),
-                        serde_json::to_vec(&(&config,)).unwrap(),
-                        NearToken::from_near(0),
-                        gas,
-                    );
-                }
+        match entry.update {
+            Update::Contract(code) => {
+                // deploy contract then do a `migrate` call to migrate state.
+                promise = promise.deploy_contract(code).function_call(
+                    "migrate".into(),
+                    Vec::new(),
+                    NearToken::from_near(0),
+                    gas,
+                );
+            }
+            Update::Config(config) => {
+                promise = promise.function_call(
+                    "update_config".into(),
+                    serde_json::to_vec(&(&config,)).unwrap(),
+                    NearToken::from_near(0),
+                    gas,
+                );
             }
         }
         Some(promise)
     }
 }
 
-fn bytes_used(code: &Option<Vec<u8>>, config: &Option<Config>) -> u128 {
+fn bytes_used(update: &Update) -> u128 {
     let mut bytes_used = std::mem::size_of::<UpdateEntry>() as u128;
 
     // Assume a high max of 128 participant votes per update entry.
     bytes_used += 128 * std::mem::size_of::<AccountId>() as u128;
 
-    if let Some(config) = config {
-        let bytes = serde_json::to_vec(&config).unwrap();
-        bytes_used += bytes.len() as u128;
+    match update {
+        Update::Contract(code) => {
+            bytes_used += code.len() as u128;
+        }
+        Update::Config(config) => {
+            let bytes = serde_json::to_vec(&config).unwrap();
+            bytes_used += bytes.len() as u128;
+        }
     }
-    if let Some(code) = code {
-        bytes_used += code.len() as u128;
-    }
+
     bytes_used
 }
 

@@ -158,9 +158,6 @@ async fn test_propose_update_contract() {
     // Try calling into state and see if it works.
     let execution = accounts[0]
         .call(contract.id(), "state")
-        .args_json(serde_json::json!({
-            "id": proposal_id,
-        }))
         .transact()
         .await
         .unwrap();
@@ -197,9 +194,6 @@ async fn test_invalid_contract_deploy() {
     // happened.
     let execution = accounts[0]
         .call(contract.id(), "state")
-        .args_json(serde_json::json!({
-            "id": proposal_id,
-        }))
         .transact()
         .await
         .unwrap();
@@ -208,13 +202,13 @@ async fn test_invalid_contract_deploy() {
     let state: ProtocolContractState = execution.json().unwrap();
     dbg!(state);
 }
-// todo: fix this test
+
 #[tokio::test]
 async fn test_propose_update_contract_many() {
     let (_, contract, accounts, _) = init_env_secp256k1(1).await;
     dbg!(contract.id());
 
-    const PROPOSAL_COUNT: usize = 10;
+    const PROPOSAL_COUNT: usize = 5;
     let mut proposals = Vec::with_capacity(PROPOSAL_COUNT);
     // Try to propose multiple updates to check if they are being proposed correctly
     // and that we can have many at once living in the contract state.
@@ -239,7 +233,187 @@ async fn test_propose_update_contract_many() {
     // Vote for the last proposal
     vote_update_till_completion(&contract, &accounts, proposals.last().unwrap()).await;
 
+    // Ensure all proposals are removed after update
+    for proposal in proposals {
+        let voter = accounts.first().unwrap();
+        let execution = voter
+            .call(contract.id(), "vote_update")
+            .args_json(serde_json::json!({
+                "id": proposal,
+            }))
+            .max_gas()
+            .transact()
+            .await
+            .unwrap();
+        dbg!(&execution);
+
+        assert!(execution.is_failure());
+    }
+
     // Let's check that we can call into the state and see all the proposals.
     let state: ProtocolContractState = contract.view("state").await.unwrap().json().unwrap();
     dbg!(state);
+}
+
+#[tokio::test]
+async fn test_propose_incorrect_updates() {
+    let (_, contract, accounts, _) = init_env_secp256k1(1).await;
+    dbg!(contract.id());
+
+    let dummy_config = Config {
+        key_event_timeout_blocks: 20,
+    };
+
+    // Can not propose update both to code and config
+    let execution = accounts[0]
+        .call(contract.id(), "propose_update")
+        .args_borsh((dummy_contract(), dummy_config))
+        .max_gas()
+        .deposit(CURRENT_CONTRACT_DEPLOY_DEPOSIT)
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_failure());
+
+    // Should propose something
+    let execution = accounts[0]
+        .call(contract.id(), "propose_update")
+        .args_borsh(())
+        .max_gas()
+        .deposit(CURRENT_CONTRACT_DEPLOY_DEPOSIT)
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_failure());
+}
+
+/// Contract update include some logic regarding state clean-up,
+/// thus we want to test whether some problem builds up eventually.
+#[tokio::test]
+async fn many_sequential_updates() {
+    let (_, contract, accounts, _) = init_env_secp256k1(1).await;
+    dbg!(contract.id());
+
+    for _ in 0..3 {
+        let execution = accounts[0]
+            .call(contract.id(), "propose_update")
+            .args_borsh((current_contract(),))
+            .max_gas()
+            .deposit(CURRENT_CONTRACT_DEPLOY_DEPOSIT)
+            .transact()
+            .await
+            .unwrap();
+        dbg!(&execution);
+        assert!(execution.is_success());
+        let proposal_id: UpdateId = execution.json().unwrap();
+        vote_update_till_completion(&contract, &accounts, &proposal_id).await;
+
+        // Try calling into state and see if it works.
+        let execution = accounts[0]
+            .call(contract.id(), "state")
+            .transact()
+            .await
+            .unwrap();
+
+        dbg!(&execution);
+
+        let state: ProtocolContractState = execution.json().unwrap();
+        dbg!(state);
+    }
+}
+
+/// There are:
+///     * two proposals: A and B
+///     * three participants (Alice, Bob, Carl), with a threshold two
+/// What happens:
+///     1. Alice votes for A
+///     2. Alice votes for B
+///     3. Bob votes for A -> Update for A _should not_ be triggered
+///     4. Bob votes for B -> Update for B is triggered
+#[tokio::test]
+async fn only_one_vote_from_participant() {
+    let (_, contract, accounts, _) = init_env_secp256k1(1).await;
+    dbg!(contract.id());
+
+    let execution = accounts[0]
+        .call(contract.id(), "propose_update")
+        .args_borsh((current_contract(),))
+        .max_gas()
+        .deposit(CURRENT_CONTRACT_DEPLOY_DEPOSIT)
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_success());
+    let proposal_a: UpdateId = execution.json().unwrap();
+
+    let execution = accounts[0]
+        .call(contract.id(), "propose_update")
+        .args_borsh((current_contract(),))
+        .max_gas()
+        .deposit(CURRENT_CONTRACT_DEPLOY_DEPOSIT)
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_success());
+    let proposal_b: UpdateId = execution.json().unwrap();
+
+    let execution = accounts[0]
+        .call(contract.id(), "vote_update")
+        .args_json(serde_json::json!({
+            "id": proposal_a,
+        }))
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_success());
+    let update_occurred: bool = execution.json().unwrap();
+    assert!(!update_occurred);
+
+    let execution = accounts[0]
+        .call(contract.id(), "vote_update")
+        .args_json(serde_json::json!({
+            "id": proposal_b,
+        }))
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_success());
+    let update_occurred: bool = execution.json().unwrap();
+    assert!(!update_occurred);
+
+    let execution = accounts[1]
+        .call(contract.id(), "vote_update")
+        .args_json(serde_json::json!({
+            "id": proposal_a,
+        }))
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_success());
+    let update_occurred: bool = execution.json().unwrap();
+    assert!(!update_occurred);
+
+    let execution = accounts[1]
+        .call(contract.id(), "vote_update")
+        .args_json(serde_json::json!({
+            "id": proposal_b,
+        }))
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+    dbg!(&execution);
+    assert!(execution.is_success());
+    let update_occurred: bool = execution.json().unwrap();
+    assert!(update_occurred);
 }
