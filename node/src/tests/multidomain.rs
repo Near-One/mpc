@@ -30,7 +30,7 @@ async fn test_basic_multidomain() {
     let mut domains = vec![
         DomainConfig {
             id: DomainId(0),
-            scheme: SignatureScheme::Secp256k1,
+            scheme: SignatureScheme::Ed25519,
         },
         DomainConfig {
             id: DomainId(1),
@@ -69,7 +69,7 @@ async fn test_basic_multidomain() {
             },
             DomainConfig {
                 id: DomainId(3),
-                scheme: SignatureScheme::Secp256k1,
+                scheme: SignatureScheme::Ed25519,
             },
         ];
         let mut contract = setup.indexer.contract_mut().await;

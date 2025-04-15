@@ -82,6 +82,7 @@ impl Keyshare {
 /// the existing keyshares, but for the resharing state we do. And that's not a problem:
 /// in the resharing state we also need to call `load_keyset`, and that will promote the keys into
 /// permanent storage if needed.
+#[derive(Debug)]
 pub struct KeyshareStorage {
     temporary: TemporaryKeyStorage,
     permanent: PermanentKeyStorage,
@@ -268,11 +269,13 @@ impl KeyshareStorage {
     }
 }
 
+#[derive(Debug)]
 pub struct GcpPermanentKeyStorageConfig {
     pub project_id: String,
     pub secret_id: String,
 }
 
+#[derive(Debug)]
 /// Config for how to construct a KeyshareStorage.
 pub struct KeyStorageConfig {
     pub home_dir: std::path::PathBuf,

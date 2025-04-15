@@ -66,6 +66,7 @@ struct MpcJob {
     stop_fn: Box<dyn Fn(&ContractState) -> bool + Send>,
 }
 
+#[derive(Debug)]
 /// When an MpcJob future returns successfully, it returns one of the following.
 enum MpcJobResult {
     /// This MpcJob has been completed successfully.
@@ -82,6 +83,7 @@ impl Coordinator {
     pub async fn run(mut self) -> anyhow::Result<()> {
         loop {
             let state = self.indexer.contract_state_receiver.borrow().clone();
+            tracing::info!("New state is: {:?}", state);
             let mut job: MpcJob = match state {
                 ContractState::WaitingForSync => {
                     // This is the initial state. We stop this state for any state changes.
@@ -139,6 +141,10 @@ impl Coordinator {
                     // For the running state, we run the full MPC protocol.
                     // There's no timeout. The only time we stop is when the contract state
                     // changes to no longer be running (or if somehow the epoch changes).
+                    tracing::debug!("Entering Running branch");
+                    let storage = self.key_storage_config.create().await;
+                    tracing::info!("Fetching Key Storage: {:?}", storage);
+
                     MpcJob {
                         name: "Running",
                         fut: Self::create_runtime_and_run(
@@ -149,7 +155,7 @@ impl Coordinator {
                                 self.secret_db.clone(),
                                 self.secrets.clone(),
                                 self.config_file.clone(),
-                                self.key_storage_config.create().await?,
+                                storage?,
                                 state.clone(),
                                 self.indexer.txn_sender.clone(),
                                 self.indexer
@@ -250,6 +256,7 @@ impl Coordinator {
         cores: Option<usize>,
         task: impl Future<Output = anyhow::Result<MpcJobResult>> + Send + 'static,
     ) -> anyhow::Result<BoxFuture<'static, anyhow::Result<MpcJobResult>>> {
+        tracing::info!("Getting task handle");
         let task_handle = tracking::current_task();
 
         // Create a separate runtime, as opposed to making a runtime when the
@@ -262,18 +269,24 @@ impl Coordinator {
         //    would be very difficult and error-prone to ensure we don't leave
         //    some long-running task behind.
         let mpc_runtime = if let Some(n_threads) = cores {
+            tracing::info!("Creating runtime with {:?} cores", cores);
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(std::cmp::max(n_threads, 1))
                 .enable_all()
                 .build()?
         } else {
+            tracing::info!("Creating runtime with default");
             tokio::runtime::Runtime::new()?
         };
+        tracing::info!("Creating AsyncDroppableRuntime");
         let mpc_runtime = AsyncDroppableRuntime::new(mpc_runtime);
+        tracing::info!("Spawning on AsyncDroppableRuntime");
         let fut = mpc_runtime.spawn(task_handle.scope(description, task));
         Ok(async move {
             let _mpc_runtime = mpc_runtime;
-            anyhow::Ok(fut.await??)
+            let l1 = fut.await;
+            tracing::info!("Nested future await {:?}", l1);
+            anyhow::Ok(l1??)
         }
         .boxed())
     }

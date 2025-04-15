@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 
 /// Stores the permanent keyshare in a local encrypted file.
+#[derive(Debug)]
 pub struct LocalPermanentKeyStorageBackend {
     home_dir: PathBuf,
     permanent_key_dir: PathBuf,

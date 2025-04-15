@@ -24,7 +24,7 @@ impl PermanentKeyshareData {
 
 /// Backend for storing the permanent keyshare data.
 #[async_trait::async_trait]
-pub trait PermanentKeyStorageBackend: Send + Sync {
+pub trait PermanentKeyStorageBackend: Send + Sync + std::fmt::Debug {
     /// Loads the latest stored data; or None if no data was ever stored.
     async fn load(&self) -> anyhow::Result<Option<Vec<u8>>>;
     /// Stores the data, making it the latest. The identifier is used for the local backend to write
@@ -36,6 +36,7 @@ pub trait PermanentKeyStorageBackend: Send + Sync {
 /// Manages permanent keyshares. These are the keyshares we see from the Running state.
 /// When we generate or reshare a key, that key goes into temporary key storage first,
 /// and only when we transition to Running do we move it to permanent key storage.
+#[derive(Debug)]
 pub struct PermanentKeyStorage {
     backend: Box<dyn PermanentKeyStorageBackend>,
 }

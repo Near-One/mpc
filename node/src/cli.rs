@@ -220,7 +220,9 @@ impl StartCmd {
             currently_running_job_name: Arc::new(Mutex::new(String::new())),
             signature_debug_request_sender,
         };
-        coordinator.run().await
+        let result = coordinator.run().await;
+        tracing::info!("Result from coordinator task: {:?}", result);
+        result
     }
 }
 

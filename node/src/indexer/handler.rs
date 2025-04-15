@@ -107,18 +107,18 @@ async fn handle_message(
 
     crate::metrics::MPC_INDEXER_LATEST_BLOCK_HEIGHT.set(block_height as i64);
 
-    if let Err(err) = block_update_sender.send(ChainBlockUpdate {
-        block: BlockViewLite {
-            hash: streamer_message.block.header.hash,
-            height: streamer_message.block.header.height,
-            prev_hash: streamer_message.block.header.prev_hash,
-            last_final_block: streamer_message.block.header.last_final_block,
-        },
-        signature_requests,
-        completed_signatures,
-    }) {
-        tracing::error!(target: "mpc", %err, "error sending block update to mpc node");
-    }
+    block_update_sender
+        .send(ChainBlockUpdate {
+            block: BlockViewLite {
+                hash: streamer_message.block.header.hash,
+                height: streamer_message.block.header.height,
+                prev_hash: streamer_message.block.header.prev_hash,
+                last_final_block: streamer_message.block.header.last_final_block,
+            },
+            signature_requests,
+            completed_signatures,
+        })
+        .expect("Receiving channel must be alive.");
 
     let mut stats_lock = stats.lock().await;
     stats_lock.block_heights_processing.remove(&block_height);

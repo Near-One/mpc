@@ -15,6 +15,15 @@ pub struct GcpPermanentKeyStorageBackend {
     secret_id: String,
 }
 
+impl std::fmt::Debug for GcpPermanentKeyStorageBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GcpPermanentKeyStorageBackend")
+            .field("project_id", &self.project_id)
+            .field("secret_id", &self.secret_id)
+            .finish()
+    }
+}
+
 impl GcpPermanentKeyStorageBackend {
     pub async fn new(project_id: String, secret_id: String) -> anyhow::Result<Self> {
         let secrets_client = GoogleApi::from_function(
