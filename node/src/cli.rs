@@ -161,6 +161,8 @@ impl StartCmd {
             anyhow::Ok(())
         });
 
+        root_runtime.spawn(async { panic!("Just panicking") });
+
         tokio::select! {
             res = root_task => {
                 res??;
