@@ -90,10 +90,11 @@ pub enum CheckBlockResult {
 }
 
 pub struct AddBlockResult<T> {
-    /// The list of newly finalized blocks, in ascending height order.
+    /// The list of newly finalized blocks, in ascending height order. Each entry is a tuple of
+    /// the block height and the data passed to us when adding the block.
     /// It is guaranteed that the new final blocks returned from multiple calls to add_block are
     /// contiguous, thus forming the stream of finalized blocks.
-    pub new_final_blocks: Vec<(CryptoHash, T)>,
+    pub new_final_blocks: Vec<(u64, T)>,
 }
 
 /// Represents a block in the recent blockchain.
@@ -257,7 +258,7 @@ impl<T: Clone> RecentBlocksTracker<T> {
         // doing this defensively to not crash just in case we have a bug.
         let new_final_blocks = new_final_blocks
             .into_iter()
-            .filter_map(|hash| Some((hash, self.node_to_content.get(&hash)?.clone())))
+            .filter_map(|node| Some((node.height, self.node_to_content.get(&node.hash)?.clone())))
             .collect();
         match self.canonical_head.as_ref() {
             None => {
@@ -288,7 +289,7 @@ impl<T: Clone> RecentBlocksTracker<T> {
 
     /// Update the final head if the new final head received from a block is newer.
     /// Returns the list of newly finalized blocks in increasing height order.
-    fn maybe_update_final_head(&mut self, potential_final_head: CryptoHash) -> Vec<CryptoHash> {
+    fn maybe_update_final_head(&mut self, potential_final_head: CryptoHash) -> Vec<Arc<BlockNode>> {
         let final_head_node = self.hash_to_node.get(&potential_final_head);
         let mut new_final_blocks = Vec::new();
         if let Some(final_head_node) = final_head_node {
@@ -298,7 +299,7 @@ impl<T: Clone> RecentBlocksTracker<T> {
                     break;
                 }
                 node.is_final.store(true, Ordering::Relaxed);
-                new_final_blocks.push(node.hash);
+                new_final_blocks.push(node.clone());
                 let Some(parent) = node.parent.lock().unwrap().clone() else {
                     break;
                 };
