@@ -1,13 +1,14 @@
-use crate::config::{load_config_file, ConfigFile, IndexerConfig, PresignatureConfig, SignatureConfig, SyncMode, TripleConfig, ValidationConfig, WebUIConfig};
+use crate::config::{
+    load_config_file, ConfigFile, IndexerConfig, PresignatureConfig, SignatureConfig, SyncMode,
+    TripleConfig, ValidationConfig, WebUIConfig,
+};
 use crate::config::{BlockArgs, MpcConfig, SecretsConfig};
 use crate::db::{DBCol, SecretDB};
 use crate::indexer::configs::InitConfigArgs;
-use crate::indexer::handler::listen_blocks;
-use crate::indexer::participants::read_participants_from_chain;
-use crate::indexer::response::handle_sign_responses;
-use crate::indexer::stats::{indexer_logger, IndexerStats};
-use crate::indexer::transaction::TransactionSigner;
-use crate::key_generation::{affine_point_to_public_key, load_keyshare, run_key_generation_client_ecdsa, run_key_generation_client_eddsa, EcdsaKeyshareData, EddsaKeyshareData, RootKeyshareData};
+use crate::key_generation::{
+    load_keyshare, run_key_generation_client_ecdsa, run_key_generation_client_eddsa,
+    EcdsaKeyshareData, EddsaKeyshareData, RootKeyshareData,
+};
 use crate::mpc_client::MpcClient;
 use crate::network::{run_network_client, MeshNetworkTransportSender};
 use crate::p2p::{generate_test_p2p_configs, new_tls_mesh_network};
@@ -15,7 +16,9 @@ use crate::sign::PresignatureStorage;
 use crate::sign_request::SignRequestStorage;
 use crate::tracking;
 use crate::triple::TripleStorage;
+use crate::validation::{ChainValidationConfig, Validation};
 use crate::web::start_web_server;
+use anyhow::Context;
 use clap::ArgAction;
 use clap::Parser;
 use near_crypto::SecretKey;
@@ -24,10 +27,8 @@ use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use anyhow::Context;
 use tokio::sync::mpsc;
-use tokio::sync::{Mutex, OnceCell};
-use crate::validation::{ChainValidationConfig, Validation};
+use tokio::sync::OnceCell;
 
 #[derive(Parser, Debug)]
 pub enum Cli {
@@ -110,8 +111,18 @@ impl Cli {
                 let secrets = SecretsConfig::from_cli(&secret_store_key_hex, p2p_private_key)?;
                 let config = ConfigFile::from_file(&home_dir.join("config.yaml"))?;
 
-                let ecdsa_keyshare = load_keyshare::<EcdsaKeyshareData>(&home_dir, secrets.local_storage_aes_key, &root_keyshare).context("couldn't load ecdsa keyshare")?;
-                let eddsa_keyshare = load_keyshare::<EddsaKeyshareData>(&home_dir, secrets.local_storage_aes_key, &root_keyshare).context("couldn't load eddsa keyshare")?;
+                let ecdsa_keyshare = load_keyshare::<EcdsaKeyshareData>(
+                    &home_dir,
+                    secrets.local_storage_aes_key,
+                    &root_keyshare,
+                )
+                .context("couldn't load ecdsa keyshare")?;
+                let eddsa_keyshare = load_keyshare::<EddsaKeyshareData>(
+                    &home_dir,
+                    secrets.local_storage_aes_key,
+                    &root_keyshare,
+                )
+                .context("couldn't load eddsa keyshare")?;
                 let root_keyshare = RootKeyshareData {
                     ecdsa: ecdsa_keyshare,
                     eddsa: eddsa_keyshare,
@@ -197,7 +208,7 @@ impl Cli {
                             config.web_ui.clone(),
                             Some(mpc_client_cell.clone()),
                         )
-                            .await?,
+                        .await?,
                     );
 
                     let (sender, receiver) =
@@ -226,14 +237,12 @@ impl Cli {
 
                     let web_client = Arc::new(reqwest::Client::new());
                     let validation_config = config.validation.clone();
-                    let validation = Arc::new(
-                        Validation::new(
-                            web_client.clone(),
-                            validation_config.near,
-                            validation_config.base,
-                            validation_config.eth,
-                        )
-                    );
+                    let validation = Arc::new(Validation::new(
+                        web_client.clone(),
+                        validation_config.near,
+                        validation_config.base,
+                        validation_config.eth,
+                    ));
                     let config = Arc::new(config);
                     let mpc_client = MpcClient::new(
                         config.clone(),
@@ -243,7 +252,7 @@ impl Cli {
                         sign_request_store,
                         root_keyshare,
                         web_client,
-                        validation
+                        validation,
                     );
                     mpc_client_cell
                         .set(mpc_client.clone())
@@ -401,9 +410,18 @@ impl Cli {
                         },
                         signature: SignatureConfig { timeout_sec: 60 },
                         validation: ValidationConfig {
-                            near: ChainValidationConfig { threshold: 0, servers: vec![] },
-                            base: ChainValidationConfig { threshold: 0, servers: vec![] },
-                            eth: ChainValidationConfig { threshold: 0, servers: vec![] },
+                            near: ChainValidationConfig {
+                                threshold: 0,
+                                servers: vec![],
+                            },
+                            base: ChainValidationConfig {
+                                threshold: 0,
+                                servers: vec![],
+                            },
+                            eth: ChainValidationConfig {
+                                threshold: 0,
+                                servers: vec![],
+                            },
                         },
                     };
                     std::fs::write(

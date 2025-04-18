@@ -9,11 +9,11 @@ use anyhow::Context;
 use cait_sith::protocol::Participant;
 use cait_sith::KeygenOutput;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use k256::{Secp256k1};
+use k256::Secp256k1;
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use rand::rngs::OsRng;
 use tokio::sync::mpsc;
 
 /// Runs the key generation protocol, returning the key generated.
@@ -47,12 +47,7 @@ pub async fn run_key_generation_eddsa(
         .map(Participant::from)
         .collect::<Vec<_>>();
 
-    let protocol = crate::frost::dkg(
-        OsRng,
-        cs_participants,
-        me.into(),
-        threshold as u16
-    )?;
+    let protocol = crate::frost::dkg(OsRng, cs_participants, me.into(), threshold as u16)?;
 
     run_protocol("key generation eddsa", channel, me, protocol).await
 }
@@ -88,7 +83,11 @@ impl EcdsaKeyshareData {
     }
 }
 
-impl WithStorageSuffix for EcdsaKeyshareData { fn suffix() -> String { "ecdsa".to_string() } }
+impl WithStorageSuffix for EcdsaKeyshareData {
+    fn suffix() -> String {
+        "ecdsa".to_string()
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EddsaKeyshareData {
@@ -106,7 +105,11 @@ impl From<EddsaKeyshareData> for crate::frost::KeygenOutput {
     }
 }
 
-impl WithStorageSuffix for EddsaKeyshareData { fn suffix() -> String { "eddsa".to_string() } }
+impl WithStorageSuffix for EddsaKeyshareData {
+    fn suffix() -> String {
+        "eddsa".to_string()
+    }
+}
 
 #[derive(Clone)]
 pub struct RootKeyshareData {
@@ -197,11 +200,7 @@ pub async fn run_key_generation_client_ecdsa(
         private_share: key.private_share,
         public_key: key.public_key,
     };
-    save_root_keyshare(
-        &home_dir,
-        config.secrets.local_storage_aes_key,
-        &keyshare,
-    )?;
+    save_root_keyshare(&home_dir, config.secrets.local_storage_aes_key, &keyshare)?;
     tracing::info!("Key ecdsa generation completed");
 
     // TODO(#75): Send vote_pk transaction to vote for the public key on the contract.
@@ -222,13 +221,13 @@ pub async fn run_key_generation_client_eddsa(
     let my_participant_id = client.my_participant_id();
     let is_leader = my_participant_id
         == config
-        .mpc
-        .participants
-        .participants
-        .iter()
-        .map(|p| p.id)
-        .min()
-        .unwrap();
+            .mpc
+            .participants
+            .participants
+            .iter()
+            .map(|p| p.id)
+            .min()
+            .unwrap();
 
     let channel = if is_leader {
         client.new_channel_for_task(MpcTaskId::KeyGenerationEddsa, client.all_participant_ids())?
@@ -248,23 +247,21 @@ pub async fn run_key_generation_client_eddsa(
         my_participant_id,
         config.mpc.participants.threshold as usize,
     )
-        .await?;
+    .await?;
     let keyshare = EddsaKeyshareData {
         epoch: 0,
         private_share: key.key_package,
         public_key: key.public_key_package,
     };
-    save_root_keyshare(
-        &home_dir,
-        config.secrets.local_storage_aes_key,
-        &keyshare,
-    )?;
+    save_root_keyshare(&home_dir, config.secrets.local_storage_aes_key, &keyshare)?;
     tracing::info!("Key eddsa generation completed");
 
     Ok(())
 }
 
-pub fn affine_point_to_public_key(point: k256::AffinePoint) -> anyhow::Result<near_crypto::PublicKey> {
+pub fn affine_point_to_public_key(
+    point: k256::AffinePoint,
+) -> anyhow::Result<near_crypto::PublicKey> {
     Ok(near_crypto::PublicKey::SECP256K1(
         near_crypto::Secp256K1PublicKey::try_from(&point.to_encoded_point(false).as_bytes()[1..65])
             .context("Failed to convert affine point to public key")?,
@@ -273,7 +270,10 @@ pub fn affine_point_to_public_key(point: k256::AffinePoint) -> anyhow::Result<ne
 
 #[cfg(test)]
 mod tests {
-    use super::{load_keyshare, run_key_generation_ecdsa, run_key_generation_eddsa, save_root_keyshare, EcdsaKeyshareData, EddsaKeyshareData};
+    use super::{
+        load_keyshare, run_key_generation_ecdsa, run_key_generation_eddsa, save_root_keyshare,
+        EcdsaKeyshareData, EddsaKeyshareData,
+    };
     use crate::network::testing::run_test_clients;
     use crate::network::{MeshNetworkClient, NetworkTaskChannel};
     use crate::primitives::MpcTaskId;
@@ -290,7 +290,7 @@ mod tests {
             let results = run_test_clients(4, run_keygen_client_ecdsa).await.unwrap();
             println!("{:?}", results);
         })
-            .await;
+        .await;
     }
 
     async fn run_keygen_client_ecdsa(
@@ -302,7 +302,8 @@ mod tests {
 
         // We'll have the first participant be the leader.
         let channel = if participant_id == all_participant_ids[0] {
-            client.new_channel_for_task(MpcTaskId::KeyGenerationEcdsa, client.all_participant_ids())?
+            client
+                .new_channel_for_task(MpcTaskId::KeyGenerationEcdsa, client.all_participant_ids())?
         } else {
             channel_receiver
                 .recv()
@@ -320,7 +321,7 @@ mod tests {
             let results = run_test_clients(4, run_keygen_client_eddsa).await.unwrap();
             println!("{:?}", results);
         })
-            .await;
+        .await;
     }
 
     async fn run_keygen_client_eddsa(
@@ -332,7 +333,8 @@ mod tests {
 
         // We'll have the first participant be the leader.
         let channel = if participant_id == all_participant_ids[0] {
-            client.new_channel_for_task(MpcTaskId::KeyGenerationEddsa, client.all_participant_ids())?
+            client
+                .new_channel_for_task(MpcTaskId::KeyGenerationEddsa, client.all_participant_ids())?
         } else {
             channel_receiver
                 .recv()
@@ -361,13 +363,9 @@ mod tests {
             public_key: generated_key.public_key,
         };
 
-        save_root_keyshare(
-            dir.path(),
-            encryption_key,
-            &share,
-        )
-            .unwrap();
-        let loaded_key: EcdsaKeyshareData = load_keyshare(dir.path(), encryption_key, &None).unwrap();
+        save_root_keyshare(dir.path(), encryption_key, &share).unwrap();
+        let loaded_key: EcdsaKeyshareData =
+            load_keyshare(dir.path(), encryption_key, &None).unwrap();
         assert_eq!(generated_key.private_share, loaded_key.private_share);
         assert_eq!(generated_key.public_key, loaded_key.public_key);
     }
@@ -389,13 +387,9 @@ mod tests {
             public_key: generated_key.public_key_package.clone(),
         };
 
-        save_root_keyshare(
-            dir.path(),
-            encryption_key,
-            &share,
-        )
-            .unwrap();
-        let loaded_key: EddsaKeyshareData = load_keyshare(dir.path(), encryption_key, &None).unwrap();
+        save_root_keyshare(dir.path(), encryption_key, &share).unwrap();
+        let loaded_key: EddsaKeyshareData =
+            load_keyshare(dir.path(), encryption_key, &None).unwrap();
         assert_eq!(generated_key.key_package, loaded_key.private_share);
         assert_eq!(generated_key.public_key_package, loaded_key.public_key);
     }

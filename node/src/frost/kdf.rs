@@ -22,11 +22,14 @@
 //! After adding a tweak, `f_result` is now `G * f(x_i) + G * tweak`.
 //! Thus, to hold the mentioned property we have to adjust the constant term of a polynomial:
 //! `VSSC[0] += G * tweak`
+use crate::frost;
 use frost_core::Group;
 use std::collections::BTreeMap;
-use crate::frost;
 
-pub fn derive_keygen_output(keygen_output: &frost::KeygenOutput, tweak: [u8; 32]) -> frost::KeygenOutput {
+pub fn derive_keygen_output(
+    keygen_output: &frost::KeygenOutput,
+    tweak: [u8; 32],
+) -> frost::KeygenOutput {
     frost::KeygenOutput {
         key_package: derive_key_package(&keygen_output.key_package, tweak),
         public_key_package: derive_public_key_package(&keygen_output.public_key_package, tweak),
@@ -119,17 +122,18 @@ mod tests {
         rng.fill_bytes(&mut tweak);
         // let tweak = curve25519_dalek::Scalar::from_bytes_mod_order(tweak);
 
-        let derived_pubkey_package =
-            derive_public_key_package(&pubkey_package, tweak);
-        let derived_key_packages: BTreeMap<frost_ed25519::Identifier, frost_ed25519::keys::KeyPackage> =
-            shares
-                .into_iter()
-                .map(|(id, share)| {
-                    let key_package = frost_ed25519::keys::KeyPackage::try_from(share).unwrap();
-                    (id, derive_key_package(&key_package, tweak))
-                })
-                .collect();
-        
+        let derived_pubkey_package = derive_public_key_package(&pubkey_package, tweak);
+        let derived_key_packages: BTreeMap<
+            frost_ed25519::Identifier,
+            frost_ed25519::keys::KeyPackage,
+        > = shares
+            .into_iter()
+            .map(|(id, share)| {
+                let key_package = frost_ed25519::keys::KeyPackage::try_from(share).unwrap();
+                (id, derive_key_package(&key_package, tweak))
+            })
+            .collect();
+
         let mut nonces_map = BTreeMap::new();
         let mut commitments_map = BTreeMap::new();
 

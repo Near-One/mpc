@@ -69,10 +69,7 @@ pub(crate) async fn do_sign_coordinator<RNG: CryptoRng + RngCore + 'static + Sen
         chan.send_many(r1_wait_point, &InitMessage()).await;
     }
 
-    let (nonces, commitments) = round1::commit(
-        keygen_output.key_package.signing_share(),
-        &mut rng,
-    );
+    let (nonces, commitments) = round1::commit(keygen_output.key_package.signing_share(), &mut rng);
     commitments_map.insert(to_frost_identifier(me), commitments);
     seen.put(me);
 
@@ -117,8 +114,12 @@ pub(crate) async fn do_sign_coordinator<RNG: CryptoRng + RngCore + 'static + Sen
     // * Converted collected signature shares into the signature.
     // * Signature is verified internally during `aggregate()` call.
 
-    let signature = frost_ed25519::aggregate(&signing_package, &signature_shares, &keygen_output.public_key_package)
-        .map_err(|e| ProtocolError::AssertionFailed(e.to_string()))?;
+    let signature = frost_ed25519::aggregate(
+        &signing_package,
+        &signature_shares,
+        &keygen_output.public_key_package,
+    )
+    .map_err(|e| ProtocolError::AssertionFailed(e.to_string()))?;
 
     Ok(signature)
 }
@@ -129,10 +130,7 @@ pub(crate) async fn do_sign_participant<RNG: CryptoRng + RngCore + 'static>(
     keygen_output: KeygenOutput,
     message: Vec<u8>,
 ) -> Result<(), ProtocolError> {
-    let (nonces, commitments) = round1::commit(
-        keygen_output.key_package.signing_share(),
-        &mut rng,
-    );
+    let (nonces, commitments) = round1::commit(keygen_output.key_package.signing_share(), &mut rng);
 
     // --- Round 1.
     // * Wait for an initial message from a coordinator.
@@ -200,14 +198,10 @@ mod tests {
 
         let from_frost_identifiers = identifiers
             .iter()
-            .map(|&x| (to_frost_identifier(x.into()), x.into()))
+            .map(|&x| (to_frost_identifier(x), x))
             .collect::<BTreeMap<_, _>>();
 
-        let identifiers_list = from_frost_identifiers
-            .keys()
-            .cloned()
-            .into_iter()
-            .collect::<Vec<_>>();
+        let identifiers_list = from_frost_identifiers.keys().cloned().collect::<Vec<_>>();
 
         let mut rng: StdRng = StdRng::seed_from_u64(42u64);
         let (shares, pubkey_package) = frost_ed25519::keys::generate_with_dealer(
@@ -256,7 +250,9 @@ mod tests {
         let coordinators = 1;
 
         let protocols = build_protocols(max_signers, min_signers, coordinators)
-            .into_iter().take(actual_signers).collect::<Vec<_>>();
+            .into_iter()
+            .take(actual_signers)
+            .collect::<Vec<_>>();
         let data = run_protocol(protocols).unwrap();
         assert_single_coordinator_result(data);
     }
@@ -270,7 +266,9 @@ mod tests {
         let coordinators = 2;
 
         let protocols = build_protocols(max_signers, min_signers, coordinators)
-            .into_iter().take(actual_signers).collect::<Vec<_>>();
+            .into_iter()
+            .take(actual_signers)
+            .collect::<Vec<_>>();
         let data = run_protocol(protocols).unwrap();
         assert_single_coordinator_result(data);
     }
@@ -282,7 +280,9 @@ mod tests {
         for min_signers in 2..max_signers {
             for actual_signers in min_signers..=max_signers {
                 let mut protocols = build_protocols(max_signers, min_signers, coordinators)
-                    .into_iter().take(actual_signers).collect::<Vec<_>>();
+                    .into_iter()
+                    .take(actual_signers)
+                    .collect::<Vec<_>>();
 
                 let mut rng = thread_rng();
                 protocols.shuffle(&mut rng);

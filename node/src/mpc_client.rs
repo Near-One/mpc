@@ -1,30 +1,30 @@
 use crate::config::Config;
-use crate::hkdf::{derive_tweak, ScalarExt};
 use crate::indexer::handler::ChainSignatureRequest;
 use crate::indexer::response::ChainRespondArgs;
-use crate::metrics;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-use crate::primitives::{choose_random_participants, MpcTaskId, MpcTaskSignatureType, PresignOutputWithParticipants};
-use crate::sign::{pre_sign_unowned, run_background_presignature_generation, sign_ecdsa, sign_eddsa_coordinator, sign_eddsa_participant, PresignatureStorage};
-use crate::sign_request::{
-    compute_leaders_for_signing, SignRequestStorage, SignatureId, SignatureRequest,
+use crate::primitives::{
+    choose_random_participants, MpcTaskId, MpcTaskSignatureType, PresignOutputWithParticipants,
 };
+use crate::sign::{
+    pre_sign_unowned, run_background_presignature_generation, sign_ecdsa, sign_eddsa_coordinator,
+    sign_eddsa_participant, PresignatureStorage,
+};
+use crate::sign_request::{SignRequestStorage, SignatureId, SignatureRequest};
 use crate::tracking::{self, AutoAbortTaskCollection};
 use crate::triple::{
     run_background_triple_generation, run_many_triple_generation, TripleStorage,
     SUPPORTED_TRIPLE_GENERATION_BATCH_SIZE,
 };
 
-use cait_sith::FullSignature;
-use k256::{Secp256k1};
-use std::sync::Arc;
-use std::time::Duration;
-use anyhow::Context;
-use tokio::sync::mpsc;
-use tokio::time::timeout;
 use crate::key_generation::RootKeyshareData;
 use crate::validation::Validation;
 use crate::web::KeyType;
+use cait_sith::FullSignature;
+use k256::Secp256k1;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::time::timeout;
 
 #[derive(Clone)]
 pub struct MpcClient {
@@ -50,15 +50,24 @@ pub struct EddsaSignature {
 
 pub enum SignatureResult {
     Ecdsa(EcdsaSignature),
-    Eddsa(EddsaSignature)
+    Eddsa(EddsaSignature),
 }
 
 impl MpcClient {
-    pub fn get_config(&self) -> Arc<Config> { self.config.clone() }
-    pub fn get_web_client(&self) -> Arc<reqwest::Client> { self.web_client.clone() }
-    pub fn get_validation(&self) -> Arc<Validation> { self.validation.clone() }
+    pub fn get_config(&self) -> Arc<Config> {
+        self.config.clone()
+    }
+    pub fn get_web_client(&self) -> Arc<reqwest::Client> {
+        self.web_client.clone()
+    }
+    pub fn get_validation(&self) -> Arc<Validation> {
+        self.validation.clone()
+    }
     pub fn get_public_key(&self) -> (frost_ed25519::keys::PublicKeyPackage, k256::AffinePoint) {
-        (self.root_keyshare.eddsa.public_key.clone(), self.root_keyshare.ecdsa.public_key)
+        (
+            self.root_keyshare.eddsa.public_key.clone(),
+            self.root_keyshare.ecdsa.public_key,
+        )
     }
 
     pub fn new(
@@ -69,7 +78,7 @@ impl MpcClient {
         sign_request_store: Arc<SignRequestStorage>,
         root_keyshare: RootKeyshareData,
         web_client: Arc<reqwest::Client>,
-        validation: Arc<Validation>
+        validation: Arc<Validation>,
     ) -> Self {
         Self {
             config,
@@ -79,7 +88,7 @@ impl MpcClient {
             sign_request_store,
             root_keyshare,
             web_client,
-            validation
+            validation,
         }
     }
 
@@ -88,7 +97,7 @@ impl MpcClient {
     pub async fn run(
         self,
         mut channel_receiver: mpsc::Receiver<NetworkTaskChannel>,
-        mut sign_request_receiver: mpsc::Receiver<ChainSignatureRequest>,
+        sign_request_receiver: mpsc::Receiver<ChainSignatureRequest>,
         sign_response_sender: mpsc::Sender<ChainRespondArgs>,
     ) -> anyhow::Result<()> {
         let monitor_passive_channels = {
@@ -189,7 +198,7 @@ impl MpcClient {
                                     .await??;
 
                                     match signature_type {
-                                        MpcTaskSignatureType::EDDSA => {
+                                        MpcTaskSignatureType::Eddsa => {
                                             timeout(
                                                 Duration::from_secs(config.signature.timeout_sec),
                                                 sign_eddsa_participant(
@@ -201,7 +210,7 @@ impl MpcClient {
                                                 )
                                             ).await??;
                                         }
-                                        MpcTaskSignatureType::ECDSA { presignature_id } => {
+                                        MpcTaskSignatureType::Ecdsa { presignature_id } => {
                                             let msg_hash: [u8; 32] = hex::decode(message)?
                                                 .try_into()
                                                 .map_err(|_| anyhow::anyhow!("Decoded hex message expected to be exactly 32 bytes long"))?;
@@ -285,7 +294,9 @@ impl MpcClient {
     ) -> anyhow::Result<SignatureResult> {
         let message: [u8; 32] = hex::decode(&sign_request.message)?
             .try_into()
-            .map_err(|_| anyhow::anyhow!("Decoded hex message expected to be exactly 32 bytes long"))?;
+            .map_err(|_| {
+                anyhow::anyhow!("Decoded hex message expected to be exactly 32 bytes long")
+            })?;
 
         let (presignature_id, presignature) = self
             .presignature_store
@@ -296,7 +307,7 @@ impl MpcClient {
             self.client.new_channel_for_task(
                 MpcTaskId::Signature {
                     id: sign_request.id,
-                    signature_type: MpcTaskSignatureType::ECDSA { presignature_id },
+                    signature_type: MpcTaskSignatureType::Ecdsa { presignature_id },
                 },
                 presignature.participants,
             )?,
@@ -307,7 +318,7 @@ impl MpcClient {
             sign_request.tweak,
             sign_request.entropy,
         )
-            .await?;
+        .await?;
 
         Ok(SignatureResult::Ecdsa(EcdsaSignature {
             signature,
@@ -321,7 +332,7 @@ impl MpcClient {
     ) -> anyhow::Result<SignatureResult> {
         let task_id = MpcTaskId::Signature {
             id: sign_request.id,
-            signature_type: MpcTaskSignatureType::EDDSA
+            signature_type: MpcTaskSignatureType::Eddsa,
         };
 
         //
@@ -352,10 +363,11 @@ impl MpcClient {
             sign_request.message,
             sign_request.tweak,
         )
-            .await?;
+        .await?;
 
-        Ok(SignatureResult::Eddsa(
-            EddsaSignature { signature, public_key }
-        ))
+        Ok(SignatureResult::Eddsa(EddsaSignature {
+            signature,
+            public_key,
+        }))
     }
 }

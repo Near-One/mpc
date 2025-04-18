@@ -54,7 +54,7 @@ pub(crate) fn build_sign_protocols(
                 key_pair.clone(),
                 msg_hash.as_bytes().to_vec(),
             )
-            .map(|x| x.map(|y| SignatureOutput::Coordinator(y)));
+            .map(|x| x.map(SignatureOutput::Coordinator));
             let protocol = make_protocol(ctx, fut);
             Box::new(protocol)
         } else {

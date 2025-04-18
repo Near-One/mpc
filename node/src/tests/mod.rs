@@ -58,8 +58,9 @@ impl TestGenerators {
                         rand::rngs::OsRng,
                         participants.clone(),
                         participants[i],
-                        self.threshold as u16
-                    ).unwrap(),
+                        self.threshold as u16,
+                    )
+                    .unwrap(),
                 ),
             ));
         }

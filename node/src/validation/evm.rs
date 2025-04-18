@@ -1,5 +1,8 @@
-use crate::validation::{SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, HOT_VERIFY_METHOD_NAME};
+use crate::validation::{
+    ChainValidationConfig, SingleVerifier, ThresholdVerifier, VerifyArgs, HOT_VERIFY_METHOD_NAME,
+};
 use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 use k256::elliptic_curve::bigint::Zero;
 use k256::U256;
 use serde::{Deserialize, Serialize};
@@ -7,7 +10,6 @@ use serde_json::json;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use async_trait::async_trait;
 use web3::ethabi;
 use web3::ethabi::Contract;
 use web3::types::{CallRequest, H160};
@@ -40,11 +42,16 @@ struct EvmSingleVerifier {
 
 impl EvmSingleVerifier {
     pub fn new(client: Arc<reqwest::Client>, server: String, contract: Contract) -> Self {
-        Self { client, server, contract }
+        Self {
+            client,
+            server,
+            contract,
+        }
     }
 
     async fn call_rpc(&self, json: serde_json::Value) -> Result<String> {
-        let response = self.client
+        let response = self
+            .client
             .post(&self.server)
             .timeout(Duration::from_secs(1))
             .json(&json)
@@ -71,7 +78,8 @@ impl EvmSingleVerifier {
 #[async_trait]
 impl SingleVerifier for EvmSingleVerifier {
     async fn verify(&self, auth_contract_id: &str, args: VerifyArgs) -> Result<()> {
-        let data = self.contract
+        let data = self
+            .contract
             .function(HOT_VERIFY_METHOD_NAME)
             .unwrap()
             .encode_input(&[
@@ -79,7 +87,8 @@ impl SingleVerifier for EvmSingleVerifier {
                 ethabi::token::Token::Bytes(vec![]),
                 ethabi::token::Token::Bytes(hex::decode(args.user_payload).unwrap()),
                 ethabi::token::Token::Bytes(vec![]),
-            ]).context("Bad arguments for evm smart contract")?;
+            ])
+            .context("Bad arguments for evm smart contract")?;
 
         let call_request = CallRequest::builder()
             .to(H160::from_str(auth_contract_id)?)
@@ -99,7 +108,10 @@ impl SingleVerifier for EvmSingleVerifier {
         if !verify_result_is_zero {
             Ok(())
         } else {
-            bail!("Evm, {} -> {auth_contract_id} returned False on `verify()` call", self.server)
+            bail!(
+                "Evm, {} -> {auth_contract_id} returned False on `verify()` call",
+                self.server
+            )
         }
     }
 }
@@ -110,22 +122,25 @@ pub struct EvmThresholdVerifier {
 }
 
 impl EvmThresholdVerifier {
-    pub fn new(validation_config: ChainValidationConfig, client: Arc<reqwest::Client>, contract: Contract) -> Self {
+    pub fn new(
+        validation_config: ChainValidationConfig,
+        client: Arc<reqwest::Client>,
+        contract: Contract,
+    ) -> Self {
         let threshold = validation_config.threshold;
         let servers = validation_config.servers;
         if threshold > servers.len() {
-            panic!("There should be at least {} servers, got {}", threshold, servers.len())
+            panic!(
+                "There should be at least {} servers, got {}",
+                threshold,
+                servers.len()
+            )
         }
         let callers = servers
             .iter()
-            .map(|s| {
-                EvmSingleVerifier::new(client.clone(), s.clone(), contract.clone())
-            })
+            .map(|s| EvmSingleVerifier::new(client.clone(), s.clone(), contract.clone()))
             .collect();
-        Self {
-            threshold,
-            callers,
-        }
+        Self { threshold, callers }
     }
 }
 
@@ -138,7 +153,6 @@ impl ThresholdVerifier for EvmThresholdVerifier {
         self.threshold
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -264,7 +278,6 @@ mod tests {
             Arc::new(reqwest::Client::new()),
             evm_hot_verify_contract,
         );
-
 
         validation.verify(auth_contract_id, args).await.unwrap();
     }

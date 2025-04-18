@@ -18,9 +18,9 @@
 //! or "Participant X supplied incorrect data", but pragmatically you will not be able to do anything with this info.
 
 mod dkg;
+pub mod kdf;
 mod sign;
 mod tests;
-pub mod kdf;
 
 use cait_sith::protocol::{Participant, Protocol};
 use rand::{CryptoRng, RngCore};
@@ -41,13 +41,7 @@ pub fn sign_coordinator<RNG: CryptoRng + RngCore + 'static + Send>(
     keygen_output: KeygenOutput,
     msg_hash: Vec<u8>,
 ) -> anyhow::Result<impl Protocol<Output = frost_ed25519::Signature>> {
-    sign::sign_internal_coordinator(
-        rng,
-        participants,
-        me,
-        keygen_output,
-        msg_hash,
-    )
+    sign::sign_internal_coordinator(rng, participants, me, keygen_output, msg_hash)
 }
 
 /// Build a signature protocol for `participant`.
@@ -56,11 +50,7 @@ pub fn sign_passive<RNG: CryptoRng + RngCore + 'static + Send>(
     keygen_output: KeygenOutput,
     msg_hash: Vec<u8>,
 ) -> anyhow::Result<impl Protocol<Output = ()>> {
-    sign::sign_internal_passive(
-        rng,
-        keygen_output,
-        msg_hash,
-    )
+    sign::sign_internal_passive(rng, keygen_output, msg_hash)
 }
 
 #[derive(Debug, Clone)]

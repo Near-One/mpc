@@ -1,13 +1,8 @@
 use crate::indexer::transaction::TransactionSigner;
 use crate::metrics;
 use crate::sign_request::SignatureRequest;
-use anyhow::Context;
 use cait_sith::FullSignature;
-use k256::{
-    ecdsa::{RecoveryId, VerifyingKey},
-    elliptic_curve::{ops::Reduce, point::AffineCoordinates, Curve, CurveArithmetic},
-    AffinePoint, Scalar, Secp256k1,
-};
+use k256::{AffinePoint, Scalar, Secp256k1};
 use near_indexer_primitives::types::AccountId;
 use near_indexer_primitives::types::{BlockReference, Finality};
 use near_o11y::WithSpanContextExt;
@@ -145,14 +140,14 @@ impl ChainRespondArgs {
     //     use k256::elliptic_curve::bigint::ArrayEncoding;
     //     use k256::elliptic_curve::PrimeField;
     //     use k256::U256;
-    // 
+    //
     //     // compare Rx representation before and after reducing it modulo the group order
     //     let big_r_x = big_r.x();
     //     let reduced_big_r_x = <Scalar as Reduce<
     //         <Secp256k1 as k256::elliptic_curve::Curve>::Uint,
     //     >>::reduce_bytes(&big_r_x);
     //     let is_x_reduced = reduced_big_r_x.to_repr() != big_r_x;
-    // 
+    //
     //     let mut y_bit = big_r.y_is_odd().unwrap_u8();
     //     let order_divided_by_two =
     //         "7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0";
@@ -258,11 +253,9 @@ mod recovery_id_tests {
     use crate::indexer::response::ChainRespondArgs;
     use cait_sith::FullSignature;
     use k256::ecdsa::{RecoveryId, SigningKey};
-    use k256::elliptic_curve::{
-        bigint::CheckedAdd, point::DecompressPoint, Curve, FieldBytesEncoding, PrimeField,
-    };
+    use k256::elliptic_curve::{point::DecompressPoint, PrimeField};
     use k256::AffinePoint;
-    use k256::{Scalar, Secp256k1};
+    use k256::Scalar;
     use rand::rngs::OsRng;
 
     // #[test]
@@ -271,7 +264,7 @@ mod recovery_id_tests {
     //         // generate a pair of ecdsa keys
     //         let mut rng = OsRng;
     //         let signing_key = SigningKey::random(&mut rng);
-    // 
+    //
     //         // compute a signature with recovery id
     //         let prehash: [u8; 32] = rand::random();
     //         match signing_key.sign_prehash_recoverable(&prehash) {
@@ -302,7 +295,7 @@ mod recovery_id_tests {
     //                 // compute recovery_id using our function
     //                 let tested_recid = ChainRespondArgs::ecdsa_recovery_from_big_r(&big_r, &s);
     //                 let tested_recid = RecoveryId::from_byte(tested_recid).unwrap();
-    // 
+    //
     //                 assert!(tested_recid.is_x_reduced() == recid.is_x_reduced());
     //                 assert!(tested_recid.is_y_odd() == recid.is_y_odd());
     //                 assert!(tested_recid.is_y_odd() == try_recid.is_y_odd());

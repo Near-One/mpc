@@ -121,14 +121,9 @@ pub(crate) fn build_dkg_protocols(
         Vec::with_capacity(max_signers);
     for participant in &participants {
         let rng: StdRng = StdRng::seed_from_u64(protocols.len() as u64);
-        let protocol = dkg_internal(
-            rng,
-            participants.clone(),
-            participant.clone(),
-            threshold as u16,
-        )
-        .unwrap();
-        protocols.push((participant.clone(), Box::new(protocol)));
+        let protocol =
+            dkg_internal(rng, participants.clone(), *participant, threshold as u16).unwrap();
+        protocols.push((*participant, Box::new(protocol)));
     }
 
     protocols

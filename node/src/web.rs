@@ -1,29 +1,29 @@
 use crate::config::WebUIConfig;
+use crate::frost;
 use crate::mpc_client::{MpcClient, SignatureResult};
+use crate::sign::derive_ecdsa_key;
 use crate::sign_request::{SignatureId, SignatureRequest};
 use crate::tracking::{self, TaskHandle};
+use crate::validation::ProofModel;
 use anyhow::Context;
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
-use axum::{extract::{Query, State}, routing::get, Json, Router};
+use axum::routing::post;
+use axum::{extract::State, routing::get, Json, Router};
 use futures::future::BoxFuture;
-use futures::{stream, FutureExt, StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
+use futures_util::future::join_all;
 use k256::elliptic_curve::scalar::FromUintUnchecked;
 use k256::sha2::{Digest, Sha256};
-use k256::{U256};
+use k256::U256;
 use prometheus::{default_registry, Encoder, TextEncoder};
 use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use axum::routing::post;
-use futures_util::future::join_all;
 use tokio::sync::OnceCell;
 use tokio::{join, time};
-use crate::frost;
-use crate::sign::derive_ecdsa_key;
-use crate::validation::ProofModel;
 
 /// Wrapper to make Axum understand how to convert anyhow::Error into a 500
 /// response.
@@ -105,7 +105,7 @@ pub struct UserSignatureRequest {
     pub uid: String,
     pub message: Vec<u8>,
     pub proof: ProofModel,
-    pub key_type: KeyType
+    pub key_type: KeyType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,7 +128,6 @@ struct EddsaResponse {
     pub public_key: frost_ed25519::VerifyingKey,
 }
 
-
 #[derive(Serialize, Deserialize)]
 pub enum SignatureResponse {
     Ecdsa(EcdsaResponse),
@@ -137,7 +136,7 @@ pub enum SignatureResponse {
 
 async fn announce_signature_to_us(
     client: Arc<MpcClient>,
-    index_request: IndexRequest
+    index_request: IndexRequest,
 ) -> Result<(), AnyhowErrorWrapper> {
     validate(client.clone(), index_request.user_signature_request.clone()).await?;
 
@@ -154,10 +153,7 @@ async fn announce_signature_to_us(
     Ok(())
 }
 
-async fn announce_signature_to_others(
-    mpc_client: Arc<MpcClient>,
-    index_request: IndexRequest
-) {
+async fn announce_signature_to_others(mpc_client: Arc<MpcClient>, index_request: IndexRequest) {
     let config = mpc_client.get_config();
     let web_client = mpc_client.get_web_client();
     let web_ui_port = config.web_ui.port;
@@ -174,11 +170,7 @@ async fn announce_signature_to_others(
             let data = serde_json::to_value(index_request.clone()).unwrap();
             let web_client = web_client.clone();
             async move {
-                let response = web_client
-                    .post(&url)
-                    .json(&data)
-                    .send()
-                    .await?;
+                let response = web_client.post(&url).json(&data).send().await?;
 
                 if response.status().is_success() {
                     Ok(())
@@ -207,8 +199,8 @@ pub fn from_uid_to_scalar(uid: &String) -> [u8; 32] {
     let tweak = k256::Scalar::from_uint_unchecked(U256::from_le_slice(&hasher.finalize()));
     // wtf line. We needed to convert from Scalar type to [u8; 32] type, and this way I try to ensure validity of the cast.
     // hope it will be substituted with something sane in the future.
-    let tweak = tweak.to_bytes().try_into().unwrap();
-    tweak
+
+    tweak.to_bytes().into()
 }
 
 fn current_time_millis() -> u64 {
@@ -224,11 +216,12 @@ async fn validate(
 ) -> Result<(), AnyhowErrorWrapper> {
     mpc_client
         .clone()
-        .get_validation().verify(
-        user_signature_request.uid,
-        hex::encode(&user_signature_request.message),
-        user_signature_request.proof,
-    )
+        .get_validation()
+        .verify(
+            user_signature_request.uid,
+            hex::encode(&user_signature_request.message),
+            user_signature_request.proof,
+        )
         .await?;
     Ok(())
 }
@@ -254,7 +247,7 @@ async fn sign(
     let mpc_client = Arc::new(mpc_client);
 
     let entropy = generate_ids(1, current_time_millis())[0];
-    let id = SignatureId::from(entropy.clone());
+    let id = SignatureId::from(entropy);
 
     let index_request = IndexRequest {
         user_signature_request,
@@ -277,32 +270,25 @@ async fn sign(
                     &format!("sign #{:?}", id),
                     mpc_client.clone().make_signature(id),
                 )
-                    .map(|result| anyhow::Ok(result??))
+                .map(|result| anyhow::Ok(result??))
             })
-                .await
-                .context("timeout")?
-                .context("signature failed")?;
+            .await
+            .context("timeout")?
+            .context("signature failed")?;
 
             match signature {
                 SignatureResult::Ecdsa(result) => {
-                    anyhow::Ok(Json(
-                        SignatureResponse::Ecdsa(
-                            EcdsaResponse {
-                                big_r: result.signature.big_r,
-                                signature: result.signature.s,
-                                public_key: result.public_key,
-                            })
-                    ))
+                    anyhow::Ok(Json(SignatureResponse::Ecdsa(EcdsaResponse {
+                        big_r: result.signature.big_r,
+                        signature: result.signature.s,
+                        public_key: result.public_key,
+                    })))
                 }
                 SignatureResult::Eddsa(result) => {
-                    anyhow::Ok(Json(
-                        SignatureResponse::Eddsa(
-                            EddsaResponse {
-                                signature: result.signature,
-                                public_key: result.public_key,
-                            }
-                        )
-                    ))
+                    anyhow::Ok(Json(SignatureResponse::Eddsa(EddsaResponse {
+                        signature: result.signature,
+                        public_key: result.public_key,
+                    })))
                 }
             }
         })
@@ -313,7 +299,7 @@ async fn sign(
 
 #[derive(Serialize, Deserialize)]
 pub struct PublicKeyRequest {
-    pub uid: String
+    pub uid: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -336,21 +322,12 @@ async fn public_key(
     let ecdsa_pk = derive_ecdsa_key(ecdsa_pk, tweak);
 
     Ok(Json(PublicKeyResponse {
-        eddsa: eddsa_pk.verifying_key().clone(),
+        eddsa: *eddsa_pk.verifying_key(),
         ecdsa: ecdsa_pk,
     }))
 }
 
 // ------------------------------------------------------------
-
-fn sha256hash(data: &[u8]) -> k256::Scalar {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(&result);
-    k256::Scalar::from_uint_unchecked(U256::from_be_slice(&bytes))
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DebugIndexRequest {

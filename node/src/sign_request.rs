@@ -1,13 +1,10 @@
-use crate::config::MpcConfig;
 use crate::db::{DBCol, SecretDB};
-use crate::primitives::ParticipantId;
 
-use k256::sha2::{Digest, Sha256};
-use k256::Scalar;
+use crate::web::KeyType;
+use k256::sha2::Digest;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use crate::web::KeyType;
 
 pub type SignatureId = [u8; 32];
 
@@ -18,7 +15,7 @@ pub struct SignatureRequest {
     pub tweak: [u8; 32],
     pub entropy: [u8; 32],
     pub timestamp_nanosec: u64,
-    pub key_type: KeyType
+    pub key_type: KeyType,
 }
 
 pub struct SignRequestStorage {
@@ -72,31 +69,4 @@ impl SignRequestStorage {
         let request_ser = self.db.get(DBCol::SignRequest, &key)?.unwrap();
         Ok(serde_json::from_slice(&request_ser)?)
     }
-}
-
-fn compute_hash(participant_id: &ParticipantId, signature_request_id: &[u8; 32]) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(participant_id.raw().to_le_bytes());
-    h.update(signature_request_id);
-    h.finalize().into()
-}
-
-/// Computes primary and second leaders for a given request.
-pub fn compute_leaders_for_signing(
-    config: &MpcConfig,
-    request: &SignatureRequest,
-) -> (ParticipantId, ParticipantId) {
-    let mut all_hashes = config
-        .participants
-        .participants
-        .iter()
-        .map(|p| (compute_hash(&p.id, &request.id), p.id))
-        .collect::<Vec<_>>();
-    all_hashes.sort();
-    assert!(!all_hashes.is_empty());
-    if all_hashes.len() == 1 {
-        return (all_hashes[0].1, all_hashes[0].1);
-    }
-
-    (all_hashes[0].1, all_hashes[1].1)
 }

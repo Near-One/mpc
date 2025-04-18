@@ -1,5 +1,9 @@
-use crate::validation::{GetWalletArgs, SingleVerifier, ThresholdVerifier, ChainValidationConfig, VerifyArgs, WalletModel, HOT_VERIFY_METHOD_NAME, MPC_GET_WALLET_METHOD, MPC_HOT_WALLET_CONTRACT};
+use crate::validation::{
+    ChainValidationConfig, GetWalletArgs, SingleVerifier, ThresholdVerifier, VerifyArgs,
+    WalletModel, HOT_VERIFY_METHOD_NAME, MPC_GET_WALLET_METHOD, MPC_HOT_WALLET_CONTRACT,
+};
 use anyhow::{anyhow, bail, Context, Result};
+use async_trait::async_trait;
 use futures_util::stream::FuturesUnordered;
 use near_sdk::base64::prelude::BASE64_STANDARD;
 use near_sdk::base64::Engine;
@@ -7,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use async_trait::async_trait;
 use tokio_stream::StreamExt;
 
 #[derive(Serialize, Deserialize)]
@@ -20,9 +23,7 @@ struct RpcParams {
 }
 
 impl RpcParams {
-    pub fn build(account_id: String,
-                 method_name: String,
-                 args_base64: String) -> Self {
+    pub fn build(account_id: String, method_name: String, args_base64: String) -> Self {
         Self {
             request_type: "call_function".to_string(),
             finality: "final".to_string(),
@@ -42,11 +43,7 @@ struct RpcRequest {
 }
 
 impl RpcRequest {
-    pub fn build(
-        account_id: String,
-        method_name: String,
-        args_base64: String,
-    ) -> Self {
+    pub fn build(account_id: String, method_name: String, args_base64: String) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
             id: "dontcare".to_string(),
@@ -81,7 +78,8 @@ impl NearSingleVerifier {
     }
 
     async fn call_rpc(&self, json: serde_json::Value) -> Result<Vec<u8>> {
-        let response = self.client
+        let response = self
+            .client
             .post(&self.server)
             .timeout(Duration::from_secs(1))
             .json(&json)
@@ -92,7 +90,9 @@ impl NearSingleVerifier {
             let value = response.json::<serde_json::Value>().await?;
             // Intended.
             //  Call result is bytes, which are wrapped in "Result", which is wrapped in "Result"
-            let value = value.get("result").context("missing result (rpc call is probably failed)")?;
+            let value = value
+                .get("result")
+                .context("missing result (rpc call is probably failed)")?;
             let value = value.get("result").context("missing result in result")?;
             let value = serde_json::from_value::<Vec<u8>>(value.clone())?;
             Ok(value)
@@ -120,7 +120,10 @@ impl SingleVerifier for NearSingleVerifier {
         if verify_result {
             Ok(())
         } else {
-            bail!("Near, {} -> {auth_contract_id} returned False on `verify()`", self.server)
+            bail!(
+                "Near, {} -> {auth_contract_id} returned False on `verify()`",
+                self.server
+            )
         }
     }
 }
@@ -131,31 +134,31 @@ pub struct NearThresholdVerifier {
 }
 
 impl NearThresholdVerifier {
-    pub fn new(near_validation_config: ChainValidationConfig, client: Arc<reqwest::Client>) -> Self {
+    pub fn new(
+        near_validation_config: ChainValidationConfig,
+        client: Arc<reqwest::Client>,
+    ) -> Self {
         let threshold = near_validation_config.threshold;
         let servers = near_validation_config.servers;
         if threshold > servers.len() {
-            panic!("There should be at least {} servers, got {}", threshold, servers.len())
+            panic!(
+                "There should be at least {} servers, got {}",
+                threshold,
+                servers.len()
+            )
         }
         let callers = servers
             .iter()
-            .map(|s| {
-                NearSingleVerifier::new(client.clone(), s.clone())
-            })
+            .map(|s| NearSingleVerifier::new(client.clone(), s.clone()))
             .collect();
-        Self {
-            threshold,
-            callers,
-        }
+        Self { threshold, callers }
     }
 
-    pub async fn get_wallet_data(&self, wallet_id: &String) -> Result<WalletModel> {
+    pub async fn get_wallet_data(&self, wallet_id: &str) -> Result<WalletModel> {
         let mut futures: FuturesUnordered<_> = self
             .callers
             .iter()
-            .map(|caller| {
-                caller.get_wallet(wallet_id.clone())
-            })
+            .map(|caller| caller.get_wallet(wallet_id.to_owned()))
             .collect();
 
         let mut call_results: HashMap<WalletModel, usize> = HashMap::new();
@@ -166,12 +169,11 @@ impl NearThresholdVerifier {
             }
         }
 
-        let result =
-            call_results
-                .iter()
-                .find(|(_, &count)| count >= self.threshold)
-                .map(|(k, _)| k.clone())
-                .ok_or_else(|| anyhow!("No consesus for `get_wallet`"))?;
+        let result = call_results
+            .iter()
+            .find(|(_, &count)| count >= self.threshold)
+            .map(|(k, _)| k.clone())
+            .ok_or_else(|| anyhow!("No consesus for `get_wallet`"))?;
         Ok(result)
     }
 }
@@ -189,7 +191,7 @@ impl ThresholdVerifier for NearThresholdVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validation::{uid_to_wallet_id, ProofModel, WalletAccessModel};
+    use crate::validation::{uid_to_wallet_id, WalletAccessModel};
 
     #[tokio::test]
     async fn near_single_verifier() {
@@ -278,11 +280,11 @@ mod tests {
         let rpc_validation = NearThresholdVerifier::new(
             ChainValidationConfig {
                 threshold: 2,
-                servers: vec!(
+                servers: vec![
                     "https://rpc.mainnet.near.org".to_string(),
                     "https://rpc.near.org".to_string(),
                     "https://nearrpc.aurora.dev".to_string(),
-                ),
+                ],
             },
             Arc::new(reqwest::Client::new()),
         );
@@ -297,7 +299,6 @@ mod tests {
             metadata: None,
         };
 
-
         rpc_validation.verify(auth_contract_id, args).await.unwrap();
     }
 
@@ -307,12 +308,12 @@ mod tests {
         let rpc_validation = NearThresholdVerifier::new(
             ChainValidationConfig {
                 threshold: 2,
-                servers: vec!(
+                servers: vec![
                     "https://hello.com".to_string(),
                     "https://hello.com".to_string(),
                     "https://hello.com".to_string(),
                     "https://hello.com".to_string(),
-                ),
+                ],
             },
             Arc::new(reqwest::Client::new()),
         );
@@ -336,7 +337,6 @@ mod tests {
         let server_addr = "https://rpc.mainnet.near.org";
         let rpc_caller = NearSingleVerifier::new(client, server_addr.to_string());
 
-
         let wallet_id = "A8NpkSkn1HZPYjxJRCpD4iPhDHzP81bbduZTqPpHmEgn";
         let expected = WalletModel {
             access_list: vec![WalletAccessModel {
@@ -357,11 +357,11 @@ mod tests {
         let rpc_validation = NearThresholdVerifier::new(
             ChainValidationConfig {
                 threshold: 2,
-                servers: vec!(
+                servers: vec![
                     "https://rpc.mainnet.near.org".to_string(),
                     "https://rpc.near.org".to_string(),
                     "https://nearrpc.aurora.dev".to_string(),
-                ),
+                ],
             },
             Arc::new(reqwest::Client::new()),
         );
@@ -379,7 +379,8 @@ mod tests {
 
         let actual = rpc_validation
             .get_wallet_data(&wallet_id.to_string())
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(actual, expected)
     }
@@ -389,14 +390,14 @@ mod tests {
         let rpc_validation = NearThresholdVerifier::new(
             ChainValidationConfig {
                 threshold: 3,
-                servers: vec!(
+                servers: vec![
                     "https://google.com".to_string(),
                     "https://bim-bim-bom-bom.com".to_string(),
                     "https://rpc.mainnet.near.org".to_string(),
                     "https://hello.dev".to_string(),
                     "https://rpc.near.org".to_string(),
                     "https://nearrpc.aurora.dev".to_string(),
-                ),
+                ],
             },
             Arc::new(reqwest::Client::new()),
         );
@@ -414,7 +415,8 @@ mod tests {
         let wallet_id = "A8NpkSkn1HZPYjxJRCpD4iPhDHzP81bbduZTqPpHmEgn";
         let actual = rpc_validation
             .get_wallet_data(&wallet_id.to_string())
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(actual, expected)
     }
@@ -449,13 +451,11 @@ mod tests {
         }"#;
 
         let expected = WalletModel {
-            access_list: vec![
-                WalletAccessModel {
-                    account_id: "keys.auth.hot.tg".to_string(),
-                    metadata: None,
-                    chain_id: 0
-                }
-            ],
+            access_list: vec![WalletAccessModel {
+                account_id: "keys.auth.hot.tg".to_string(),
+                metadata: None,
+                chain_id: 0,
+            }],
             key_gen: 1,
             block_height: 0,
         };

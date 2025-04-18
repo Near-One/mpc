@@ -1,10 +1,10 @@
 pub use crate::primitives::ParticipantId;
+use crate::validation::ChainValidationConfig;
 use anyhow::Context;
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::AccountId;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use crate::validation::ChainValidationConfig;
 
 /// The full configuration needed to run the node.
 #[derive(Debug)]
@@ -126,7 +126,7 @@ pub struct ConfigFile {
     /// If specified, this is the static configuration for the MPC protocol,
     /// replacing what would be read from the contract.
     pub participants: Option<ParticipantsConfig>,
-    pub validation: ValidationConfig
+    pub validation: ValidationConfig,
 }
 
 fn near_account_id_from_env() -> AccountId {
@@ -158,7 +158,7 @@ impl ConfigFile {
             triple: self.triple,
             presignature: self.presignature,
             signature: self.signature,
-            validation: self.validation
+            validation: self.validation,
         }
     }
 }

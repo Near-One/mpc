@@ -76,10 +76,8 @@ pub struct MpcPeerMessage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub enum MpcTaskSignatureType {
-    EDDSA,
-    ECDSA {
-        presignature_id: UniqueId,
-    }
+    Eddsa,
+    Ecdsa { presignature_id: UniqueId },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
@@ -96,7 +94,7 @@ pub enum MpcTaskId {
     },
     Signature {
         id: SignatureId,
-        signature_type: MpcTaskSignatureType
+        signature_type: MpcTaskSignatureType,
     },
 }
 

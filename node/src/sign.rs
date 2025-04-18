@@ -8,16 +8,16 @@ use crate::protocol::run_protocol;
 use crate::tracking::AutoAbortTaskCollection;
 use crate::triple::TripleStorage;
 use crate::{frost, metrics, tracking};
+use anyhow::Context;
 use cait_sith::protocol::Participant;
 use cait_sith::triples::TripleGenerationOutput;
 use cait_sith::{FullSignature, KeygenOutput, PresignArguments, PresignOutput};
-use k256::{AffinePoint, Scalar, Secp256k1};
+use k256::elliptic_curve::CurveArithmetic;
+use k256::{AffinePoint, Secp256k1};
+use rand::rngs::OsRng;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use anyhow::Context;
-use k256::elliptic_curve::CurveArithmetic;
-use rand::rngs::OsRng;
 use tokio::time::timeout;
 
 /// Performs an MPC presignature operation. This is shared for the initiator
@@ -90,13 +90,13 @@ pub async fn sign_ecdsa(
 ) -> anyhow::Result<(FullSignature<Secp256k1>, AffinePoint)> {
     let msg_hash = k256::Scalar::from_bytes(msg_hash).expect(
         "Expected message hash to be in the
-        field of size 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1"
+        field of size 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1",
     );
     let tweak = k256::Scalar::from_bytes(tweak).context(
         "Expected hash of derived key to be in the
-        field of size 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1"
+        field of size 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1",
     )?;
-    
+
     let cs_participants = channel
         .participants
         .iter()
@@ -154,10 +154,7 @@ pub async fn sign_eddsa_coordinator(
         .collect::<Vec<_>>();
 
     let derived_keygen_output = frost::kdf::derive_keygen_output(&keygen_output, tweak);
-    let derived_verifying_key = derived_keygen_output
-        .public_key_package
-        .verifying_key()
-        .clone();
+    let derived_verifying_key = *derived_keygen_output.public_key_package.verifying_key();
 
     let protocol = frost::sign_coordinator(
         OsRng,
@@ -181,17 +178,12 @@ pub async fn sign_eddsa_participant(
 ) -> anyhow::Result<()> {
     let derived_keygen_output = frost::kdf::derive_keygen_output(&keygen_output, tweak);
 
-    let protocol = frost::sign_passive(
-        OsRng,
-        derived_keygen_output,
-        message,
-    )?;
+    let protocol = frost::sign_passive(OsRng, derived_keygen_output, message)?;
 
     run_protocol("sign_eddsa_passive", channel, me, protocol).await?;
     metrics::MPC_NUM_EDDSA_SIGNATURES_GENERATED_PASSIVE.inc();
     Ok(())
 }
-
 
 pub type PresignatureStorage = ProtocolsStorage<PresignOutputWithParticipants>;
 
