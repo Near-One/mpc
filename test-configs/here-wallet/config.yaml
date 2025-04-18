@@ -1,5 +1,5 @@
 participants:
-  threshold: 3
+  threshold: 2
   participants:
     - id: 2719987951
       address: node0
@@ -11,16 +11,6 @@ participants:
       port: 10001
       p2p_public_key: ed25519:CGkGYBaZYtaYFqgvdktLWsbu75WdvASNyHYoAp66ffBA
       near_account_id: '4271063273'
-    - id: 3961734869
-      address: node2
-      port: 10002
-      p2p_public_key: ed25519:Ba1V1jWYPLqeUhn7GiSAkvmmxxBMVHbbrbKMe17dY8XR
-      near_account_id: '3961734869'
-    - id: 1480181394
-      address: node3
-      port: 10003
-      p2p_public_key: ed25519:7BWuGYJQGG5URtPs98kkWiwg3bQUP7v2wLQHyFq7RLVS
-      near_account_id: '1480181394'
 web_ui:
   host: 0.0.0.0
   port: 20000
