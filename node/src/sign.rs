@@ -143,9 +143,8 @@ pub async fn sign_eddsa_coordinator(
     channel: NetworkTaskChannel,
     me: ParticipantId,
     keygen_output: frost::KeygenOutput,
-    msg_hash: [u8; 32],
+    message: Vec<u8>,
     tweak: [u8; 32],
-    entropy: [u8; 32],
 ) -> anyhow::Result<(frost_ed25519::Signature, frost_ed25519::VerifyingKey)> {
     let cs_participants = channel
         .participants
@@ -165,7 +164,7 @@ pub async fn sign_eddsa_coordinator(
         cs_participants,
         me.into(),
         derived_keygen_output,
-        msg_hash.to_vec(),
+        message,
     )?;
 
     let signature = run_protocol("sign_eddsa_coordinator", channel, me, protocol).await?;
@@ -177,16 +176,15 @@ pub async fn sign_eddsa_participant(
     channel: NetworkTaskChannel,
     me: ParticipantId,
     keygen_output: frost::KeygenOutput,
-    msg_hash: [u8; 32],
+    message: Vec<u8>,
     tweak: [u8; 32],
-    entropy: [u8; 32],
 ) -> anyhow::Result<()> {
     let derived_keygen_output = frost::kdf::derive_keygen_output(&keygen_output, tweak);
 
     let protocol = frost::sign_passive(
         OsRng,
         derived_keygen_output,
-        msg_hash.to_vec(),
+        message,
     )?;
 
     run_protocol("sign_eddsa_passive", channel, me, protocol).await?;

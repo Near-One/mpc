@@ -178,7 +178,7 @@ impl MpcClient {
                                 } => {
                                     // TODO(#69): decide a better timeout for this
                                     let SignatureRequest {
-                                        msg_hash,
+                                        message,
                                         tweak,
                                         entropy,
                                         ..
@@ -196,13 +196,16 @@ impl MpcClient {
                                                     channel,
                                                     client.my_participant_id(),
                                                     root_keyshare.eddsa.clone().into(),
-                                                    msg_hash,
+                                                    message,
                                                     tweak,
-                                                    entropy,
                                                 )
                                             ).await??;
                                         }
                                         MpcTaskSignatureType::ECDSA { presignature_id } => {
+                                            let msg_hash: [u8; 32] = hex::decode(message)?
+                                                .try_into()
+                                                .map_err(|_| anyhow::anyhow!("Decoded hex message expected to be exactly 32 bytes long"))?;
+
                                             timeout(
                                                 Duration::from_secs(config.signature.timeout_sec),
                                                 sign_ecdsa(
@@ -229,79 +232,6 @@ impl MpcClient {
                 }
             })
         };
-
-        // let monitor_chain = {
-        //     let this = Arc::new(self.clone());
-        //     let config = self.config.clone();
-        //     let network_client = self.client.clone();
-        //     tracking::spawn("monitor chain", async move {
-        //         let mut tasks = AutoAbortTaskCollection::new();
-        //         loop {
-        //             let this = this.clone();
-        //             let config = config.clone();
-        //             let sign_request_store = self.sign_request_store.clone();
-        //             let sign_response_sender = sign_response_sender.clone();
-        // 
-        //             let ChainSignatureRequest {
-        //                 request_id,
-        //                 request,
-        //                 predecessor_id,
-        //                 entropy,
-        //                 timestamp_nanosec,
-        //             } = sign_request_receiver.recv().await.unwrap();
-        // 
-        //             let alive_participants = network_client.all_alive_participant_ids();
-        // 
-        //             tasks.spawn_checked(
-        //                 &format!("indexed sign request {:?}", request_id),
-        //                 async move {
-        //                     let request = SignatureRequest {
-        //                         id: request_id,
-        //                         msg_hash: request.payload,
-        //                         tweak: derive_tweak(&predecessor_id, &request.path),
-        //                         entropy,
-        //                         timestamp_nanosec,
-        //                         key_type: (),
-        //                     };
-        // 
-        //                     // Check if we've already seen this request
-        //                     if !sign_request_store.add(&request) {
-        //                         return anyhow::Ok(());
-        //                     }
-        // 
-        //                     let (primary_leader, secondary_leader) =
-        //                         compute_leaders_for_signing(&config.mpc, &request);
-        //                     // start the signing process if we are the primary leader or if we are the secondary leader
-        //                     // and the primary leader is not alive
-        //                     if config.mpc.my_participant_id == primary_leader
-        //                         || (config.mpc.my_participant_id == secondary_leader
-        //                             && !alive_participants.contains(&primary_leader))
-        //                     {
-        //                         metrics::MPC_NUM_SIGN_REQUESTS_LEADER
-        //                             .with_label_values(&["total"])
-        //                             .inc();
-        // 
-        //                         let (signature, public_key) = timeout(
-        //                             Duration::from_secs(config.signature.timeout_sec),
-        //                             this.clone().make_signature(request.id),
-        //                         )
-        //                         .await??;
-        // 
-        //                         metrics::MPC_NUM_SIGN_REQUESTS_LEADER
-        //                             .with_label_values(&["succeeded"])
-        //                             .inc();
-        // 
-        //                         let response =
-        //                             ChainRespondArgs::new(&request, &signature, &public_key)?;
-        //                         let _ = sign_response_sender.send(response).await;
-        //                     }
-        // 
-        //                     anyhow::Ok(())
-        //                 },
-        //             );
-        //         }
-        //     })
-        // };
 
         let generate_triples = tracking::spawn(
             "generate triples",
@@ -353,6 +283,10 @@ impl MpcClient {
         self: Arc<Self>,
         sign_request: SignatureRequest,
     ) -> anyhow::Result<SignatureResult> {
+        let message: [u8; 32] = hex::decode(&sign_request.message)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Decoded hex message expected to be exactly 32 bytes long"))?;
+
         let (presignature_id, presignature) = self
             .presignature_store
             .take_owned(&self.client.all_alive_participant_ids())
@@ -369,7 +303,7 @@ impl MpcClient {
             self.client.my_participant_id(),
             self.root_keyshare.ecdsa.keygen_output(),
             presignature.presignature,
-            sign_request.msg_hash,
+            message,
             sign_request.tweak,
             sign_request.entropy,
         )
@@ -415,9 +349,8 @@ impl MpcClient {
             channel,
             self.config.mpc.my_participant_id,
             self.root_keyshare.eddsa.clone().into(),
-            sign_request.msg_hash,
+            sign_request.message,
             sign_request.tweak,
-            sign_request.entropy,
         )
             .await?;
 

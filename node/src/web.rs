@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for KeyType {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UserSignatureRequest {
     pub uid: String,
-    pub message: k256::Scalar,
+    pub message: Vec<u8>,
     pub proof: ProofModel,
     pub key_type: KeyType
 }
@@ -144,7 +144,7 @@ async fn announce_signature_to_us(
     let tweak = from_uid_to_scalar(&index_request.user_signature_request.uid);
     client.add_sign_request(&SignatureRequest {
         id: index_request.id,
-        msg_hash: index_request.user_signature_request.message.to_bytes().try_into().unwrap(),
+        message: index_request.user_signature_request.message,
         tweak,
         entropy: index_request.entropy,
         timestamp_nanosec: 0,
@@ -226,7 +226,7 @@ async fn validate(
         .clone()
         .get_validation().verify(
         user_signature_request.uid,
-        hex::encode(user_signature_request.message.to_bytes()),
+        hex::encode(&user_signature_request.message),
         user_signature_request.proof,
     )
         .await?;
