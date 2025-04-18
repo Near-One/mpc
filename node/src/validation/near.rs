@@ -191,7 +191,7 @@ impl ThresholdVerifier for NearThresholdVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validation::{uid_to_wallet_id, WalletAccessModel};
+    use crate::validation::{uid_to_wallet_id, WalletAccessModel, NEAR_CHAIN_ID};
 
     #[tokio::test]
     async fn near_single_verifier() {
@@ -342,7 +342,7 @@ mod tests {
             access_list: vec![WalletAccessModel {
                 account_id: "keys.auth.hot.tg".to_string(),
                 metadata: None,
-                chain_id: 0,
+                chain_id: NEAR_CHAIN_ID,
             }],
             key_gen: 1,
             block_height: 0,
@@ -371,7 +371,7 @@ mod tests {
             access_list: vec![WalletAccessModel {
                 account_id: "keys.auth.hot.tg".to_string(),
                 metadata: None,
-                chain_id: 0,
+                chain_id: NEAR_CHAIN_ID,
             }],
             key_gen: 1,
             block_height: 0,
@@ -406,7 +406,7 @@ mod tests {
             access_list: vec![WalletAccessModel {
                 account_id: "keys.auth.hot.tg".to_string(),
                 metadata: None,
-                chain_id: 0,
+                chain_id: NEAR_CHAIN_ID,
             }],
             key_gen: 1,
             block_height: 0,
@@ -454,7 +454,7 @@ mod tests {
             access_list: vec![WalletAccessModel {
                 account_id: "keys.auth.hot.tg".to_string(),
                 metadata: None,
-                chain_id: 0,
+                chain_id: NEAR_CHAIN_ID,
             }],
             key_gen: 1,
             block_height: 0,

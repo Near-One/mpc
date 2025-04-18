@@ -32,12 +32,12 @@ validation:
       - "https://rpc.mainnet.near.org"
       - "https://rpc.near.org"
       - "https://nearrpc.aurora.dev"
-  base:
-    threshold: 1
-    servers:
-      - "http://helios-base:8545"
-  eth:
-    threshold: 1
-    servers:
-      - "http://helios-eth:8545"
-
+  evm:
+    1:
+      threshold: 1
+      servers:
+        - "http://helios-eth:8545"
+    8453:
+      threshold: 1
+      servers:
+        - "http://helios-base:8545"

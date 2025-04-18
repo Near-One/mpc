@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::config::{
     load_config_file, ConfigFile, IndexerConfig, PresignatureConfig, SignatureConfig, SyncMode,
     TripleConfig, ValidationConfig, WebUIConfig,
@@ -240,8 +241,7 @@ impl Cli {
                     let validation = Arc::new(Validation::new(
                         web_client.clone(),
                         validation_config.near,
-                        validation_config.base,
-                        validation_config.eth,
+                        validation_config.evm
                     ));
                     let config = Arc::new(config);
                     let mpc_client = MpcClient::new(
@@ -414,14 +414,7 @@ impl Cli {
                                 threshold: 0,
                                 servers: vec![],
                             },
-                            base: ChainValidationConfig {
-                                threshold: 0,
-                                servers: vec![],
-                            },
-                            eth: ChainValidationConfig {
-                                threshold: 0,
-                                servers: vec![],
-                            },
+                            evm: HashMap::from([]),
                         },
                     };
                     std::fs::write(

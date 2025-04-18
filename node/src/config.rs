@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 pub use crate::primitives::ParticipantId;
-use crate::validation::ChainValidationConfig;
+use crate::validation::{ChainId, ChainValidationConfig};
 use anyhow::Context;
 use near_crypto::PublicKey;
 use near_indexer_primitives::types::AccountId;
@@ -139,8 +140,7 @@ fn near_account_id_from_env() -> AccountId {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValidationConfig {
     pub near: ChainValidationConfig,
-    pub base: ChainValidationConfig,
-    pub eth: ChainValidationConfig,
+    pub evm: HashMap<ChainId, ChainValidationConfig>,
 }
 
 impl ConfigFile {

@@ -1,6 +1,7 @@
 mod evm;
 mod near;
 
+use std::collections::HashMap;
 use crate::validation::evm::EvmThresholdVerifier;
 use crate::validation::near::NearThresholdVerifier;
 use anyhow::{bail, Result};
@@ -20,22 +21,9 @@ pub(crate) const HOT_VERIFY_METHOD_NAME: &str = "hot_verify";
 pub(crate) const MPC_HOT_WALLET_CONTRACT: &str = "mpc.hot.tg";
 pub(crate) const MPC_GET_WALLET_METHOD: &str = "get_wallet";
 
-enum Chain {
-    Near,
-    Ethereum,
-    Base,
-}
-
-impl Chain {
-    fn from_usize(x: usize) -> Option<Chain> {
-        match x {
-            0 => Some(Chain::Near),
-            1 => Some(Chain::Ethereum),
-            8453 => Some(Chain::Base),
-            _ => None,
-        }
-    }
-}
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Eq, Hash)]
+pub struct ChainId(u64);
+const NEAR_CHAIN_ID: ChainId = ChainId(0);
 
 /// Arguments for `get_wallet` method on Near `mpc.hot.tg` smart contract.
 #[derive(Debug, Serialize)]
@@ -80,7 +68,7 @@ pub struct WalletModel {
 pub struct WalletAccessModel {
     pub account_id: String,
     pub metadata: Option<String>,
-    pub chain_id: usize,
+    pub chain_id: ChainId,
 }
 
 #[async_trait]
@@ -124,10 +112,16 @@ pub(crate) trait ThresholdVerifier {
     }
 }
 
+pub(crate) fn uid_to_wallet_id(uid: &str) -> Result<String> {
+    let uid_bytes = hex::decode(uid)?;
+    let sha256_bytes = Sha256::new_with_prefix(uid_bytes).finalize();
+    let uid_b58 = bs58::encode(sha256_bytes.as_slice()).into_string();
+    Ok(uid_b58)
+}
+
 pub struct Validation {
     near_validation: NearThresholdVerifier,
-    base_validation: EvmThresholdVerifier,
-    eth_validation: EvmThresholdVerifier,
+    evm_validation: HashMap<ChainId, EvmThresholdVerifier>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -136,33 +130,33 @@ pub struct ChainValidationConfig {
     pub servers: Vec<String>,
 }
 
-pub(crate) fn uid_to_wallet_id(uid: &str) -> Result<String> {
-    let uid_bytes = hex::decode(uid)?;
-    let sha256_bytes = Sha256::new_with_prefix(uid_bytes).finalize();
-    let uid_b58 = bs58::encode(sha256_bytes.as_slice()).into_string();
-    Ok(uid_b58)
-}
-
 impl Validation {
     pub fn new(
         client: Arc<reqwest::Client>,
         near_validation_config: ChainValidationConfig,
-        base_validation_config: ChainValidationConfig,
-        eth_validation_config: ChainValidationConfig,
+        evm_validation_config: HashMap<ChainId, ChainValidationConfig>,
     ) -> Self {
         let near_validation = NearThresholdVerifier::new(near_validation_config, client.clone());
 
-        let contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
-        let base_validation =
-            EvmThresholdVerifier::new(base_validation_config, client.clone(), contract.clone());
+        let contract = Arc::new(
+            Contract::load(HOT_VERIFY_ABI.as_bytes())
+                .expect("Couldn't load evm contract schema")
+        );
 
-        let eth_validation =
-            EvmThresholdVerifier::new(eth_validation_config, client.clone(), contract.clone());
+        let evm_validation = evm_validation_config
+            .into_iter()
+            .map(|(id, config)| {
+                let threshold_verifier = EvmThresholdVerifier::new(
+                    config,
+                    client.clone(),
+                    contract.clone()
+                );
+                (id, threshold_verifier)
+            }).collect();
 
         Self {
             near_validation,
-            base_validation,
-            eth_validation,
+            evm_validation
         }
     }
 
@@ -207,53 +201,40 @@ impl Validation {
         message_hex: String,
         user_payload: String,
     ) -> Result<()> {
-        if let Some(chain) = Chain::from_usize(wallet_access.chain_id) {
-            match chain {
-                Chain::Near => {
-                    let message_bs58 = hex::decode(&message_hex)
-                        .map(|message_bytes| bs58::encode(message_bytes).into_string())?;
+        if wallet_access.chain_id == NEAR_CHAIN_ID {
+            let message_bs58 = hex::decode(&message_hex)
+                .map(|message_bytes| bs58::encode(message_bytes).into_string())?;
 
-                    let verify_args = VerifyArgs {
-                        wallet_id: Some(wallet_id),
-                        msg_hash: message_bs58,
-                        metadata: wallet_access.metadata.clone(),
-                        user_payload,
-                        msg_body: message_body,
-                    };
-                    self.near_validation
-                        .verify(wallet_access.account_id.as_str(), verify_args)
-                        .await?
-                }
-                Chain::Ethereum => {
-                    let verify_args = VerifyArgs {
-                        wallet_id: Some(wallet_id),
-                        msg_hash: message_hex,
-                        metadata: wallet_access.metadata.clone(),
-                        user_payload,
-                        msg_body: message_body,
-                    };
-                    self.eth_validation
-                        .verify(wallet_access.account_id.as_str(), verify_args)
-                        .await?
-                }
-                Chain::Base => {
-                    let verify_args = VerifyArgs {
-                        wallet_id: Some(wallet_id),
-                        msg_hash: message_hex,
-                        metadata: wallet_access.metadata.clone(),
-                        user_payload,
-                        msg_body: message_body,
-                    };
-                    self.base_validation
-                        .verify(wallet_access.account_id.as_str(), verify_args)
-                        .await?
-                }
+            let verify_args = VerifyArgs {
+                wallet_id: Some(wallet_id),
+                msg_hash: message_bs58,
+                metadata: wallet_access.metadata.clone(),
+                user_payload,
+                msg_body: message_body,
             };
-
-            Ok(())
+            self.near_validation
+                .verify(wallet_access.account_id.as_str(), verify_args)
+                .await?
         } else {
-            bail!("Unexpected chain id: {}", wallet_access.chain_id);
+            let verify_args = VerifyArgs {
+                wallet_id: Some(wallet_id),
+                msg_hash: message_hex,
+                metadata: wallet_access.metadata.clone(),
+                user_payload,
+                msg_body: message_body,
+            };
+            let validation = self
+                .evm_validation
+                .get(&wallet_access.chain_id)
+                .ok_or(anyhow::anyhow!(
+                    "EVM validation is not configured for chain {:?}",
+                    wallet_access.chain_id
+                ))?;
+            validation
+                .verify(wallet_access.account_id.as_str(), verify_args)
+                .await?
         }
+        Ok(())
     }
 }
 
@@ -262,31 +243,36 @@ mod tests {
     use super::*;
 
     fn create_validation_object() -> Validation {
-        Validation::new(
-            Arc::new(reqwest::Client::new()),
-            ChainValidationConfig {
-                threshold: 2,
+        let near_validation_config = ChainValidationConfig {
+            threshold: 2,
+            servers: vec![
+                "https://rpc.mainnet.near.org".to_string(),
+                "https://rpc.near.org".to_string(),
+                "https://nearrpc.aurora.dev".to_string(),
+            ],
+        };
+
+        let evm_validation_config = HashMap::from([
+            (ChainId(1), ChainValidationConfig {
+                threshold: 1,
                 servers: vec![
-                    "https://rpc.mainnet.near.org".to_string(),
-                    "https://rpc.near.org".to_string(),
-                    "https://nearrpc.aurora.dev".to_string(),
+                    "https://eth.drpc.org".to_string(),
+                    "http://bad-rpc:8545".to_string(),
                 ],
-            },
-            ChainValidationConfig {
+            }),
+            (ChainId(8453), ChainValidationConfig {
                 threshold: 1,
                 servers: vec![
                     "https://base-rpc.publicnode.com".to_string(),
-                    "http://localhost:8545".to_string(),
                     "http://bad-rpc:8545".to_string(),
                 ],
-            },
-            ChainValidationConfig {
-                threshold: 1,
-                servers: vec![
-                    "http://localhost:8546".to_string(),
-                    "http://bad-rpc:8546".to_string(),
-                ],
-            },
+            }),
+        ]);
+
+        Validation::new(
+            Arc::new(reqwest::Client::new()),
+            near_validation_config,
+            evm_validation_config,
         )
     }
 

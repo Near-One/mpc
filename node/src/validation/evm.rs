@@ -37,11 +37,11 @@ impl RpcRequest {
 struct EvmSingleVerifier {
     client: Arc<reqwest::Client>,
     server: String,
-    contract: Contract,
+    contract: Arc<Contract>,
 }
 
 impl EvmSingleVerifier {
-    pub fn new(client: Arc<reqwest::Client>, server: String, contract: Contract) -> Self {
+    pub fn new(client: Arc<reqwest::Client>, server: String, contract: Arc<Contract>) -> Self {
         Self {
             client,
             server,
@@ -125,7 +125,7 @@ impl EvmThresholdVerifier {
     pub fn new(
         validation_config: ChainValidationConfig,
         client: Arc<reqwest::Client>,
-        contract: Contract,
+        contract: Arc<Contract>,
     ) -> Self {
         let threshold = validation_config.threshold;
         let servers = validation_config.servers;
@@ -162,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn base_single_verifier() {
-        let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let evm_hot_verify_contract = Arc::new(Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap());
         let args = VerifyArgs {
             msg_body: "".to_string(),
             wallet_id: None,
@@ -182,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn base_single_verifier_non_trivial_message() {
-        let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let evm_hot_verify_contract = Arc::new(Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap());
         let args = VerifyArgs {
             msg_body: "".to_string(),
             wallet_id: None,
@@ -203,7 +203,7 @@ mod tests {
     #[should_panic]
     #[tokio::test]
     async fn base_single_verifier_wrong_message() {
-        let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let evm_hot_verify_contract = Arc::new(Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap());
         let args = VerifyArgs {
             msg_body: "".to_string(),
             wallet_id: None,
@@ -223,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn base_threshold_verifier() {
-        let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let evm_hot_verify_contract = Arc::new(Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap());
         let args = VerifyArgs {
             msg_body: "".to_string(),
             wallet_id: None,
@@ -251,7 +251,7 @@ mod tests {
 
     #[tokio::test]
     async fn base_threshold_verifier_with_bad_rpcs() {
-        let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let evm_hot_verify_contract = Arc::new(Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap());
         let args = VerifyArgs {
             msg_body: "".to_string(),
             wallet_id: None,
@@ -285,7 +285,7 @@ mod tests {
     #[should_panic]
     #[tokio::test]
     async fn base_threshold_verifier_all_rpcs_bad() {
-        let evm_hot_verify_contract = Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap();
+        let evm_hot_verify_contract = Arc::new(Contract::load(HOT_VERIFY_ABI.as_bytes()).unwrap());
         let args = VerifyArgs {
             msg_body: "".to_string(),
             wallet_id: None,
