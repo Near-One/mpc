@@ -197,6 +197,8 @@ impl MpcClient {
                                     )
                                     .await??;
 
+                                    let message = hex::decode(&message)?;
+
                                     match signature_type {
                                         MpcTaskSignatureType::Eddsa => {
                                             timeout(
@@ -211,7 +213,7 @@ impl MpcClient {
                                             ).await??;
                                         }
                                         MpcTaskSignatureType::Ecdsa { presignature_id } => {
-                                            let msg_hash: [u8; 32] = hex::decode(message)?
+                                            let msg_hash: [u8; 32] = message
                                                 .try_into()
                                                 .map_err(|_| anyhow::anyhow!("Decoded hex message expected to be exactly 32 bytes long"))?;
 
@@ -334,6 +336,7 @@ impl MpcClient {
             id: sign_request.id,
             signature_type: MpcTaskSignatureType::Eddsa,
         };
+        let message = hex::decode(&sign_request.message)?;
 
         //
 
@@ -360,7 +363,7 @@ impl MpcClient {
             channel,
             self.config.mpc.my_participant_id,
             self.root_keyshare.eddsa.clone().into(),
-            sign_request.message,
+            message,
             sign_request.tweak,
         )
         .await?;

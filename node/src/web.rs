@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for KeyType {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UserSignatureRequest {
     pub uid: String,
-    pub message: Vec<u8>,
+    pub message: String,
     pub proof: ProofModel,
     pub key_type: KeyType,
 }
@@ -219,7 +219,7 @@ async fn validate(
         .get_validation()
         .verify(
             user_signature_request.uid,
-            hex::encode(&user_signature_request.message),
+            user_signature_request.message,
             user_signature_request.proof,
         )
         .await?;

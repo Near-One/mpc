@@ -11,7 +11,7 @@ pub type SignatureId = [u8; 32];
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignatureRequest {
     pub id: SignatureId,
-    pub message: Vec<u8>,
+    pub message: String,
     pub tweak: [u8; 32],
     pub entropy: [u8; 32],
     pub timestamp_nanosec: u64,
