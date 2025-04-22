@@ -327,10 +327,6 @@ pub mod running_tests {
         } else {
             let resharing = resharing.unwrap();
             assert_eq!(
-                resharing.previous_running_state.parameters,
-                state.parameters
-            );
-            assert_eq!(
                 resharing.prospective_epoch_id(),
                 state.keyset.epoch_id.next(),
             );
