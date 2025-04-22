@@ -2,6 +2,7 @@
 name = "mpc-node"
 version = "2.0.0-rc.1"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 actix = "0.13.0"
