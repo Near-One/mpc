@@ -1,7 +1,5 @@
 use super::key_event::KeyEvent;
-use super::running::RunningContractState;
-use crate::crypto_shared::types::PublicKeyExtended;
-use crate::errors::{Error, InvalidParameters};
+use crate::errors::Error;
 use crate::legacy_contract_state;
 use crate::primitives::domain::DomainRegistry;
 use crate::primitives::key_state::{EpochId, KeyEventId, KeyForDomain, Keyset};
@@ -41,35 +39,6 @@ impl ResharingContractState {
     /// This would increment if we end up voting for a re-proposal.
     pub fn prospective_epoch_id(&self) -> EpochId {
         self.resharing_key.epoch_id()
-    }
-
-    /// Casts a vote for a re-proposal. Requires the signer to be an original participant from the
-    /// previous running state. If this exceeds the threshold (from the previous running state),
-    /// returns a new ResharingContractState that we should transition into.
-    pub fn vote_new_parameters(
-        &mut self,
-        previous_running_state: &mut RunningContractState,
-        prospective_epoch_id: EpochId,
-        proposal: &ThresholdParameters,
-    ) -> Result<Option<ResharingContractState>, Error> {
-        if prospective_epoch_id != self.prospective_epoch_id().next() {
-            return Err(InvalidParameters::EpochMismatch.into());
-        }
-        if previous_running_state.process_new_parameters_proposal(proposal)? {
-            return Ok(Some(ResharingContractState {
-                reshared_keys: Vec::new(),
-                resharing_key: KeyEvent::new(
-                    self.prospective_epoch_id().next(),
-                    previous_running_state
-                        .domains
-                        .get_domain_by_index(0)
-                        .unwrap()
-                        .clone(),
-                    proposal.clone(),
-                ),
-            }));
-        }
-        Ok(None)
     }
 
     /// Starts a new attempt to reshare the key for the current domain.
@@ -177,6 +146,8 @@ mod tests {
 
     fn test_resharing_contract_state_for(num_domains: usize) {
         println!("Testing with {} domains", num_domains);
+        let running_state = gen_running_state(num_domains);
+
         let (mut env, mut state) = gen_resharing_state(num_domains);
         let candidates: BTreeSet<AccountId> = state
             .resharing_key

@@ -123,10 +123,6 @@ impl MpcContract {
             .start_reshare_instance(key_event_id, self.config.key_event_timeout_blocks)
     }
 
-    pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
-        self.protocol_state.vote_reshared(key_event_id)
-    }
-
     pub fn vote_pk(
         &mut self,
         key_event_id: KeyEventId,
@@ -163,13 +159,8 @@ impl MpcContract {
         prospective_epoch_id: EpochId,
         proposal: &ThresholdParameters,
     ) -> Result<(), Error> {
-        if let Some(new_state) = self
-            .protocol_state
-            .vote_new_parameters(prospective_epoch_id, proposal)?
-        {
-            self.protocol_state = new_state;
-        }
-        Ok(())
+        self.protocol_state
+            .vote_new_parameters(prospective_epoch_id, proposal)
     }
 
     pub fn vote_add_domains(&mut self, domains: Vec<DomainConfig>) -> Result<(), Error> {
@@ -564,9 +555,9 @@ impl VersionedMpcContract {
             env::signer_account_id(),
             key_event_id,
         );
-        match self {
-            Self::V0(contract_state) => contract_state.vote_reshared(key_event_id),
-        }
+        let Self::V0(contract_state) = self;
+
+        contract_state.protocol_state.vote_reshared(key_event_id)
     }
 
     /// Casts a vote to cancel key generation. Any keys that have already been generated

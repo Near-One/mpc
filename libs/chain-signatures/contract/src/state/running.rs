@@ -82,41 +82,8 @@ impl RunningContractState {
         if prospective_epoch_id != self.keyset.epoch_id.next() {
             return Err(InvalidParameters::EpochMismatch.into());
         }
-        if self.process_new_parameters_proposal(proposal)? {
-            if let Some(first_domain) = self.domains.get_domain_by_index(0) {
-                return Ok(Some(ResharingContractState {
-                    previous_running_state: RunningContractState::new(
-                        self.domains.clone(),
-                        self.keyset.clone(),
-                        self.parameters.clone(),
-                    ),
-                    reshared_keys: Vec::new(),
-                    resharing_key: KeyEvent::new(
-                        self.keyset.epoch_id.next(),
-                        first_domain.clone(),
-                        proposal.clone(),
-                    ),
-                }));
-            } else {
-                // A new ThresholdParameters was proposed, but we have no keys, so directly
-                // transition into Running state but bump the EpochId.
-                *self = RunningContractState::new(
-                    self.domains.clone(),
-                    Keyset::new(self.keyset.epoch_id.next(), Vec::new()),
-                    proposal.clone(),
-                );
-            }
-        }
-        Ok(None)
-    }
+        let first_domain = self.domains.get_domain_by_index(0);
 
-    /// Casts a vote for `proposal`, removing any previous votes by `env::signer_account_id()`.
-    /// Fails if the proposal is invalid or the signer is not a participant.
-    /// Returns true if the proposal reached `threshold` number of votes.
-    pub(super) fn process_new_parameters_proposal(
-        &mut self,
-        proposal: &ThresholdParameters,
-    ) -> Result<bool, Error> {
         // ensure the signer is a participant
         let participant = AuthenticatedParticipantId::new(self.parameters.participants())?;
 
@@ -125,7 +92,41 @@ impl RunningContractState {
 
         // finally, vote. Propagate any errors
         let n_votes = self.parameters_votes.vote(proposal, &participant);
-        Ok(self.parameters.threshold().value() <= n_votes)
+
+        enum ProposalVoteStatus {
+            ProposalAccepted,
+            ProposalCandidate,
+        }
+
+        let proposal_status = match self.parameters.threshold().value() <= n_votes {
+            true => ProposalVoteStatus::ProposalAccepted,
+            false => ProposalVoteStatus::ProposalCandidate,
+        };
+
+        match (proposal_status, first_domain) {
+            (ProposalVoteStatus::ProposalAccepted, Some(first_domain)) => {
+                return Ok(Some(ResharingContractState {
+                    reshared_keys: Vec::new(),
+                    resharing_key: KeyEvent::new(
+                        self.keyset.epoch_id.next(),
+                        first_domain.clone(),
+                        proposal.clone(),
+                    ),
+                }));
+            }
+            // A new ThresholdParameters was proposed, but we have no keys, so directly
+            // transition into Running state but bump the EpochId.
+            (ProposalVoteStatus::ProposalAccepted, None) => {
+                *self = RunningContractState::new(
+                    self.domains.clone(),
+                    Keyset::new(self.keyset.epoch_id.next(), Vec::new()),
+                    proposal.clone(),
+                );
+            }
+            _ => {}
+        }
+
+        Ok(None)
     }
 
     /// Casts a vote for the signer participant to add new domains, replacing any previous vote.
@@ -157,6 +158,16 @@ impl RunningContractState {
         } else {
             Ok(None)
         }
+    }
+
+    pub(super) fn successful_key_resharing(
+        &mut self,
+        new_keyset: Keyset,
+        new_threshold_parameters: ThresholdParameters,
+    ) {
+        self.keyset = new_keyset;
+        self.parameters = new_threshold_parameters;
+        self.resharing_process = None;
     }
 }
 

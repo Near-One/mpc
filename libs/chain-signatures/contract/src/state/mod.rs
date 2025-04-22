@@ -5,7 +5,6 @@ pub mod running;
 
 use crate::crypto_shared::types::PublicKeyExtended;
 use crate::errors::{DomainError, Error, InvalidState};
-use crate::primitives::key_state::Keyset;
 use crate::primitives::{
     domain::{DomainConfig, DomainId, DomainRegistry, SignatureScheme},
     key_state::{AuthenticatedParticipantId, EpochId, KeyEventId},
@@ -13,7 +12,6 @@ use crate::primitives::{
 };
 use initializing::InitializingContractState;
 use near_sdk::near;
-use resharing::ResharingContractState;
 use running::RunningContractState;
 
 #[near(serializers=[borsh, json])]
@@ -77,25 +75,26 @@ impl ProtocolContractState {
 
         resharing_process.start(key_event_id, key_event_timeout_blocks)
     }
-    pub fn vote_reshared(
-        &mut self,
-        key_event_id: KeyEventId,
-    ) -> Result<Option<(Keyset, ThresholdParameters)>, Error> {
-        let ProtocolContractState::Running(RunningContractState {
-            resharing_process,
-            keyset,
-            domains,
-            ..
-        }) = self
-        else {
+    pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
+        let ProtocolContractState::Running(running_protocol_state) = self else {
             return Err(InvalidState::ProtocolStateNotRunning.into());
         };
 
-        let Some(resharing_process) = resharing_process else {
+        let Some(resharing_process) = &mut running_protocol_state.resharing_process else {
             return Err(InvalidState::ProtocolRunningStateIsNotResharing.into());
         };
 
-        resharing_process.vote_reshared(key_event_id, keyset, domains)
+        let state = resharing_process.vote_reshared(
+            key_event_id,
+            &running_protocol_state.keyset,
+            &running_protocol_state.domains,
+        )?;
+
+        if let Some((new_keyset, new_threshold_parameters)) = state {
+            running_protocol_state.successful_key_resharing(new_keyset, new_threshold_parameters)
+        }
+
+        Ok(())
     }
     /// Casts a vote for `public_key` in `key_event_id` during Initializtion.
     /// Fails if the protocol is not in `Initializing` state.
@@ -112,9 +111,10 @@ impl ProtocolContractState {
             .vote_pk(key_event_id, public_key)
             .map(|x| x.map(ProtocolContractState::Running))
     }
-    /// Casts a vote for `proposed_parameters`, returning the new protocol state if the proposal is
+
+    /// Casts a vote for `proposed_parameters`, returns [`Ok`] the new protocol state if the proposal is
     /// accepted.
-    /// Returns an error if the protocol is not in running resharing.
+    /// Returns an error if the protocol is not in running state.
     pub fn vote_new_parameters(
         &mut self,
         prospective_epoch_id: EpochId,
@@ -147,8 +147,11 @@ impl ProtocolContractState {
 
     pub fn vote_abort_key_event_instance(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
         match self {
-            ProtocolContractState::Resharing(state) => state.vote_abort(key_event_id),
             ProtocolContractState::Initializing(state) => state.vote_abort(key_event_id),
+            ProtocolContractState::Running(RunningContractState {
+                resharing_process: Some(resharing_process),
+                ..
+            }) => resharing_process.vote_abort(key_event_id),
             _ => Err(InvalidState::ProtocolStateNotRunning.into()),
         }
     }
@@ -187,8 +190,8 @@ impl From<&super::legacy_contract_state::ProtocolContractState> for ProtocolCont
             super::legacy_contract_state::ProtocolContractState::Running(state) => {
                 ProtocolContractState::Running(state.into())
             }
-            super::legacy_contract_state::ProtocolContractState::Resharing(state) => {
-                ProtocolContractState::Resharing(state.into())
+            super::legacy_contract_state::ProtocolContractState::Resharing(_) => {
+                unimplemented!("Migration of running state will not happen.")
             }
         }
     }
@@ -200,7 +203,6 @@ impl ProtocolContractState {
             ProtocolContractState::NotInitialized => "NotInitialized",
             ProtocolContractState::Initializing(_) => "Initializing",
             ProtocolContractState::Running(_) => "Running",
-            ProtocolContractState::Resharing(_) => "Resharing",
         }
     }
     pub fn is_running(&self) -> bool {
@@ -218,11 +220,6 @@ impl ProtocolContractState {
             }
             ProtocolContractState::Running(state) => {
                 AuthenticatedParticipantId::new(state.parameters.participants())?;
-            }
-            ProtocolContractState::Resharing(state) => {
-                AuthenticatedParticipantId::new(
-                    state.previous_running_state.parameters.participants(),
-                )?;
             }
             ProtocolContractState::NotInitialized => {
                 return Err(InvalidState::UnexpectedProtocolState.message(self.name()));
