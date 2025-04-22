@@ -5,6 +5,7 @@ pub mod running;
 
 use crate::crypto_shared::types::PublicKeyExtended;
 use crate::errors::{DomainError, Error, InvalidState};
+use crate::primitives::key_state::Keyset;
 use crate::primitives::{
     domain::{DomainConfig, DomainId, DomainRegistry, SignatureScheme},
     key_state::{AuthenticatedParticipantId, EpochId, KeyEventId},
@@ -22,15 +23,14 @@ pub enum ProtocolContractState {
     NotInitialized,
     Initializing(InitializingContractState),
     Running(RunningContractState),
-    Resharing(ResharingContractState),
+    // Resharing(ResharingContractState),
 }
 
 impl ProtocolContractState {
     pub fn domain_registry(&self) -> Result<&DomainRegistry, Error> {
         let domain_registry = match self {
             ProtocolContractState::Running(state) => &state.domains,
-            ProtocolContractState::Resharing(state) => &state.previous_running_state.domains,
-            _ => return Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
+            _ => return Err(InvalidState::ProtocolStateNotRunning.into()),
         };
 
         Ok(domain_registry)
@@ -38,10 +38,7 @@ impl ProtocolContractState {
     pub fn public_key(&self, domain_id: DomainId) -> Result<PublicKeyExtended, Error> {
         match self {
             ProtocolContractState::Running(state) => state.keyset.public_key(domain_id),
-            ProtocolContractState::Resharing(state) => {
-                state.previous_keyset().public_key(domain_id)
-            }
-            _ => Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
+            _ => Err(InvalidState::ProtocolStateNotRunning.into()),
         }
     }
     pub fn threshold(&self) -> Result<Threshold, Error> {
@@ -50,9 +47,6 @@ impl ProtocolContractState {
                 Ok(state.generating_key.proposed_parameters().threshold())
             }
             ProtocolContractState::Running(state) => Ok(state.parameters.threshold()),
-            ProtocolContractState::Resharing(state) => {
-                Ok(state.previous_running_state.parameters.threshold())
-            }
             ProtocolContractState::NotInitialized => {
                 Err(InvalidState::UnexpectedProtocolState.into())
             }
@@ -73,21 +67,35 @@ impl ProtocolContractState {
         key_event_id: KeyEventId,
         key_event_timeout_blocks: u64,
     ) -> Result<(), Error> {
-        let ProtocolContractState::Resharing(state) = self else {
-            return Err(InvalidState::ProtocolStateNotResharing.into());
+        let resharing_process = match self {
+            ProtocolContractState::Running(RunningContractState {
+                resharing_process: Some(resharing_process),
+                ..
+            }) => resharing_process,
+            _ => return Err(InvalidState::ProtocolStateNotRunning.into()),
         };
-        state.start(key_event_id, key_event_timeout_blocks)
+
+        resharing_process.start(key_event_id, key_event_timeout_blocks)
     }
     pub fn vote_reshared(
         &mut self,
         key_event_id: KeyEventId,
-    ) -> Result<Option<ProtocolContractState>, Error> {
-        let ProtocolContractState::Resharing(state) = self else {
-            return Err(InvalidState::ProtocolStateNotResharing.into());
+    ) -> Result<Option<(Keyset, ThresholdParameters)>, Error> {
+        let ProtocolContractState::Running(RunningContractState {
+            resharing_process,
+            keyset,
+            domains,
+            ..
+        }) = self
+        else {
+            return Err(InvalidState::ProtocolStateNotRunning.into());
         };
-        state
-            .vote_reshared(key_event_id)
-            .map(|x| x.map(ProtocolContractState::Running))
+
+        let Some(resharing_process) = resharing_process else {
+            return Err(InvalidState::ProtocolRunningStateIsNotResharing.into());
+        };
+
+        resharing_process.vote_reshared(key_event_id, keyset, domains)
     }
     /// Casts a vote for `public_key` in `key_event_id` during Initializtion.
     /// Fails if the protocol is not in `Initializing` state.
@@ -98,7 +106,7 @@ impl ProtocolContractState {
         public_key: PublicKeyExtended,
     ) -> Result<Option<ProtocolContractState>, Error> {
         let ProtocolContractState::Initializing(state) = self else {
-            return Err(InvalidState::ProtocolStateNotResharing.into());
+            return Err(InvalidState::ProtocolStateNotRunning.into());
         };
         state
             .vote_pk(key_event_id, public_key)
@@ -111,17 +119,19 @@ impl ProtocolContractState {
         &mut self,
         prospective_epoch_id: EpochId,
         proposed_parameters: &ThresholdParameters,
-    ) -> Result<Option<ProtocolContractState>, Error> {
-        match self {
-            ProtocolContractState::Running(state) => {
-                state.vote_new_parameters(prospective_epoch_id, proposed_parameters)
-            }
-            ProtocolContractState::Resharing(state) => {
-                state.vote_new_parameters(prospective_epoch_id, proposed_parameters)
-            }
-            _ => Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
+    ) -> Result<(), Error> {
+        let ProtocolContractState::Running(running_state) = self else {
+            return Err(InvalidState::ProtocolStateNotRunning.into());
+        };
+
+        let vote_outcome =
+            running_state.vote_new_parameters(prospective_epoch_id, proposed_parameters)?;
+
+        if let Some(vote_outcome) = vote_outcome {
+            running_state.resharing_process = Some(vote_outcome);
         }
-        .map(|x| x.map(ProtocolContractState::Resharing))
+
+        Ok(())
     }
 
     pub fn vote_add_domains(
@@ -139,7 +149,7 @@ impl ProtocolContractState {
         match self {
             ProtocolContractState::Resharing(state) => state.vote_abort(key_event_id),
             ProtocolContractState::Initializing(state) => state.vote_abort(key_event_id),
-            _ => Err(InvalidState::ProtocolStateNotRunningNorResharing.into()),
+            _ => Err(InvalidState::ProtocolStateNotRunning.into()),
         }
     }
 

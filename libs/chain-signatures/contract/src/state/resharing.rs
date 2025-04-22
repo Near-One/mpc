@@ -1,7 +1,9 @@
 use super::key_event::KeyEvent;
 use super::running::RunningContractState;
+use crate::crypto_shared::types::PublicKeyExtended;
 use crate::errors::{Error, InvalidParameters};
 use crate::legacy_contract_state;
+use crate::primitives::domain::DomainRegistry;
 use crate::primitives::key_state::{EpochId, KeyEventId, KeyForDomain, Keyset};
 use crate::primitives::thresholds::ThresholdParameters;
 use near_sdk::near;
@@ -23,7 +25,6 @@ use near_sdk::near;
 #[derive(Debug)]
 #[cfg_attr(feature = "dev-utils", derive(Clone))]
 pub struct ResharingContractState {
-    pub previous_running_state: RunningContractState,
     pub reshared_keys: Vec<KeyForDomain>,
     pub resharing_key: KeyEvent,
 }
@@ -36,10 +37,6 @@ impl From<&legacy_contract_state::ResharingContractState> for ResharingContractS
 }
 
 impl ResharingContractState {
-    pub fn previous_keyset(&self) -> &Keyset {
-        &self.previous_running_state.keyset
-    }
-
     /// Returns the epoch ID that we would transition into if resharing were completed successfully.
     /// This would increment if we end up voting for a re-proposal.
     pub fn prospective_epoch_id(&self) -> EpochId {
@@ -51,26 +48,19 @@ impl ResharingContractState {
     /// returns a new ResharingContractState that we should transition into.
     pub fn vote_new_parameters(
         &mut self,
+        previous_running_state: &mut RunningContractState,
         prospective_epoch_id: EpochId,
         proposal: &ThresholdParameters,
     ) -> Result<Option<ResharingContractState>, Error> {
         if prospective_epoch_id != self.prospective_epoch_id().next() {
             return Err(InvalidParameters::EpochMismatch.into());
         }
-        if self
-            .previous_running_state
-            .process_new_parameters_proposal(proposal)?
-        {
+        if previous_running_state.process_new_parameters_proposal(proposal)? {
             return Ok(Some(ResharingContractState {
-                previous_running_state: RunningContractState::new(
-                    self.previous_running_state.domains.clone(),
-                    self.previous_running_state.keyset.clone(),
-                    self.previous_running_state.parameters.clone(),
-                ),
                 reshared_keys: Vec::new(),
                 resharing_key: KeyEvent::new(
                     self.prospective_epoch_id().next(),
-                    self.previous_running_state
+                    previous_running_state
                         .domains
                         .get_domain_by_index(0)
                         .unwrap()
@@ -109,31 +99,29 @@ impl ResharingContractState {
     pub fn vote_reshared(
         &mut self,
         key_event_id: KeyEventId,
-    ) -> Result<Option<RunningContractState>, Error> {
-        let previous_key = self.previous_keyset().domains[self.reshared_keys.len()].clone();
+        keyset: &Keyset,
+        domains: &DomainRegistry,
+    ) -> Result<Option<(Keyset, ThresholdParameters)>, Error> {
+        let previous_key = keyset.domains[self.reshared_keys.len()].clone().key;
+
         if self
             .resharing_key
-            .vote_success(&key_event_id, previous_key.key.clone())?
+            .vote_success(&key_event_id, previous_key.clone())?
         {
             let new_key = KeyForDomain {
                 domain_id: key_event_id.domain_id,
                 attempt: key_event_id.attempt_id,
-                key: previous_key.key,
+                key: previous_key,
             };
             self.reshared_keys.push(new_key);
-            if let Some(next_domain) = self
-                .previous_running_state
-                .domains
-                .get_domain_by_index(self.reshared_keys.len())
-            {
+            if let Some(next_domain) = domains.get_domain_by_index(self.reshared_keys.len()) {
                 self.resharing_key = KeyEvent::new(
                     self.prospective_epoch_id(),
                     next_domain.clone(),
                     self.resharing_key.proposed_parameters().clone(),
                 );
             } else {
-                return Ok(Some(RunningContractState::new(
-                    self.previous_running_state.domains.clone(),
+                return Ok(Some((
                     Keyset::new(self.prospective_epoch_id(), self.reshared_keys.clone()),
                     self.resharing_key.proposed_parameters().clone(),
                 )));

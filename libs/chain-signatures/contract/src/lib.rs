@@ -124,10 +124,7 @@ impl MpcContract {
     }
 
     pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
-        if let Some(new_state) = self.protocol_state.vote_reshared(key_event_id)? {
-            self.protocol_state = new_state;
-        }
-        Ok(())
+        self.protocol_state.vote_reshared(key_event_id)
     }
 
     pub fn vote_pk(

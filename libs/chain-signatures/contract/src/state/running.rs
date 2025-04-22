@@ -36,6 +36,7 @@ pub struct RunningContractState {
     pub parameters_votes: ThresholdParametersVotes,
     /// Votes for proposals to add new domains.
     pub add_domains_votes: AddDomainsVotes,
+    pub resharing_process: Option<ResharingContractState>,
 }
 
 impl From<&legacy_contract_state::RunningContractState> for RunningContractState {
@@ -44,9 +45,9 @@ impl From<&legacy_contract_state::RunningContractState> for RunningContractState
             near_sdk::CurveType::ED25519 => unreachable!("Legacy contract does not have any ED25519 keys in its state. An EdwardsPoint can not be constructed within the max gas limit."),
             near_sdk::CurveType::SECP256K1 => PublicKeyExtended::Secp256k1 { near_public_key: state.public_key.clone() },
         };
-        RunningContractState {
-            domains: DomainRegistry::new_single_ecdsa_key_from_legacy(),
-            keyset: Keyset::new(
+        RunningContractState::new(
+            DomainRegistry::new_single_ecdsa_key_from_legacy(),
+            Keyset::new(
                 EpochId::new(state.epoch),
                 vec![KeyForDomain {
                     attempt: AttemptId::default(),
@@ -54,13 +55,8 @@ impl From<&legacy_contract_state::RunningContractState> for RunningContractState
                     key,
                 }],
             ),
-            parameters: ThresholdParameters::migrate_from_legacy(
-                state.threshold,
-                state.participants.clone(),
-            ),
-            parameters_votes: ThresholdParametersVotes::default(),
-            add_domains_votes: AddDomainsVotes::default(),
-        }
+            ThresholdParameters::migrate_from_legacy(state.threshold, state.participants.clone()),
+        )
     }
 }
 
@@ -72,6 +68,7 @@ impl RunningContractState {
             parameters,
             parameters_votes: ThresholdParametersVotes::default(),
             add_domains_votes: AddDomainsVotes::default(),
+            resharing_process: None,
         }
     }
 

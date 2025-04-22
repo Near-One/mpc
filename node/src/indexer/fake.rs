@@ -82,19 +82,10 @@ impl FakeMpcContractState {
     }
 
     pub fn start_resharing(&mut self, new_participants: ParticipantsConfig) {
-        let (previous_running_state, prev_epoch_id) = match &self.state {
-            ProtocolContractState::Running(state) => (state, state.keyset.epoch_id),
-            ProtocolContractState::Resharing(state) => {
-                (&state.previous_running_state, state.prospective_epoch_id())
-            }
-            _ => panic!("Cannot start resharing from non-running state"),
+        let ProtocolContractState::Running(mut running_state) = &self.state else {
+            panic!("Cannot start resharing from non-running state");
         };
-        self.state = ProtocolContractState::Resharing(ResharingContractState {
-            previous_running_state: RunningContractState::new(
-                previous_running_state.domains.clone(),
-                previous_running_state.keyset.clone(),
-                previous_running_state.parameters.clone(),
-            ),
+        running_state.resharing_process = Some(ResharingContractState {
             reshared_keys: Vec::new(),
             resharing_key: KeyEvent::new(
                 prev_epoch_id.next(),
