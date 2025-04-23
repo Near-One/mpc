@@ -154,15 +154,6 @@ impl MpcContract {
         Ok(())
     }
 
-    pub fn vote_new_parameters(
-        &mut self,
-        prospective_epoch_id: EpochId,
-        proposal: &ThresholdParameters,
-    ) -> Result<(), Error> {
-        self.protocol_state
-            .vote_new_parameters(prospective_epoch_id, proposal)
-    }
-
     pub fn vote_add_domains(&mut self, domains: Vec<DomainConfig>) -> Result<(), Error> {
         if let Some(new_state) = self.protocol_state.vote_add_domains(domains)? {
             self.protocol_state = new_state;
@@ -457,7 +448,13 @@ impl VersionedMpcContract {
         );
         match self {
             Self::V0(mpc_contract) => {
-                mpc_contract.vote_new_parameters(prospective_epoch_id, &proposal)
+                let ProtocolContractState::Running(running_state) =
+                    &mut mpc_contract.protocol_state
+                else {
+                    return Err(InvalidState::ProtocolStateNotRunning.into());
+                };
+
+                running_state.vote_new_parameters(prospective_epoch_id, &proposal)
             }
         }
     }
@@ -556,7 +553,7 @@ impl VersionedMpcContract {
             key_event_id,
         );
         let Self::V0(contract_state) = self;
-
+        
         contract_state.protocol_state.vote_reshared(key_event_id)
     }
 

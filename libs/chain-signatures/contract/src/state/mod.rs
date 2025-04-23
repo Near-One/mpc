@@ -1,14 +1,13 @@
 pub mod initializing;
 pub mod key_event;
-pub mod resharing;
 pub mod running;
 
 use crate::crypto_shared::types::PublicKeyExtended;
 use crate::errors::{DomainError, Error, InvalidState};
 use crate::primitives::{
     domain::{DomainConfig, DomainId, DomainRegistry, SignatureScheme},
-    key_state::{AuthenticatedParticipantId, EpochId, KeyEventId},
-    thresholds::{Threshold, ThresholdParameters},
+    key_state::{AuthenticatedParticipantId, KeyEventId},
+    thresholds::Threshold,
 };
 use initializing::InitializingContractState;
 use near_sdk::near;
@@ -60,42 +59,29 @@ impl ProtocolContractState {
         };
         state.start(key_event_id, key_event_timeout_blocks)
     }
+
     pub fn start_reshare_instance(
         &mut self,
         key_event_id: KeyEventId,
         key_event_timeout_blocks: u64,
     ) -> Result<(), Error> {
-        let resharing_process = match self {
-            ProtocolContractState::Running(RunningContractState {
-                resharing_process: Some(resharing_process),
-                ..
-            }) => resharing_process,
-            _ => return Err(InvalidState::ProtocolStateNotRunning.into()),
-        };
-
-        resharing_process.start(key_event_id, key_event_timeout_blocks)
-    }
-    pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
-        let ProtocolContractState::Running(running_protocol_state) = self else {
-            return Err(InvalidState::ProtocolStateNotRunning.into());
-        };
-
-        let Some(resharing_process) = &mut running_protocol_state.resharing_process else {
-            return Err(InvalidState::ProtocolRunningStateIsNotResharing.into());
-        };
-
-        let state = resharing_process.vote_reshared(
-            key_event_id,
-            &running_protocol_state.keyset,
-            &running_protocol_state.domains,
-        )?;
-
-        if let Some((new_keyset, new_threshold_parameters)) = state {
-            running_protocol_state.successful_key_resharing(new_keyset, new_threshold_parameters)
+        match self {
+            ProtocolContractState::Running(running_state) => {
+                running_state.start(key_event_id, key_event_timeout_blocks)
+            }
+            _ => Err(InvalidState::ProtocolStateNotRunning.into()),
         }
-
-        Ok(())
     }
+
+    pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
+        match self {
+            ProtocolContractState::Running(running_state) => {
+                running_state.vote_reshared(key_event_id)
+            }
+            _ => Err(InvalidState::ProtocolStateNotRunning.into()),
+        }
+    }
+
     /// Casts a vote for `public_key` in `key_event_id` during Initializtion.
     /// Fails if the protocol is not in `Initializing` state.
     /// Returns the new protocol state if enough votes have been submitted.
@@ -112,28 +98,6 @@ impl ProtocolContractState {
             .map(|x| x.map(ProtocolContractState::Running))
     }
 
-    /// Casts a vote for `proposed_parameters`, returns [`Ok`] the new protocol state if the proposal is
-    /// accepted.
-    /// Returns an error if the protocol is not in running state.
-    pub fn vote_new_parameters(
-        &mut self,
-        prospective_epoch_id: EpochId,
-        proposed_parameters: &ThresholdParameters,
-    ) -> Result<(), Error> {
-        let ProtocolContractState::Running(running_state) = self else {
-            return Err(InvalidState::ProtocolStateNotRunning.into());
-        };
-
-        let vote_outcome =
-            running_state.vote_new_parameters(prospective_epoch_id, proposed_parameters)?;
-
-        if let Some(vote_outcome) = vote_outcome {
-            running_state.resharing_process = Some(vote_outcome);
-        }
-
-        Ok(())
-    }
-
     pub fn vote_add_domains(
         &mut self,
         domains: Vec<DomainConfig>,
@@ -148,10 +112,7 @@ impl ProtocolContractState {
     pub fn vote_abort_key_event_instance(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
         match self {
             ProtocolContractState::Initializing(state) => state.vote_abort(key_event_id),
-            ProtocolContractState::Running(RunningContractState {
-                resharing_process: Some(resharing_process),
-                ..
-            }) => resharing_process.vote_abort(key_event_id),
+            ProtocolContractState::Running(running_state) => running_state.vote_abort(key_event_id),
             _ => Err(InvalidState::ProtocolStateNotRunning.into()),
         }
     }

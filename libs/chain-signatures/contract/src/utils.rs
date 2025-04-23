@@ -72,7 +72,7 @@ pub fn protocol_state_to_string(contract_state: &ProtocolContractState) -> Strin
             output.push_str("  Parameters:\n");
             params_to_string(&mut output, &state.parameters);
 
-            if let Some(resharing_process) = &state.resharing_process {
+            if let Some(resharing_process) = &state.resharing_state {
                 output.push_str("Contract is in Resharing state\n");
                 output.push_str("  Domains:\n");
                 for (i, domain) in state.domains.domains().iter().enumerate() {
