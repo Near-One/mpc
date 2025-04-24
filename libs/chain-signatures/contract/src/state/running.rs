@@ -276,6 +276,7 @@ impl RunningContractState {
 
 #[cfg(test)]
 pub mod running_tests {
+    use core::panic;
     use std::collections::BTreeSet;
 
     use super::{ResharingState, RunningContractState};
@@ -293,12 +294,6 @@ pub mod running_tests {
     use assert_matches::assert_matches;
     use near_sdk::AccountId;
     use rand::Rng;
-
-    /// Returns the epoch ID that we would transition into if resharing were completed successfully.
-    /// This would increment if we end up voting for a re-proposal.
-    fn prospective_epoch_id(resharing_state: &ResharingState) -> EpochId {
-        resharing_state.resharing_key.epoch_id()
-    }
 
     /// Generates a Running state that contains this many domains.
     pub fn gen_running_state(num_domains: usize) -> RunningContractState {
@@ -421,7 +416,7 @@ pub mod running_tests {
             .take(state.parameters.threshold().value() as usize)
         {
             env.set_signer(account_id);
-            let res = state
+            state
                 .vote_new_parameters(state.keyset.epoch_id.next(), &proposal)
                 .unwrap();
             if i + 1 < state.parameters.threshold().value() as usize || num_domains == 0 {
@@ -438,7 +433,7 @@ pub mod running_tests {
         } else {
             let resharing = state.resharing_state.unwrap();
             assert_eq!(
-                prospective_epoch_id(&resharing),
+                resharing.prospective_epoch_id(),
                 state.keyset.epoch_id.next(),
             );
             assert_eq!(resharing.resharing_key.proposed_parameters(), &proposal);
@@ -501,16 +496,23 @@ pub mod running_tests {
     use crate::primitives::domain::DomainId;
     use crate::primitives::test_utils::gen_account_id;
 
-    fn expect_resharing_state<'a>(running_state: &'a RunningContractState) -> &'a ResharingState {
-        running_state
-            .resharing_state
-            .as_ref()
-            .expect("Running state has started resharing process when all votes are casted.")
-    }
-
     impl RunningContractState {
         fn resharing_key(&self) -> &KeyEvent {
             &self.resharing_state.as_ref().unwrap().resharing_key
+        }
+
+        fn expect_resharing_state<'a>(&'a self) -> &'a ResharingState {
+            self.resharing_state
+                .as_ref()
+                .expect("Running state has started resharing process when all votes are casted.")
+        }
+    }
+
+    impl ResharingState {
+        /// Returns the epoch ID that we would transition into if resharing were completed successfully.
+        /// This would increment if we end up voting for a re-proposal.
+        fn prospective_epoch_id(&self) -> EpochId {
+            self.resharing_key.epoch_id()
         }
     }
 
@@ -518,6 +520,9 @@ pub mod running_tests {
         println!("Testing with {} domains", num_domains);
         let mut running_state = gen_running_state(num_domains);
         let mut env = start_resharing_process_for_running_state(&mut running_state);
+
+        let mut expected_epoch_id_after_resharing = running_state.keyset.epoch_id.next();
+        let original_keyset = running_state.keyset.clone();
 
         let candidates: BTreeSet<AccountId> = running_state
             .resharing_key()
@@ -615,7 +620,8 @@ pub mod running_tests {
                 }
             }
             assert_eq!(
-                expect_resharing_state(&running_state)
+                running_state
+                    .expect_resharing_state()
                     .resharing_key
                     .num_completed(),
                 0
@@ -624,21 +630,30 @@ pub mod running_tests {
             // check that vote_abort immediately causes failure.
             env.advance_block_height(1);
             env.set_signer(&leader.0);
-            assert!(running_state.start(key_event.next_attempt(), 0).is_ok());
-            let key_event = expect_resharing_state(&running_state)
+
+            let start_result = running_state.start(key_event.next_attempt(), 0);
+            assert_matches!(start_result, Ok(_));
+
+            let key_event = running_state
+                .expect_resharing_state()
                 .resharing_key
                 .current_key_event_id()
                 .unwrap();
             env.set_signer(candidates.iter().next().unwrap());
             assert!(running_state.vote_abort(key_event).is_ok());
-            assert!(!expect_resharing_state(&running_state)
+            assert!(!running_state
+                .expect_resharing_state()
                 .resharing_key
                 .is_active());
 
             // assert that valid votes get counted correctly
             env.set_signer(&leader.0);
-            assert!(running_state.start(key_event.next_attempt(), 0).is_ok());
-            let key_event = expect_resharing_state(&running_state)
+            let start_result = running_state.start(key_event.next_attempt(), 0);
+            assert_matches!(start_result, Ok(_));
+            expected_epoch_id_after_resharing = expected_epoch_id_after_resharing.next();
+
+            let key_event = running_state
+                .expect_resharing_state()
                 .resharing_key
                 .current_key_event_id()
                 .unwrap();
@@ -653,19 +668,30 @@ pub mod running_tests {
         }
 
         let new_keyset = running_state.keyset.clone();
-        let new_parameters = running_state.parameters.clone();
 
-        // assert_eq!(
-        //     new_parameters,
-        //     resharing_state.resharing_key.proposed_parameters(),
-        // );
+        assert_eq!(new_keyset.epoch_id, expected_epoch_id_after_resharing);
 
-        // TODO: PANICS :)
-        // Prbobably due to resharing state having been completed, and is now None.
-        let resharing_state = expect_resharing_state(&running_state);
+        assert_matches!(
+            running_state.resharing_state,
+            None,
+            "Resharing field is set to None when it is completed.",
+        );
 
-        assert_eq!(new_keyset.epoch_id, prospective_epoch_id(resharing_state));
-        assert_eq!(new_keyset.domains, resharing_state.reshared_keys);
+        assert!(new_keyset.domains.iter().all(|d| d.attempt.get() == 3));
+
+        let new_key_domain_mapping: Vec<_> = new_keyset
+            .domains
+            .iter()
+            .map(|domain| (domain.key.clone(), domain.domain_id))
+            .collect();
+
+        let original_key_domain_mapping: Vec<_> = original_keyset
+            .domains
+            .iter()
+            .map(|domain| (domain.key.clone(), domain.domain_id))
+            .collect();
+
+        assert_eq!(new_key_domain_mapping, original_key_domain_mapping);
         assert_eq!(new_keyset.domains.len(), num_domains);
         assert_eq!(
             running_state.parameters_votes,
@@ -691,114 +717,134 @@ pub mod running_tests {
         test_resharing_contract_state_for(4);
     }
 
-    // // TODO: Move this test to `running.rs`, as the logic of resharing re-proposal is moved there.
-    // #[test]
-    // fn test_resharing_reproposal() {
-    //     let mut running_state = gen_running_state(3);
-    //     let mut env = gen_resharing_state(&mut running_state);
+    // TODO: Move this test to `running.rs`, as the logic of resharing re-proposal is moved there.
+    #[test]
+    fn test_resharing_reproposal() {
+        let mut running_state = gen_running_state(3);
+        let mut env = start_resharing_process_for_running_state(&mut running_state);
 
-    //     let state = running_state
-    //         .resharing_process
-    //         .as_mut()
-    //         .expect("Running state has started resharing process when all votes are casted.");
+        // Vote for first domain's key.
+        let leader = find_leader(&running_state.resharing_key());
+        env.set_signer(&leader.0);
+        let first_key_event_id = KeyEventId {
+            attempt_id: AttemptId::new(),
+            domain_id: running_state.domains.get_domain_by_index(0).unwrap().id,
+            epoch_id: running_state.keyset.epoch_id.next(),
+        };
+        assert!(running_state.start(first_key_event_id, 0).is_ok());
 
-    //     let keyset = &running_state.keyset;
-    //     let domain_registry = &running_state.domains;
+        let old_participants = running_state.parameters.participants().clone();
+        let old_threshold = running_state.parameters.threshold().value() as usize;
+        {
+            let new_participants = running_state
+                .resharing_key()
+                .proposed_parameters()
+                .participants()
+                .participants()
+                .clone();
 
-    //     // Vote for first domain's key.
-    //     let leader = find_leader(&state.resharing_key);
-    //     env.set_signer(&leader.0);
-    //     let first_key_event_id = KeyEventId {
-    //         attempt_id: AttemptId::new(),
-    //         domain_id: running_state.domains.get_domain_by_index(0).unwrap().id,
-    //         epoch_id: state.prospective_epoch_id(),
-    //     };
-    //     assert!(state.start(first_key_event_id, 0).is_ok());
+            for (account, _, _) in new_participants {
+                env.set_signer(&account);
+                running_state.vote_reshared(first_key_event_id).unwrap();
+            }
+        }
+        assert!(running_state.expect_resharing_state().reshared_keys.len() == 1);
 
-    //     let old_participants = running_state.parameters.participants().clone();
-    //     let old_threshold = running_state.parameters.threshold().value() as usize;
-    //     {
-    //         let new_participants = state
-    //             .resharing_key
-    //             .proposed_parameters()
-    //             .participants()
-    //             .participants()
-    //             .clone();
-    //         for (account, _, _) in new_participants {
-    //             env.set_signer(&account);
-    //             state
-    //                 .vote_reshared(first_key_event_id, keyset, domain_registry)
-    //                 .unwrap();
-    //         }
-    //     }
-    //     assert!(state.reshared_keys.len() == 1);
+        // Generate two sets of params:
+        //  - old params -> new_params_1 is a valid proposal.
+        //  - new_params_1 -> new_params_2 is a valid proposal.
+        //  - old params -> new_params_2 is NOT a valid proposal.
+        //
+        // Reproposing with new_params_1 should succeed, but then reproposing with new_params_2
+        // should be rejected, since all re-proposals must be valid against the original.
+        let mut new_participants_1 = old_participants.clone();
+        let new_threshold = Threshold::new(old_participants.len() as u64);
+        new_participants_1.add_random_participants_till_n(old_participants.len() * 3 / 2);
+        let new_participants_2 = new_participants_1
+            .subset(new_participants_1.len() - old_participants.len()..new_participants_1.len());
+        let new_params_1 =
+            ThresholdParameters::new(new_participants_1, new_threshold.clone()).unwrap();
+        let new_params_2 = ThresholdParameters::new(new_participants_2, new_threshold).unwrap();
+        assert!(running_state
+            .parameters
+            .validate_incoming_proposal(&new_params_1)
+            .is_ok());
+        assert!(new_params_1
+            .validate_incoming_proposal(&new_params_2)
+            .is_ok());
+        assert!(running_state
+            .parameters
+            .validate_incoming_proposal(&new_params_2)
+            .is_err());
 
-    //     // Generate two sets of params:
-    //     //  - old params -> new_params_1 is a valid proposal.
-    //     //  - new_params_1 -> new_params_2 is a valid proposal.
-    //     //  - old params -> new_params_2 is NOT a valid proposal.
-    //     //
-    //     // Reproposing with new_params_1 should succeed, but then reproposing with new_params_2
-    //     // should be rejected, since all re-proposals must be valid against the original.
-    //     let mut new_participants_1 = old_participants.clone();
-    //     let new_threshold = Threshold::new(old_participants.len() as u64);
-    //     new_participants_1.add_random_participants_till_n(old_participants.len() * 3 / 2);
-    //     let new_participants_2 = new_participants_1
-    //         .subset(new_participants_1.len() - old_participants.len()..new_participants_1.len());
-    //     let new_params_1 =
-    //         ThresholdParameters::new(new_participants_1, new_threshold.clone()).unwrap();
-    //     let new_params_2 = ThresholdParameters::new(new_participants_2, new_threshold).unwrap();
-    //     assert!(running_state
-    //         .parameters
-    //         .validate_incoming_proposal(&new_params_1)
-    //         .is_ok());
-    //     assert!(new_params_1
-    //         .validate_incoming_proposal(&new_params_2)
-    //         .is_ok());
-    //     assert!(running_state
-    //         .parameters
-    //         .validate_incoming_proposal(&new_params_2)
-    //         .is_err());
+        let current_resharing_epoch_id = running_state
+            .expect_resharing_state()
+            .prospective_epoch_id();
+        // Reproposing with invalid epoch ID should fail.
+        {
+            env.set_signer(&old_participants.participants()[0].0);
+            assert!(running_state
+                .vote_new_parameters(current_resharing_epoch_id, &new_params_1)
+                .is_err());
+            assert!(running_state
+                .vote_new_parameters(current_resharing_epoch_id.next().next(), &new_params_1)
+                .is_err());
+        }
 
-    //     // Reproposing with invalid epoch ID should fail.
-    //     {
-    //         env.set_signer(&old_participants.participants()[0].0);
-    //         assert!(running_state
-    //             .vote_new_parameters(state.prospective_epoch_id(), &new_params_1)
-    //             .is_err());
-    //         assert!(running_state
-    //             .vote_new_parameters(state.prospective_epoch_id().next().next(), &new_params_1)
-    //             .is_err());
-    //     }
+        // Repropose with new_params_1.
+        for (account, _, _) in &old_participants.participants()[0..old_threshold] {
+            env.set_signer(account);
+            assert_matches!(
+                running_state.resharing_state,
+                Some(_),
+                "Resharing is some wile not completed."
+            );
+            running_state
+                .vote_new_parameters(current_resharing_epoch_id.next(), &new_params_1)
+                .unwrap();
+        }
 
-    //     // Repropose with new_params_1.
-    //     let mut new_state = None;
-    //     for (account, _, _) in &old_participants.participants()[0..old_threshold] {
-    //         env.set_signer(account);
-    //         assert!(new_state.is_none());
-    //         new_state = running_state
-    //             .vote_new_parameters(state.prospective_epoch_id().next(), &new_params_1)
-    //             .unwrap();
-    //     }
-    //     // We should've gotten a new resharing state.
-    //     assert!(new_state.is_some());
-    //     let mut new_state = new_state.unwrap();
-    //     // New state should start from the beginning, with the epoch ID bumped.
-    //     assert_eq!(new_state.reshared_keys.len(), 0);
-    //     assert_eq!(
-    //         new_state.resharing_key.epoch_id(),
-    //         state.prospective_epoch_id().next()
-    //     );
-    //     assert_eq!(new_state.resharing_key.proposed_parameters(), &new_params_1);
-    //     assert_eq!(
-    //         new_state.resharing_key.domain_id(),
-    //         running_state.domains.get_domain_by_index(0).unwrap().id
-    //     );
+        assert_matches!(
+            running_state.resharing_state,
+            Some(_),
+            "Resharing is some wile not completed."
+        );
 
-    //     // Repropose with new_params_2. That should fail.
-    //     env.set_signer(&old_participants.participants()[0].0);
-    //     assert!(running_state
-    //         .vote_new_parameters(new_state.prospective_epoch_id().next(), &new_params_2)
-    //         .is_err());
-    // }
+        assert_eq!(
+            running_state.expect_resharing_state().reshared_keys.len(),
+            0,
+            "New state should start from the beginning, with the epoch ID bumped."
+        );
+
+        assert_eq!(
+            running_state
+                .expect_resharing_state()
+                .prospective_epoch_id(),
+            running_state.keyset.epoch_id.next().next().next(),
+        );
+
+        assert_eq!(
+            running_state
+                .expect_resharing_state()
+                .resharing_key
+                .proposed_parameters(),
+            &new_params_1
+        );
+        assert_eq!(
+            running_state.resharing_key().domain_id(),
+            running_state.domains.get_domain_by_index(0).unwrap().id
+        );
+
+        // Repropose with new_params_2. That should fail.
+        env.set_signer(&old_participants.participants()[0].0);
+        assert!(running_state
+            .vote_new_parameters(
+                running_state
+                    .expect_resharing_state()
+                    .prospective_epoch_id()
+                    .next(),
+                &new_params_2
+            )
+            .is_err());
+    }
 }
