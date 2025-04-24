@@ -173,11 +173,11 @@ impl RunningContractState {
                 };
                 resharing_process.reshared_keys.push(new_key);
 
-                let prospective_epich_id = resharing_process.resharing_key.epoch_id().next();
+                let prospective_epoch_id = resharing_process.resharing_key.epoch_id();
                 match domains.get_domain_by_index(resharing_process.reshared_keys.len()) {
                     Some(next_domain) => {
                         resharing_process.resharing_key = KeyEvent::new(
-                            prospective_epich_id,
+                            prospective_epoch_id,
                             next_domain.clone(),
                             resharing_process
                                 .resharing_key
@@ -189,7 +189,7 @@ impl RunningContractState {
                     }
                     None => VoteOutcome::AllDomainsReshared(
                         Keyset::new(
-                            prospective_epich_id,
+                            prospective_epoch_id,
                             resharing_process.reshared_keys.clone(),
                         ),
                         resharing_process
@@ -519,9 +519,10 @@ pub mod running_tests {
     fn test_resharing_contract_state_for(num_domains: usize) {
         println!("Testing with {} domains", num_domains);
         let mut running_state = gen_running_state(num_domains);
+        let expected_epoch_id_after_resharing = running_state.keyset.epoch_id.next();
+
         let mut env = start_resharing_process_for_running_state(&mut running_state);
 
-        let mut expected_epoch_id_after_resharing = running_state.keyset.epoch_id.next();
         let original_keyset = running_state.keyset.clone();
 
         let candidates: BTreeSet<AccountId> = running_state
@@ -650,7 +651,6 @@ pub mod running_tests {
             env.set_signer(&leader.0);
             let start_result = running_state.start(key_event.next_attempt(), 0);
             assert_matches!(start_result, Ok(_));
-            expected_epoch_id_after_resharing = expected_epoch_id_after_resharing.next();
 
             let key_event = running_state
                 .expect_resharing_state()
@@ -820,7 +820,7 @@ pub mod running_tests {
             running_state
                 .expect_resharing_state()
                 .prospective_epoch_id(),
-            running_state.keyset.epoch_id.next().next().next(),
+            running_state.keyset.epoch_id.next().next(),
         );
 
         assert_eq!(

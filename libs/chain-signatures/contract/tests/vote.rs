@@ -186,7 +186,7 @@ async fn test_resharing() -> anyhow::Result<()> {
                 &proposal
             );
         }
-        _ => panic!("should be in resharing state"),
+        _ => panic!("should be in running state."),
     }
 
     check_call_success(
