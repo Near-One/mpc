@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import List, Literal
+import json
+from typing import Dict, List, Literal
 
 ProtocolState = Literal['Initializing', 'Running', 'Resharing']
 
@@ -124,10 +125,38 @@ class Parameters:
 
 
 @dataclass
+class ParameterVotes:
+    proposal_by_account: Dict[str, Parameters]
+
+    @staticmethod
+    def from_json(data: dict) -> "ParameterVotes":
+        return ParameterVotes({
+            id: Parameters.from_json(params_data)
+            for id, params_data in data["proposal_by_account"].items()
+        })
+
+    def pretty_string(self) -> str:
+        if not self.proposal_by_account:
+            return "\033[95mNo parameter votes\033[0m"
+
+        parts = []
+        for id, vote in self.proposal_by_account.items():
+            participants_str = " ".join(
+                f"\033[92m{p.account_id}\033[95m"
+                for p in vote.participants.participants)
+            parts.append(
+                f"\033[95m{id}→{vote.threshold} [{participants_str}]\033[0m")
+
+        x = ", ".join(parts)
+        return f"\033[95mVotes:\033[0m {x}\033[0m"
+
+
+@dataclass
 class RunningProtocolState:
     domains: Domains
     keyset: Keyset
     parameters: Parameters
+    parameter_votes: ParameterVotes
 
     def threshold(self) -> int:
         return self.parameters.threshold
@@ -137,9 +166,11 @@ class RunningProtocolState:
         domains = Domains.from_json(running_data["domains"])
         keyset = Keyset.from_json(running_data["keyset"])
         parameters = Parameters.from_json(running_data["parameters"])
+        votes = ParameterVotes.from_json(running_data["parameters_votes"])
         return RunningProtocolState(domains=domains,
                                     keyset=keyset,
-                                    parameters=parameters)
+                                    parameters=parameters,
+                                    parameter_votes=votes)
 
     def next_domain_id(self) -> int:
         return self.domains.next_domain_id
@@ -151,11 +182,13 @@ class RunningProtocolState:
         participants_str = " ".join(
             f"🟢\033[92m{x.account_id}"
             for x in self.parameters.participants.participants)
+
         print(
             f"\033[96m[Running epoch {self.keyset.epoch_id}]\033[0m "
             f"\033[92mthreshold: {self.parameters.threshold} {participants_str}\033[0m | "
             f"\033[97m🔑 {keyset_str}\033[0m | "
-            f"\033[96m{self.domains.make_str()}\033[0m")
+            f"\033[96m{self.domains.make_str()} | "
+            f"{self.parameter_votes.pretty_string()}\033[0m")
 
 
 @dataclass

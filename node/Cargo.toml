@@ -40,6 +40,7 @@ serde_json = "1.0.132"
 serde_yaml = "0.9.34"
 sha3 = "0.10.8"
 tempfile = "=3.14.0"
+time = "0.3.41"
 tokio = { version = "1.41.0", features = ["full"] }
 tokio-util = "0.7.12"
 tokio-rustls = { version = "0.26.1", default-features = false }

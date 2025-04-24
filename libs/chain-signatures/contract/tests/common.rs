@@ -66,9 +66,9 @@ pub fn candidates(names: Option<Vec<AccountId>>) -> Participants {
     participants
 }
 /// Create `amount` accounts and return them along with the candidate info.
-pub async fn accounts(worker: &Worker<Sandbox>) -> (Vec<Account>, Participants) {
-    let mut accounts = Vec::with_capacity(PARTICIPANT_LEN);
-    for _ in 0..PARTICIPANT_LEN {
+pub async fn gen_accounts(worker: &Worker<Sandbox>, amount: usize) -> (Vec<Account>, Participants) {
+    let mut accounts = Vec::with_capacity(amount);
+    for _ in 0..amount {
         log!("attempting to create account");
         let account = worker.dev_create_account().await.unwrap();
         log!("created account");
@@ -89,7 +89,7 @@ pub async fn init_with_candidates(
     pks: Vec<near_crypto::PublicKey>,
 ) -> (Worker<Sandbox>, Contract, Vec<Account>) {
     let (worker, contract) = init().await;
-    let (accounts, participants) = accounts(&worker).await;
+    let (accounts, participants) = gen_accounts(&worker, PARTICIPANT_LEN).await;
     let threshold = ((participants.len() as f64) * 0.6).ceil() as u64;
     let threshold = Threshold::new(threshold);
     let threshold_parameters = ThresholdParameters::new(participants, threshold).unwrap();

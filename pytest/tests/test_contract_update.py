@@ -22,7 +22,7 @@ from common_lib.constants import TGAS
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 from common_lib import shared
-from common_lib.contracts import COMPILED_CONTRACT_PATH, MIGRATE_CURRENT_CONTRACT_PATH, V1_0_1_CONTRACT_PATH, UpdateArgsV1, UpdateArgsV2
+from common_lib.contracts import COMPILED_CONTRACT_PATH, MIGRATE_CURRENT_CONTRACT_PATH, V1_0_1_CONTRACT_PATH, V2_0_0_CONTRACT_PATH, UpdateArgsV1, UpdateArgsV2, load_mpc_contract
 
 
 def deploy_and_init_v2(domains=['Secp256k1', 'Ed25519']):
@@ -98,33 +98,6 @@ def get_participants_from_near_config():
     }
 
 
-def migrate_from_v2_to_dummy(cluster):
-    dummy_update_args = UpdateArgsV2(code_path=MIGRATE_CURRENT_CONTRACT_PATH)
-    cluster.propose_update(dummy_update_args.borsh_serialize())
-    cluster.vote_update(0, 0)
-    cluster.vote_update(1, 0)
-    time.sleep(2)
-    cluster.assert_is_deployed(dummy_update_args.code())
-    # ensure sign transactions are rejected:
-    try:
-        cluster.send_and_await_signature_requests(1)
-    except:
-        print("Succesfully migrated from V2 to a different contract code.")
-    else:
-        assert False
-
-
-def migrate_from_v1_to_v2(cluster):
-    update_args = UpdateArgsV1(COMPILED_CONTRACT_PATH)
-    id = cluster.propose_update(update_args.borsh_serialize())
-    cluster.vote_update(0, id)
-    cluster.vote_update(1, id)
-    time.sleep(10)
-    cluster.assert_is_deployed(update_args.code())
-    print("Succesfully migrated from V1 to V2")
-    cluster.contract_state().print()
-
-
 @pytest.mark.parametrize("test_trailing_sigs", [
     False,
     pytest.param(
@@ -140,7 +113,6 @@ def test_contract_update(test_trailing_sigs):
     # The public key in the state is encoded as a `PublicKeyExtended` struct.
     # We need to extract the inner field which contains the public key.
     public_key = public_key_extended["Secp256k1"]["near_public_key"]
-    migrate_from_v2_to_dummy(cluster)
 
     # kill nodes and change the contract account
     cluster.kill_all()
@@ -210,7 +182,14 @@ def test_contract_update(test_trailing_sigs):
         assert 'Failure' in res['result']['status'], json.dumps(
             res['result']['status'])
 
-    migrate_from_v1_to_v2(cluster)
+    # migrate from v1 to v2
+    update_args = UpdateArgsV1(COMPILED_CONTRACT_PATH)
+    id = cluster.propose_update(update_args.borsh_serialize())
+    cluster.vote_update(cluster.nodes[0], id)
+    cluster.vote_update(cluster.nodes[1], id)
+    cluster.assert_is_deployed(update_args.code())
+    print("Succesfully migrated from V1 to V2")
+    cluster.contract_state().print()
 
     if test_trailing_sigs:
         results = cluster.await_txs_responses(tx_hashes)
@@ -227,4 +206,44 @@ def test_contract_update(test_trailing_sigs):
     cluster.send_and_await_signature_requests(1)
 
 
-# todo: comprehensive test with entire cluster & node + config updates
+def test_update_current():
+    cluster, mpc_nodes = shared.start_cluster_with_mpc(2, 3, 1,
+                                                       load_mpc_contract())
+    cluster.init_cluster(mpc_nodes, 2)
+    cluster.send_and_await_signature_requests(1)
+    new_contract = UpdateArgsV2(MIGRATE_CURRENT_CONTRACT_PATH)
+    cluster.propose_update(new_contract.borsh_serialize())
+    for node in cluster.get_voters()[0:2]:
+        cluster.vote_update(node, 0)
+    cluster.assert_is_deployed(new_contract.code())
+
+
+def test_update_v2_running():
+    v2_0_0 = load_binary_file(V2_0_0_CONTRACT_PATH)
+    cluster, mpc_nodes = shared.start_cluster_with_mpc(4, 4, 1, v2_0_0)
+    cluster.define_candidate_set(mpc_nodes)
+    cluster.update_participant_status(assert_contract=False)
+    cluster.init_contract(threshold=3)
+    cluster.add_domains(signature_schemes=['Secp256k1', 'Ed25519'],
+                        ignore_vote_errors=True)
+    cluster.send_and_await_signature_requests(1)
+
+    # introduce some state:
+    args = {
+        'prospective_epoch_id': 1,
+        'proposal': cluster.make_threshold_parameters(3)
+    }
+    for node in cluster.mpc_nodes[0:2]:
+        tx = node.sign_tx(cluster.mpc_contract_account(),
+                          'vote_new_parameters', args)
+        node.send_txn_and_check_success(tx)
+        cluster.contract_state().print()
+    new_contract = UpdateArgsV2(COMPILED_CONTRACT_PATH)
+    cluster.propose_update(new_contract.borsh_serialize())
+    for node in cluster.get_voters()[0:3]:
+        cluster.vote_update(node, 0)
+    time.sleep(2)
+    cluster.assert_is_deployed(new_contract.code())
+    cluster.wait_for_state("Running")
+    cluster.contract_state().print()
+    cluster.send_and_await_signature_requests(1)

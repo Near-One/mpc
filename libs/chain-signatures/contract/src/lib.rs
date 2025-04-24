@@ -8,6 +8,7 @@ pub mod storage_keys;
 pub mod update;
 #[cfg(feature = "dev-utils")]
 pub mod utils;
+pub mod v0_state;
 
 use crate::errors::Error;
 use crate::update::{ProposeUpdateArgs, ProposedUpdates, Update, UpdateId};
@@ -41,6 +42,7 @@ use primitives::{
 };
 use state::{running::RunningContractState, ProtocolContractState};
 use storage_keys::StorageKey;
+use v0_state::MpcContractV0;
 
 //Gas requised for a sign request
 const GAS_FOR_SIGN_CALL: Gas = Gas::from_tgas(10);
@@ -54,7 +56,8 @@ const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
 pub enum VersionedMpcContract {
-    V0(MpcContract),
+    V0(MpcContractV0),
+    V1(MpcContract),
 }
 
 impl Default for VersionedMpcContract {
@@ -71,7 +74,16 @@ pub struct MpcContract {
     proposed_updates: ProposedUpdates,
     config: Config,
 }
-
+impl From<v0_state::MpcContractV0> for MpcContract {
+    fn from(value: v0_state::MpcContractV0) -> Self {
+        MpcContract {
+            protocol_state: value.protocol_state.into(),
+            pending_requests: value.pending_requests,
+            proposed_updates: ProposedUpdates::default(),
+            config: value.config,
+        }
+    }
+}
 impl MpcContract {
     pub(crate) fn public_key_extended(
         &self,
@@ -249,7 +261,9 @@ impl VersionedMpcContract {
             &request.path,
         );
 
-        let Self::V0(mpc_contract) = self;
+        let Self::V1(mpc_contract) = self else {
+            env::panic_str("expected V1")
+        };
 
         // Check if the request already exists.
         if mpc_contract.pending_requests.contains_key(&request) {
@@ -287,7 +301,8 @@ impl VersionedMpcContract {
     fn public_key_extended(&self, domain_id: Option<DomainId>) -> Result<PublicKeyExtended, Error> {
         let domain = domain_id.unwrap_or_else(DomainId::legacy_ecdsa_id);
         match self {
-            Self::V0(mpc_contract) => mpc_contract.public_key_extended(domain),
+            Self::V1(mpc_contract) => mpc_contract.public_key_extended(domain),
+            _ => env::panic_str("expected v1"),
         }
     }
 
@@ -308,7 +323,8 @@ impl VersionedMpcContract {
 
         let domain = domain_id.unwrap_or_else(DomainId::legacy_ecdsa_id);
         let public_key = match self {
-            Self::V0(mpc_contract) => mpc_contract.public_key_extended(domain),
+            Self::V1(mpc_contract) => mpc_contract.public_key_extended(domain),
+            _ => env::panic_str("expected v1"),
         }?;
 
         let derived_public_key = match public_key {
@@ -447,7 +463,7 @@ impl VersionedMpcContract {
             proposal,
         );
         match self {
-            Self::V0(mpc_contract) => {
+            Self::V1(mpc_contract) => {
                 let ProtocolContractState::Running(running_state) =
                     &mut mpc_contract.protocol_state
                 else {
@@ -456,6 +472,7 @@ impl VersionedMpcContract {
 
                 running_state.vote_new_parameters(prospective_epoch_id, &proposal)
             }
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -473,7 +490,8 @@ impl VersionedMpcContract {
             domains,
         );
         match self {
-            Self::V0(mpc_contract) => mpc_contract.vote_add_domains(domains),
+            Self::V1(mpc_contract) => mpc_contract.vote_add_domains(domains),
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -483,7 +501,8 @@ impl VersionedMpcContract {
     pub fn start_keygen_instance(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
         log!("start_keygen_instance: signer={}", env::signer_account_id(),);
         match self {
-            Self::V0(contract_state) => contract_state.start_keygen_instance(key_event_id),
+            Self::V1(contract_state) => contract_state.start_keygen_instance(key_event_id),
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -515,7 +534,8 @@ impl VersionedMpcContract {
             public_key,
         );
         match self {
-            Self::V0(contract_state) => contract_state.vote_pk(key_event_id, public_key),
+            Self::V1(contract_state) => contract_state.vote_pk(key_event_id, public_key),
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -528,7 +548,8 @@ impl VersionedMpcContract {
             env::signer_account_id()
         );
         match self {
-            Self::V0(contract_state) => contract_state.start_reshare_instance(key_event_id),
+            Self::V1(contract_state) => contract_state.start_reshare_instance(key_event_id),
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -552,9 +573,11 @@ impl VersionedMpcContract {
             env::signer_account_id(),
             key_event_id,
         );
-        let Self::V0(contract_state) = self;
-        
-        contract_state.protocol_state.vote_reshared(key_event_id)
+
+        match self {
+            Self::V1(contract_state) => contract_state.protocol_state.vote_reshared(key_event_id),
+            _ => env::panic_str("expected V1"),
+        }
     }
 
     /// Casts a vote to cancel key generation. Any keys that have already been generated
@@ -567,7 +590,8 @@ impl VersionedMpcContract {
     pub fn vote_cancel_keygen(&mut self, next_domain_id: u64) -> Result<(), Error> {
         log!("vote_cancel_keygen: signer={}", env::signer_account_id());
         match self {
-            Self::V0(contract_state) => contract_state.vote_cancel_keygen(next_domain_id),
+            Self::V1(contract_state) => contract_state.vote_cancel_keygen(next_domain_id),
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -580,7 +604,8 @@ impl VersionedMpcContract {
             env::signer_account_id()
         );
         match self {
-            Self::V0(contract_state) => contract_state.vote_abort_key_event_instance(key_event_id),
+            Self::V1(contract_state) => contract_state.vote_abort_key_event_instance(key_event_id),
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -637,7 +662,8 @@ impl VersionedMpcContract {
         );
         let voter = self.voter_or_panic();
         let threshold = match &self {
-            Self::V0(mpc_contract) => mpc_contract.threshold()?,
+            Self::V1(mpc_contract) => mpc_contract.threshold()?,
+            _ => env::panic_str("expected V1"),
         };
         let Some(votes) = self.proposed_updates().vote(&id, voter) else {
             return Err(InvalidParameters::UpdateNotFound.into());
@@ -673,7 +699,7 @@ impl VersionedMpcContract {
         );
         parameters.validate()?;
 
-        Ok(Self::V0(MpcContract::init(parameters, init_config)))
+        Ok(Self::V1(MpcContract::init(parameters, init_config)))
     }
 
     // This function can be used to transfer the MPC network to a new contract.
@@ -709,7 +735,7 @@ impl VersionedMpcContract {
             return Err(DomainError::DomainsMismatch.into());
         }
 
-        Ok(Self::V0(MpcContract {
+        Ok(Self::V1(MpcContract {
             config: Config::from(init_config),
             protocol_state: ProtocolContractState::Running(RunningContractState::new(
                 domains, keyset, parameters,
@@ -738,7 +764,7 @@ impl VersionedMpcContract {
         {
             let config = Config::default();
             let protocol_state: ProtocolContractState = (&state.protocol_state).into();
-            return Ok(VersionedMpcContract::V0(MpcContract {
+            return Ok(VersionedMpcContract::V1(MpcContract {
                 config,
                 protocol_state,
                 // Start with a fresh pending requests map. Migrating the signature requests is
@@ -754,26 +780,32 @@ impl VersionedMpcContract {
             }));
         }
         if let Some(v2_contract) = env::state_read::<VersionedMpcContract>() {
-            return Ok(v2_contract);
+            return match v2_contract {
+                VersionedMpcContract::V0(x) => Ok(VersionedMpcContract::V1(x.into())),
+                VersionedMpcContract::V1(_) => Ok(v2_contract),
+            };
         }
         Err(InvalidState::ContractStateIsMissing.into())
     }
 
     pub fn state(&self) -> &ProtocolContractState {
         match self {
-            Self::V0(mpc_contract) => &mpc_contract.protocol_state,
+            Self::V1(mpc_contract) => &mpc_contract.protocol_state,
+            _ => env::panic_str("expected V1"),
         }
     }
 
     pub fn get_pending_request(&self, request: &SignatureRequest) -> Option<YieldIndex> {
         match self {
-            Self::V0(mpc_contract) => mpc_contract.get_pending_request(request),
+            Self::V1(mpc_contract) => mpc_contract.get_pending_request(request),
+            _ => env::panic_str("expected V1"),
         }
     }
 
     pub fn config(&self) -> &Config {
         match self {
-            Self::V0(mpc_contract) => &mpc_contract.config,
+            Self::V1(mpc_contract) => &mpc_contract.config,
+            _ => env::panic_str("expected V1"),
         }
     }
 
@@ -790,7 +822,9 @@ impl VersionedMpcContract {
         request: SignatureRequest, // this change here should actually be ok.
         #[callback_result] signature: Result<SignatureResponse, PromiseError>,
     ) -> PromiseOrValue<SignatureResponse> {
-        let Self::V0(mpc_contract) = self;
+        let Self::V1(mpc_contract) = self else {
+            env::panic_str("expected V1")
+        };
         mpc_contract.pending_requests.remove(&request);
         match signature {
             Ok(signature) => PromiseOrValue::Value(signature),
@@ -814,13 +848,16 @@ impl VersionedMpcContract {
 
     #[private]
     pub fn update_config(&mut self, config: Config) {
-        let Self::V0(mpc_contract) = self;
+        let Self::V1(mpc_contract) = self else {
+            env::panic_str("expected v1")
+        };
         mpc_contract.config = config;
     }
 
     fn proposed_updates(&mut self) -> &mut ProposedUpdates {
         match self {
-            Self::V0(contract) => &mut contract.proposed_updates,
+            Self::V1(contract) => &mut contract.proposed_updates,
+            _ => env::panic_str("expected V1"),
         }
     }
     /// Get our own account id as a voter.
@@ -828,12 +865,13 @@ impl VersionedMpcContract {
     fn voter_or_panic(&self) -> AccountId {
         let voter = env::signer_account_id();
         match self {
-            Self::V0(contract) => match contract.protocol_state.authenticate_update_vote() {
+            Self::V1(contract) => match contract.protocol_state.authenticate_update_vote() {
                 Ok(_) => voter,
                 Err(err) => {
                     env::panic_str(format!("not a voter, {:?}", err).as_str());
                 }
             },
+            _ => env::panic_str("expected V1"),
         }
     }
 }

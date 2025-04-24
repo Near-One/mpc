@@ -2,7 +2,7 @@ use super::domain::DomainId;
 use super::participants::{ParticipantId, Participants};
 use crate::crypto_shared::types::PublicKeyExtended;
 use crate::errors::{DomainError, Error, InvalidState};
-use near_sdk::{env, near};
+use near_sdk::{env, near, AccountId};
 use std::fmt::Display;
 
 /// An EpochId uniquely identifies a ThresholdParameters (but not vice-versa).
@@ -136,7 +136,6 @@ impl Keyset {
             .clone())
     }
 }
-
 /// This struct is supposed to contain the participant id associated to the account `env::signer_account_id()`,
 /// but is only constructible given a set of participants that includes the signer, thus acting as
 /// a typesystem-based enforcement mechanism (albeit a best-effort one) for authenticating the
@@ -159,11 +158,38 @@ impl AuthenticatedParticipantId {
     }
 }
 
+/// This struct contains the account `env::signer_account_id()`, but is only contructible given a
+/// set of participants that includse the signer, thus acting as a typesystem-based enforcement
+/// mechanism (albeit a best-effort one) for authenticating the signer.
+#[near(serializers=[borsh, json])]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AuthenticatedAccountId(AccountId);
+impl AuthenticatedAccountId {
+    pub fn get(&self) -> &AccountId {
+        &self.0
+    }
+    pub fn new(participants: &Participants) -> Result<Self, Error> {
+        let signer = env::signer_account_id();
+        if participants
+            .participants()
+            .iter()
+            .any(|(a_id, _, _)| *a_id == signer)
+        {
+            Ok(AuthenticatedAccountId(signer))
+        } else {
+            Err(InvalidState::NotParticipant.into())
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use crate::primitives::{
         domain::DomainId,
-        key_state::{AttemptId, AuthenticatedParticipantId, EpochId, KeyForDomain, Keyset},
+        key_state::{
+            AttemptId, AuthenticatedAccountId, AuthenticatedParticipantId, EpochId, KeyForDomain,
+            Keyset,
+        },
         test_utils::{bogus_ed25519_public_key_extended, gen_account_id, gen_threshold_params},
     };
     use near_sdk::{test_utils::VMContextBuilder, testing_env};
@@ -224,6 +250,21 @@ pub mod tests {
             context.signer_account_id(gen_account_id());
             testing_env!(context.build());
             assert!(AuthenticatedParticipantId::new(proposed_parameters.participants()).is_err());
+        }
+    }
+    #[test]
+    fn test_authenticated_account_id() {
+        let proposed_parameters = gen_threshold_params(MAX_N);
+        assert!(proposed_parameters.validate().is_ok());
+        for (account_id, _, _) in proposed_parameters.participants().participants() {
+            let mut context = VMContextBuilder::new();
+            context.signer_account_id(account_id.clone());
+            testing_env!(context.build());
+            assert!(AuthenticatedAccountId::new(proposed_parameters.participants()).is_ok());
+            let mut context = VMContextBuilder::new();
+            context.signer_account_id(gen_account_id());
+            testing_env!(context.build());
+            assert!(AuthenticatedAccountId::new(proposed_parameters.participants()).is_err());
         }
     }
 }

@@ -28,7 +28,6 @@ pub struct Config {
 ///
 /// use mpc_contract::config::Config;
 /// let config : Config = Some(init_config).into();
-/// assert_eq!(config.request_timeout_blocks, 1000);
 /// use mpc_contract::config::consts::DEFAULT_KEY_EVENT_TIMEOUT_BLOCKS;
 /// assert_eq!(config.key_event_timeout_blocks, DEFAULT_KEY_EVENT_TIMEOUT_BLOCKS);
 /// ```

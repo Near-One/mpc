@@ -1,14 +1,15 @@
 use super::initializing::InitializingContractState;
 use super::key_event::KeyEvent;
 use crate::crypto_shared::types::PublicKeyExtended;
-use crate::errors::{DomainError, Error, InvalidParameters, InvalidState};
-use crate::legacy_contract_state;
+use crate::errors::{DomainError, Error, InvalidParameters, InvalidState, VoteError};
 use crate::primitives::domain::{AddDomainsVotes, DomainConfig, DomainId, DomainRegistry};
 use crate::primitives::key_state::{
-    AttemptId, AuthenticatedParticipantId, EpochId, KeyEventId, KeyForDomain, Keyset,
+    AttemptId, AuthenticatedAccountId, AuthenticatedParticipantId, EpochId, KeyEventId,
+    KeyForDomain, Keyset,
 };
 use crate::primitives::thresholds::ThresholdParameters;
 use crate::primitives::votes::ThresholdParametersVotes;
+use crate::{legacy_contract_state, v0_state};
 use near_sdk::near;
 use std::collections::BTreeSet;
 
@@ -46,6 +47,26 @@ pub struct RunningContractState {
     pub resharing_state: Option<ResharingState>,
 }
 
+impl From<&legacy_contract_state::ResharingContractState> for RunningContractState {
+    fn from(_state: &legacy_contract_state::ResharingContractState) -> Self {
+        // It's complicated to upgrade the contract while resharing. Just don't support it.
+        unimplemented!("Cannot migrate from Resharing state")
+    }
+}
+
+impl From<v0_state::RunningContractState> for RunningContractState {
+    fn from(value: v0_state::RunningContractState) -> Self {
+        RunningContractState {
+            domains: value.domains,
+            keyset: value.keyset,
+            parameters: value.parameters,
+            parameters_votes: ThresholdParametersVotes::default(),
+            add_domains_votes: value.add_domains_votes,
+            resharing_state: None,
+        }
+    }
+}
+
 impl From<&legacy_contract_state::RunningContractState> for RunningContractState {
     fn from(state: &legacy_contract_state::RunningContractState) -> Self {
         let key = match state.public_key.curve_type() {
@@ -79,8 +100,7 @@ impl RunningContractState {
         }
     }
 
-    /// Casts a vote for `proposal` to the current state, propagating any errors.
-    /// Returns ResharingContractState if the proposal is accepted.
+    /// Casts a vote for a re-proposal. Requires the signer to be a participant of the prospective epoch.
     pub fn vote_new_parameters(
         &mut self,
         proposed_epoch_id: EpochId,
@@ -97,16 +117,25 @@ impl RunningContractState {
             return Err(InvalidParameters::EpochMismatch.into());
         }
 
-        let authenticated_participant =
-            AuthenticatedParticipantId::new(self.parameters.participants())?;
-
         self.parameters.validate_incoming_proposal(proposal)?;
 
-        let number_of_casted_votes = self
-            .parameters_votes
-            .vote(proposal, &authenticated_participant);
+        let candidate = AuthenticatedAccountId::new(proposal.participants())?;
 
-        let proposal_accepted = self.parameters.threshold().value() <= number_of_casted_votes;
+        // If the signer is not a participant of the current epoch, they can only vote after
+        // `threshold` participant of the current epoch have casted their vote to admit them.
+        if AuthenticatedAccountId::new(self.parameters.participants()).is_err() {
+            let n_votes = self
+                .parameters_votes
+                .n_votes(proposal, self.parameters.participants());
+
+            if n_votes < self.parameters.threshold().value() {
+                return Err(VoteError::VoterPending.into());
+            }
+        }
+
+        let number_of_casted_votes = self.parameters_votes.vote(proposal, candidate);
+
+        let proposal_accepted = proposal.participants().len() as u64 == number_of_casted_votes;
 
         // Reset the resharing state
         if proposal_accepted {
@@ -216,7 +245,7 @@ impl RunningContractState {
     }
 
     /// Casts a vote for the signer participant to add new domains, replacing any previous vote.
-    /// If this causes a threshold number of participants to vote for the same set of new domains,
+    /// If the number of votes for the same set of new domains reaches the number of participants,
     /// returns the InitializingContractState we should transition into to generate keys for these
     /// new domains.
     pub fn vote_add_domains(
@@ -228,7 +257,7 @@ impl RunningContractState {
         }
         let participant = AuthenticatedParticipantId::new(self.parameters.participants())?;
         let n_votes = self.add_domains_votes.vote(domains.clone(), &participant);
-        if self.parameters.threshold().value() <= n_votes {
+        if self.parameters.participants().len() as u64 == n_votes {
             let new_domains = self.domains.add_domains(domains.clone())?;
             Ok(Some(InitializingContractState {
                 generated_keys: self.keyset.domains.clone(),
@@ -386,52 +415,81 @@ pub mod running_tests {
         // Assert that disagreeing proposals do not reach concensus.
         // Generate an extra proposal for the next step.
         let mut proposals = Vec::new();
-        for _ in 0..participants.participants().len() + 1 {
+        for i in 0..participants.participants().len() + 1 {
             loop {
                 let proposal = gen_valid_params_proposal(&state.parameters);
                 if proposals.contains(&proposal) {
+                    continue;
+                }
+                if i < participants.participants().len()
+                    && !proposal
+                        .participants()
+                        .is_participant(&participants.participants()[i].0)
+                {
                     continue;
                 }
                 proposals.push(proposal.clone());
                 break;
             }
         }
+
         for (i, (account_id, _, _)) in participants.participants().iter().enumerate() {
             env.set_signer(account_id);
-            assert!(state
+            state
                 .vote_new_parameters(state.keyset.epoch_id.next(), &proposals[i])
-                .is_ok());
-
-            assert!(state.resharing_state.is_none());
+                .unwrap();
+            assert_matches!(state.resharing_state, None, "{:?}", i)
         }
 
         // Now let's vote for agreeing proposals.
         let proposal = proposals.last().unwrap().clone();
 
         let original_epoch_id = state.keyset.epoch_id;
-        for (i, (account_id, _, _)) in participants
-            .participants()
-            .iter()
-            .enumerate()
-            .take(state.parameters.threshold().value() as usize)
-        {
+        // existing participants vote
+        let mut n_votes = 0;
+        for (account_id, _, _) in participants.participants().iter() {
+            if !proposal.participants().is_participant(account_id) {
+                continue;
+            }
+            n_votes += 1;
             env.set_signer(account_id);
             state
                 .vote_new_parameters(state.keyset.epoch_id.next(), &proposal)
                 .unwrap();
-            if i + 1 < state.parameters.threshold().value() as usize || num_domains == 0 {
-                assert!(state.resharing_state.is_none());
-            } else {
-                assert!(state.resharing_state.is_some());
+            if n_votes < proposal.participants().len() || num_domains == 0 {
+                assert_matches!(
+                    state.resharing_state,
+                    None,
+                    "votes {n_votes} domains: {num_domains}"
+                )
+            }
+        }
+        // candidates vote
+        for (account_id, _, _) in proposal.participants().participants().iter() {
+            if participants.is_participant(account_id) {
+                continue;
+            }
+            n_votes += 1;
+            env.set_signer(account_id);
+            state
+                .vote_new_parameters(state.keyset.epoch_id.next(), &proposal)
+                .unwrap();
+            if n_votes < proposal.participants().len() || num_domains == 0 {
+                assert_matches!(
+                    state.resharing_state,
+                    None,
+                    "votes {n_votes} domains: {num_domains}"
+                )
             }
         }
         if num_domains == 0 {
-            // If there are no domains, we should just increase the epoch id.
+            // If there are no domains, we should transition directly to Running with a higher
+            // epoch ID, not resharing.
             assert_eq!(state.keyset.epoch_id, original_epoch_id.next());
             assert_eq!(state.parameters_votes, ThresholdParametersVotes::default());
             assert_eq!(state.add_domains_votes, AddDomainsVotes::default());
         } else {
-            let resharing = state.resharing_state.unwrap();
+            let resharing = state.expect_resharing_state();
             assert_eq!(
                 resharing.prospective_epoch_id(),
                 state.keyset.epoch_id.next(),
@@ -465,18 +523,14 @@ pub mod running_tests {
         test_running_for(4);
     }
 
-    //// PORTED RESHARING TESTS:
-    ///
     fn start_resharing_process_for_running_state(
         running_state: &mut RunningContractState,
     ) -> Environment {
         let mut env = Environment::new(Some(100), None, None);
         let proposal = gen_valid_params_proposal(&running_state.parameters);
-        let voting_participants = running_state.parameters.participants().participants()
-            [0..running_state.parameters.threshold().value() as usize]
-            .to_vec();
 
-        for (account, _, _) in voting_participants {
+        for (account, _, _) in proposal.participants().participants() {
+            env.set_signer(account);
             assert!(
                 running_state.resharing_state.is_none(),
                 "Running state should not start before all participants have voted."
@@ -717,7 +771,6 @@ pub mod running_tests {
         test_resharing_contract_state_for(4);
     }
 
-    // TODO: Move this test to `running.rs`, as the logic of resharing re-proposal is moved there.
     #[test]
     fn test_resharing_reproposal() {
         let mut running_state = gen_running_state(3);
@@ -734,7 +787,6 @@ pub mod running_tests {
         assert!(running_state.start(first_key_event_id, 0).is_ok());
 
         let old_participants = running_state.parameters.participants().clone();
-        let old_threshold = running_state.parameters.threshold().value() as usize;
         {
             let new_participants = running_state
                 .resharing_key()
@@ -759,7 +811,7 @@ pub mod running_tests {
         // should be rejected, since all re-proposals must be valid against the original.
         let mut new_participants_1 = old_participants.clone();
         let new_threshold = Threshold::new(old_participants.len() as u64);
-        new_participants_1.add_random_participants_till_n(old_participants.len() * 3 / 2);
+        new_participants_1.add_random_participants_till_n((old_participants.len() * 3).div_ceil(2));
         let new_participants_2 = new_participants_1
             .subset(new_participants_1.len() - old_participants.len()..new_participants_1.len());
         let new_params_1 =
@@ -792,7 +844,7 @@ pub mod running_tests {
         }
 
         // Repropose with new_params_1.
-        for (account, _, _) in &old_participants.participants()[0..old_threshold] {
+        for (account, _, _) in new_params_1.participants().participants() {
             env.set_signer(account);
             assert_matches!(
                 running_state.resharing_state,

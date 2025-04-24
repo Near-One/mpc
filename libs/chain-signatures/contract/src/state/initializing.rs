@@ -176,10 +176,7 @@ mod tests {
         let domains_to_add = gen_domains_to_add(&running.domains, num_domains - num_generated);
 
         let mut initializing_state = None;
-        let voting_participants = running.parameters.participants().participants()
-            [0..running.parameters.threshold().value() as usize]
-            .to_vec();
-        for (account, _, _) in voting_participants {
+        for (account, _, _) in running.parameters.participants().participants().clone() {
             env.set_signer(&account);
             assert!(initializing_state.is_none());
             initializing_state = running.vote_add_domains(domains_to_add.clone()).unwrap();

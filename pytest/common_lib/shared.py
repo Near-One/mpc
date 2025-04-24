@@ -1,5 +1,4 @@
 import base64
-import random
 import base58
 import os
 import sys
@@ -302,7 +301,7 @@ class MpcCluster:
             assert_contract=False
         )  # do not assert when contract is not initialized
         self.init_contract(threshold=threshold)
-        self.add_domains(domains)
+        self.add_domains(domains, ignore_vote_errors=False)
 
     def define_candidate_set(self, mpc_nodes: List[MpcNode]):
         """
@@ -396,7 +395,8 @@ class MpcCluster:
 
     def add_domains(self,
                     signature_schemes: List[SignatureScheme],
-                    wait_for_running=True):
+                    wait_for_running=True,
+                    ignore_vote_errors=False):
         print(
             f"\033[91m(Vote Domains) Adding domains: \033[93m{signature_schemes}\033[0m"
         )
@@ -414,13 +414,20 @@ class MpcCluster:
         args = {
             'domains': domains_to_add,
         }
-        for node in random.sample(self.get_voters(), k=state.threshold()):
+
+        for node in self.get_voters():
             print(f"{node.print()} voting to add domain(s)")
             tx = node.sign_tx(self.mpc_contract_account(),
                               'vote_add_domains',
                               args,
                               nonce_offset=2)  # this is a bit hacky
-            node.send_txn_and_check_success(tx)
+            try:
+                node.send_txn_and_check_success(tx)
+            except Exception as err:
+                if ignore_vote_errors:
+                    continue
+                else:
+                    assert False, err
         assert self.wait_for_state('Initializing'), "failed to initialize"
         if wait_for_running:
             assert self.wait_for_state('Running'), "failed to run"
@@ -440,11 +447,16 @@ class MpcCluster:
         }
         state = self.contract_state()
         assert state.is_state('Running'), "Require running state"
-        old_threshold = state.threshold()
-        for node in random.sample(self.get_voters(), k=old_threshold):
+        for node in self.get_voters():
             tx = node.sign_tx(self.mpc_contract_account(),
                               'vote_new_parameters', args)
             node.send_txn_and_check_success(tx)
+        for node in new_participants:
+            if node not in self.get_voters():
+                tx = node.sign_tx(self.mpc_contract_account(),
+                                  'vote_new_parameters', args)
+                node.send_txn_and_check_success(tx)
+
         assert self.wait_for_state('Resharing'), "failed to start resharing"
         if wait_for_running:
             assert self.wait_for_state(
@@ -463,10 +475,6 @@ class MpcCluster:
 
     def contract_state(self):
         return ContractState(self.get_contract_state())
-
-    def get_summary(self):
-        running = ContractState(self.get_contract_state())
-        running.print()
 
     def make_sign_request_txns(self,
                                requests_per_domains: int,
@@ -606,12 +614,11 @@ class MpcCluster:
         sha256_hash = hashlib.sha256(contract_code).hexdigest()
         return sha256_hash
 
-    def vote_update(self, node_id, update_id):
+    def vote_update(self, node, update_id):
         vote_update_args = {'id': update_id}
-        node = self.mpc_nodes[node_id]
         tx = node.sign_tx(self.mpc_contract_account(), 'vote_update',
                           vote_update_args)
-        node.send_txn_and_check_success(tx)
+        return node.send_txn_and_check_success(tx)
 
     def assert_is_deployed(self, contract):
         hash_expected = hashlib.sha256(contract).hexdigest()
@@ -632,8 +639,7 @@ class MpcCluster:
         tx = node.sign_tx(self.mpc_contract_account(),
                           'remove_timed_out_requests',
                           {'max_num_to_remove': max_num_to_remove})
-        res = node.send_txn_and_check_success(tx)
-        return res
+        return node.send_txn_and_check_success(tx)
 
 
 def extract_tx_costs(res):

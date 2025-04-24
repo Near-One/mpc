@@ -3,6 +3,7 @@ use super::queue::{
 };
 use crate::primitives::ParticipantId;
 use crate::sign_request::SignatureRequest;
+use near_indexer_primitives::types::{BlockHeight, NumBlocks};
 use std::collections::{BinaryHeap, HashSet};
 use std::fmt::Debug;
 use std::fmt::Write;
@@ -14,8 +15,10 @@ const NUM_COMPLETED_REQUESTS_TO_KEEP: usize = 100;
 pub(super) struct CompletedSignatureRequest {
     pub request: SignatureRequest,
     pub progress: Arc<Mutex<SignatureComputationProgress>>,
-    pub indexed_block_height: u64,
-    pub completed_block_height: Option<u64>,
+    pub indexed_block_height: BlockHeight,
+    /// The block height at which the request was responded to successfully,
+    /// as well as the delay in wall time observed from the indexer.
+    pub completion_delay: Option<(NumBlocks, near_time::Duration)>,
 }
 
 /// A buffer of completed signature requests, for exporting to /debug/signatures.
@@ -63,14 +66,19 @@ impl Debug for CompletedSignatureRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "  [completed] blk {:>10} -> {:<16} id: {} rx: {:<44} tries: {:<2}",
+            "  [completed] blk {:>10} -> {:<24} id: {} rx: {:<44} tries: {:<2}",
             self.indexed_block_height,
-            self.completed_block_height
-                .map(|h| format!(
-                    "{:>10} (+{})",
-                    h,
-                    h.saturating_sub(self.indexed_block_height)
-                ))
+            self.completion_delay
+                .map(|(delay_blocks, delay_time)| {
+                    let duration_rounded_to_ms =
+                        near_time::Duration::milliseconds(delay_time.whole_milliseconds() as i64);
+                    format!(
+                        "{:>10} (+{}, {})",
+                        self.indexed_block_height + delay_blocks,
+                        delay_blocks,
+                        duration_rounded_to_ms,
+                    )
+                })
                 .unwrap_or("?".to_string()),
             &format!("{:?}", self.request.id)[0..6],
             format!("{:?}", self.request.receipt_id),
@@ -96,7 +104,7 @@ impl QueuedSignatureRequest {
         }
         write!(
             &mut output,
-            "  {:>11} blk {:>10} -> {:<16} id: {} rx: {:<44} tries: {:<2}",
+            "  {:>11} blk {:>10} -> {:<24} id: {} rx: {:<44} tries: {:<2}",
             if leader_selection.last() == Some(&me) {
                 "[leader]"
             } else {
@@ -220,10 +228,13 @@ mod tests {
                 },
                 progress: Default::default(),
                 indexed_block_height: i,
-                completed_block_height: if rand::random::<bool>() {
+                completion_delay: if rand::random::<bool>() {
                     None
                 } else {
-                    Some(i + rand::random::<u64>() % 100)
+                    Some((
+                        i + rand::random::<u64>() % 100,
+                        near_time::Duration::milliseconds(100),
+                    ))
                 },
             });
         }

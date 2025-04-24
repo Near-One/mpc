@@ -1,7 +1,6 @@
 pub mod common;
 
-use common::{check_call_success, init_env_secp256k1};
-use mpc_contract::primitives::participants::ParticipantInfo;
+use common::{check_call_success, gen_accounts, init_env_secp256k1};
 use mpc_contract::primitives::thresholds::{Threshold, ThresholdParameters};
 use mpc_contract::state::running::RunningContractState;
 use mpc_contract::state::ProtocolContractState;
@@ -21,7 +20,7 @@ async fn test_keygen() -> anyhow::Result<()> {
             })
         ]
     });
-    for i in [1, 2] {
+    for i in [0, 1, 2] {
         check_call_success(
             accounts[i]
                 .call(contract.id(), "vote_add_domains")
@@ -96,7 +95,7 @@ async fn test_cancel_keygen() -> anyhow::Result<()> {
             })
         ]
     });
-    for i in [1, 2] {
+    for i in [0, 1, 2] {
         check_call_success(
             accounts[i]
                 .call(contract.id(), "vote_add_domains")
@@ -140,9 +139,7 @@ async fn test_cancel_keygen() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_resharing() -> anyhow::Result<()> {
-    let (worker, contract, accounts, _) = init_env_secp256k1(1).await;
-
-    let alice = worker.dev_create_account().await?;
+    let (worker, contract, mut accounts, _) = init_env_secp256k1(1).await;
 
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     let existing_params = match state {
@@ -150,20 +147,13 @@ async fn test_resharing() -> anyhow::Result<()> {
         _ => panic!("should be in running state"),
     };
     let mut new_participants = existing_params.participants().clone();
-    new_participants
-        .insert(
-            alice.id().clone(),
-            ParticipantInfo {
-                url: "127.0.0.1".to_string(),
-                sign_pk: PublicKey::from_str(
-                    "ed25519:J75xXmF7WUPS3xCm3hy2tgwLCKdYM1iJd4BWF8sWVnae",
-                )?,
-            },
-        )
-        .unwrap();
+    let (acc, p) = gen_accounts(&worker, 1).await;
+    let new_p = p.participants().first().unwrap().clone();
+    new_participants.insert(new_p.0.clone(), new_p.2).unwrap();
+    accounts.push(acc[0].clone());
     let proposal = ThresholdParameters::new(new_participants, Threshold::new(3)).unwrap();
 
-    for account in &accounts[1..3] {
+    for account in &accounts {
         check_call_success(
             account
                 .call(contract.id(), "vote_new_parameters")
@@ -211,7 +201,7 @@ async fn test_resharing() -> anyhow::Result<()> {
         },
     });
 
-    for account in [&accounts[0], &accounts[1], &accounts[2], &alice] {
+    for account in &accounts {
         check_call_success(
             account
                 .call(contract.id(), "vote_reshared")
@@ -235,9 +225,7 @@ async fn test_resharing() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_repropose_resharing() -> anyhow::Result<()> {
-    let (worker, contract, accounts, _) = init_env_secp256k1(1).await;
-
-    let alice = worker.dev_create_account().await?;
+    let (worker, contract, mut accounts, _) = init_env_secp256k1(1).await;
 
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     let existing_params = match state {
@@ -245,21 +233,12 @@ async fn test_repropose_resharing() -> anyhow::Result<()> {
         _ => panic!("should be in running state"),
     };
     let mut new_participants = existing_params.participants().clone();
-    new_participants
-        .insert(
-            alice.id().clone(),
-            ParticipantInfo {
-                url: "127.0.0.1".to_string(),
-                sign_pk: PublicKey::from_str(
-                    "ed25519:J75xXmF7WUPS3xCm3hy2tgwLCKdYM1iJd4BWF8sWVnae",
-                )
-                .unwrap(),
-            },
-        )
-        .unwrap();
+    let (acc, p) = gen_accounts(&worker, 1).await;
+    let new_p = p.participants().first().unwrap().clone();
+    new_participants.insert(new_p.0.clone(), new_p.2).unwrap();
     let proposal = ThresholdParameters::new(new_participants, Threshold::new(3)).unwrap();
-
-    for account in &accounts[..existing_params.threshold().value() as usize] {
+    accounts.push(acc[0].clone());
+    for account in &accounts {
         check_call_success(
             account
                 .call(contract.id(), "vote_new_parameters")
@@ -285,7 +264,7 @@ async fn test_repropose_resharing() -> anyhow::Result<()> {
         _ => panic!("should be in resharing state"),
     }
 
-    for i in [0, 2] {
+    for i in [0, 1, 2] {
         check_call_success(
             accounts[i]
                 .call(contract.id(), "vote_new_parameters")
