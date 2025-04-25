@@ -21,7 +21,6 @@ pub enum ProtocolContractState {
     NotInitialized,
     Initializing(InitializingContractState),
     Running(RunningContractState),
-    // Resharing(ResharingContractState),
 }
 
 impl From<v0_state::ProtocolContractState> for ProtocolContractState {
