@@ -330,103 +330,92 @@ impl Coordinator {
         let config_file_clone = config_file.clone();
         let running_state_clone = running_state.clone();
         let keyshare_storage_clone = keyshare_storage.clone();
-        let chain_txn_sender_clone = chain_txn_sender.clone();
+        let mut chain_txn_sender_clone = chain_txn_sender.clone();
 
         tokio::spawn(async move {
-            // For the running state, we run the full MPC protocol.
-            // There's no timeout. The only time we stop is when the contract state
-            // changes to no longer be running (or if somehow the epoch changes).
+            loop {
+                // For the running state, we run the full MPC protocol.
+                // There's no timeout. The only time we stop is when the contract state
+                // changes to no longer be running (or if somehow the epoch changes).
+                let resharing_state: ContractResharingState = loop {
+                    let change = resharing_state_receiver.changed().await;
 
-            let mut current_resharing_process: Option<(
-                tokio::task::JoinHandle<MpcJobResult>,
-                EpochId,
-            )> = None;
+                    if let Err(receive_error) = change {
+                        tracing::info!(
+                            "Receive error for resharing state watcher: {:?}",
+                            receive_error
+                        );
+                        return;
+                    }
 
-            let resharing_state = loop {
-                resharing_state_receiver.changed().await;
-                let resharing_state = resharing_state_receiver.borrow_and_update().clone();
-
-                let Some(state) = resharing_state else {
-                    continue;
+                    match resharing_state_receiver.borrow_and_update().clone() {
+                        Some(resharing_state) => break resharing_state,
+                        None => continue,
+                    }
                 };
 
-                break state;
-            };
-            let (key_event_sender, key_event_receiver) =
-                watch::channel(resharing_state.key_event.clone());
+                let (key_event_sender, key_event_receiver) =
+                    watch::channel(resharing_state.key_event.clone());
 
-            let resharing_process_join_handle = tokio::spawn(Self::run_key_resharing(
-                secret_db_clone,
-                secrets_clone,
-                config_file_clone,
-                keyshare_storage_clone,
-                running_state.clone(),
-                resharing_state.new_participants.clone(),
-                chain_txn_sender_clone,
-                key_event_receiver,
-            ));
+                let mut resharing_process_future = Box::pin(Self::run_key_resharing(
+                    secret_db_clone.clone(),
+                    &secrets_clone,
+                    &config_file_clone,
+                    keyshare_storage_clone.clone(),
+                    running_state_clone.clone(),
+                    resharing_state.new_participants.clone(),
+                    &mut chain_txn_sender_clone,
+                    key_event_receiver,
+                ));
 
-            let resharing_process_epoch_id = resharing_state.key_event.id.epoch_id;
-            let mut current_resharing_process =
-                (resharing_process_join_handle, resharing_process_epoch_id);
+                let resharing_process_epoch_id = resharing_state.key_event.id.epoch_id;
+                loop {
+                    select! {
+                        resharing_result = &mut resharing_process_future => {
+                            todo!("Use the `resharing_result`. Break if failed?");
+                            break;
+                        }
+                        change = resharing_state_receiver.changed() => {
+                            if let Err(receive_error) = change {
+                                tracing::info!("Receive error for resharing state watcher: {:?}", receive_error);
+                                return;
+                            }
 
-            loop {
-                select! {
-                    // mpc_job = current_resharing_process.0 => {
-                    //     todo!()
-                    // }
-                    _ = resharing_state_receiver.changed() => {
+                            enum UpdateStatus {
+                                CurrentResharingUpdate(ContractResharingState),
+                                NewResharingState,
+                                CurrentResharingCancelled,
+                            }
 
-                        let Some(new_resharing_state) = resharing_state_receiver.borrow_and_update().clone()
-                        else {
-                            continue;
-                        };
+                            let update_status = match resharing_state_receiver.borrow_and_update().clone() {
+                                Some(resharing_state) => {
+                                    let new_resharing_state_epoch_id = resharing_state.key_event.id.epoch_id;
+                                    let update_for_same_epoch_id = new_resharing_state_epoch_id == resharing_process_epoch_id;
 
-                        let new_resharing_state_epoch_id = resharing_state.key_event.id.epoch_id;
-                        let update_for_same_epoch_id = new_resharing_state_epoch_id == current_resharing_process.1;
+                                    if update_for_same_epoch_id {
+                                        UpdateStatus::CurrentResharingUpdate(resharing_state)
+                                    } else {
+                                        UpdateStatus::NewResharingState
+                                    }
 
-                        if update_for_same_epoch_id{
-                            // TODO: What if receiver is dropped?
-                            // Previously the job would get cancelled.
-                            let _ = key_event_sender.send(new_resharing_state.key_event.clone());
+                                },
+                                None => UpdateStatus::CurrentResharingCancelled,
+                            };
+
+                            match update_status {
+                                UpdateStatus::CurrentResharingUpdate(state) => {
+                                    // TODO: Should break here as well if the send fails.
+                                    let _ = key_event_sender.send(state.key_event.clone());
+                                },
+                                UpdateStatus::CurrentResharingCancelled | UpdateStatus::NewResharingState => {
+                                    resharing_state_receiver.mark_unchanged();
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
             }
-
-            // // In resharing state, we perform key resharing, again with a timeout.
-            // let (key_event_sender, key_event_receiver) =
-            //     watch::channel(state.key_event.clone());
-            // MpcJob {
-            //     name: "Resharing",
-            //     fut: Self::create_runtime_and_run(
-            //         "Resharing",
-            //         self.config_file.cores,
-            //         Self::run_key_resharing(
-            //             self.secret_db.clone(),
-            //             self.secrets.clone(),
-            //             self.config_file.clone(),
-            //             self.key_storage_config.create().await?.into(),
-            //             state.previous_running_state.clone(),
-            //             state.new_participants.clone(),
-            //             self.indexer.txn_sender.clone(),
-            //             key_event_receiver,
-            //         ),
-            //     )?,
-            //     stop_fn: Box::new(move |new_state| match new_state {
-            //         ContractState::Resharing(new_state) => {
-            //             if new_state.key_event.id.epoch_id == state.key_event.id.epoch_id {
-            //                 // still same attempt, just send the update
-            //                 if key_event_sender.send(new_state.key_event.clone()).is_ok() {
-            //                     return false;
-            //                 }
-            //             }
-            //             true
-            //         }
-            //         _ => true,
-            //     }),
-            // }
-            // }
         });
 
         let Some(mpc_config) = MpcConfig::from_participants_with_near_account_id(
@@ -529,12 +518,12 @@ impl Coordinator {
     #[allow(clippy::too_many_arguments)]
     async fn run_key_resharing(
         secret_db: Arc<SecretDB>,
-        secrets: SecretsConfig,
-        config_file: ConfigFile,
+        secrets: &SecretsConfig,
+        config_file: &ConfigFile,
         keyshare_storage: Arc<KeyshareStorage>,
         previous_running_state: ContractRunningState,
         new_participants: ParticipantsConfig,
-        chain_txn_sender: mpsc::Sender<ChainSendTransactionRequest>,
+        chain_txn_sender: &mut mpsc::Sender<ChainSendTransactionRequest>,
         key_event_receiver: watch::Receiver<ContractKeyEventInstance>,
     ) -> anyhow::Result<MpcJobResult> {
         let Some(mpc_config) = MpcConfig::from_participants_with_near_account_id(
