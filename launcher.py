@@ -1,6 +1,9 @@
+from collections import deque
 import os
+import requests
 from subprocess import run
 import sys
+import time
 import traceback
 
 IMAGE_HASH_FILE="/mnt/shared/image-hash"
@@ -40,9 +43,13 @@ def main():
     image_hash = open(IMAGE_HASH_FILE).readline().strip()
 
     # DOCKER_CONTENT_TRUST=1 requires us to be explicit (use its sha256) about which image we pull, i.e., pulling :latest will result in an error
-    manifest_hash_latest = run("docker manifest inspect -v thomasknauthnear/mpc-node | jq -r '.Descriptor.digest'",
-                             shell=True, capture_output=True)
+    proc = run("docker manifest inspect -v thomasknauthnear/mpc-node | jq -r '.Descriptor.digest'",
+               shell=True, capture_output=True)
 
+    if proc.returncode:
+        raise RuntimeError("docker manifest returned non-zero exit code %d" % proc.returncode)
+
+    manifest_hash_latest = proc.stdout.decode('utf-8').strip()
     name_and_hash_latest = DEFAULT_IMAGE_NAME + "@" + manifest_hash_latest
 
     env = os.environ.copy()
@@ -71,6 +78,59 @@ def main():
         raise RuntimeError("docker run non-zero exit code %d", proc.returncode)
 
     # at this point we could even extend rtmr3 with the image_file to reflect which particular mpc node we launched in the tdx quote (and not just user data)
+
+# API doc https://distribution.github.io/distribution/spec/api/
+def get_manifest_digest(registry_url: str, image_name: str, tags: list[str], image_hash: str):
+
+    if not tags:
+        raise Exception(f"No tags found for image {image_name}")
+
+    token_resp = requests.get(f'https://auth.docker.io/token?service=registry.docker.io&scope=repository:{image_name}:pull')
+    token_resp.raise_for_status()
+    token = token_resp.json().get('token', [])
+
+    tags = deque(tags)
+
+    # Fetching manifests requires an access token. Get the token.
+
+    # https://registry.hub.docker.com/v2/thomasknauthnear/mpc-node/manifests/sha256:d56f37c7f9597c1fcc17a9db40d1eb663018d4f0df3de6668b7dcd3a90eab904
+
+    # User needs to provide a tags we will check. This avoids iterating over all tags.
+    # Step 2: Loop through all tags, fetch manifest and compare hashes
+    while tags:
+        tag = tags.popleft()
+        print('====', tag)
+        manifest_url = f"https://{registry_url}/v2/{image_name}/manifests/{tag}"
+        headers = {"Accept": "application/vnd.docker.distribution.manifest.v2+json",
+                   "Authorization": f"Bearer {token}"}
+        manifest_resp = requests.get(manifest_url, headers=headers)
+        if manifest_resp.status_code != 200:
+            print(f"Warning: Could not fetch manifest for tag {tag}: {manifest_resp.text} {manifest_resp.headers}")
+            continue
+        
+        manifest = manifest_resp.json()
+
+        if manifest['mediaType'] == 'application/vnd.oci.image.index.v1+json':
+            for image_manifest in manifest['manifests']:
+                platform = image_manifest['platform']
+                if platform['architecture'] == 'amd64' and platform['os'] == 'linux':
+                    tags.append(image_manifest['digest'])
+            continue
+        elif manifest['mediaType'] == 'application/vnd.docker.distribution.manifest.v2+json':
+        # 'config' holds the actual image hash
+            print('tag', tag)
+            print('manifest', manifest)
+            config_digest = manifest.get('config', {}).get('digest')
+        elif manifest['mediaType'] == 'application/vnd.oci.image.manifest.v1+json':
+            config_digest = manifest['config']['digest']
+
+        if config_digest == image_hash:
+            # Return the manifest digest (from response headers)
+            manifest_digest = manifest_resp.headers.get('Docker-Content-Digest')
+            return manifest_digest
+        time.sleep(0.1)
+
+    raise Exception("Image hash not found among tags.")
 
 if __name__ == "__main__":
     try:
