@@ -30,3 +30,9 @@ This repository uses `rust-toolchain.toml` files, as some code sections may requ
 - Environment variables  
 
 For more information, refer to the [Rustup book on overrides](https://rust-lang.github.io/rustup/overrides.html).
+
+### Contributions
+
+The NEAR MPC Node is actively maintained by **[NEAR One](https://github.com/Near-One)** and **[HOT Labs](https://github.com/hot-dao)** <img src="https://storage.herewallet.app/ft/1:hot.png" alt="HOT Labs" height="20" style="position: relative; top: 10px;"/>, with valuable contributions from the broader open-source community. The underlying MPC implementation is used in production by the **[HOT Protocol](https://hot-labs.org)** — both for the off-chain Chain Signature API and the on-chain NEAR MPC signing API.
+
+We welcome contributions in the form of issues, feature requests, and pull requests. Please ensure any changes are well-documented and tested. For major changes, open an issue to discuss the proposed modifications first.

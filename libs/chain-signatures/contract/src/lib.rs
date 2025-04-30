@@ -49,7 +49,7 @@ const GAS_FOR_SIGN_CALL: Gas = Gas::from_tgas(10);
 // Register used to receive data id from `promise_await_data`.
 const DATA_ID_REGISTER: u64 = 0;
 // Prepaid gas for a `return_signature_and_clean_state_on_success` call
-const RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS: Gas = Gas::from_tgas(4);
+const RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS: Gas = Gas::from_tgas(5);
 // Prepaid gas for a `update_config` call
 const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
 
@@ -434,8 +434,12 @@ impl VersionedMpcContract {
         if !signature_is_valid {
             return Err(RespondError::InvalidSignature.into());
         }
+
+        let Self::V1(mpc_contract) = self else {
+            env::panic_str("expected V1")
+        };
         // First get the yield promise of the (potentially timed out) request.
-        if let Some(YieldIndex { data_id }) = self.get_pending_request(&request) {
+        if let Some(YieldIndex { data_id }) = mpc_contract.pending_requests.remove(&request) {
             // Finally, resolve the promise. This will have no effect if the request already timed.
             env::promise_yield_resume(&data_id, &serde_json::to_vec(&response).unwrap());
             Ok(())
@@ -825,10 +829,10 @@ impl VersionedMpcContract {
         let Self::V1(mpc_contract) = self else {
             env::panic_str("expected V1")
         };
-        mpc_contract.pending_requests.remove(&request);
         match signature {
             Ok(signature) => PromiseOrValue::Value(signature),
             Err(_) => {
+                mpc_contract.pending_requests.remove(&request);
                 let promise = Promise::new(env::current_account_id()).function_call(
                     "fail_on_timeout".to_string(),
                     vec![],

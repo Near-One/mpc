@@ -608,7 +608,7 @@ dependencies = [
  "futures",
  "hex",
  "mpc-contract 1.0.1",
- "mpc-contract 2.1.0-rc.1",
+ "mpc-contract 2.1.1-rc.1",
  "near-crypto 0.28.0",
  "near-jsonrpc-client",
  "near-jsonrpc-primitives",
@@ -1571,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "mpc-contract"
-version = "2.1.0-rc.1"
+version = "2.1.1-rc.1"
 dependencies = [
  "anyhow",
  "borsh",
