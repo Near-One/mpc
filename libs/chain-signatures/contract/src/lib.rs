@@ -48,8 +48,8 @@ use v0_state::MpcContractV0;
 const GAS_FOR_SIGN_CALL: Gas = Gas::from_tgas(10);
 // Register used to receive data id from `promise_await_data`.
 const DATA_ID_REGISTER: u64 = 0;
-// Prepaid gas for a `return_signature_and_clean_state_on_success` call
-const RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS: Gas = Gas::from_tgas(4);
+// Prepaid gas for a `return_signature` call
+const return_signature_CALL_GAS: Gas = Gas::from_tgas(4);
 // Prepaid gas for a `update_config` call
 const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
 
@@ -294,9 +294,9 @@ impl VersionedMpcContract {
         env::log_str(&serde_json::to_string(&near_sdk::env::random_seed_array()).unwrap());
 
         let promise_index = env::promise_yield_create(
-            "return_signature_and_clean_state_on_success",
-            &serde_json::to_vec(&(&request,)).unwrap(),
-            RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS,
+            "return_signature",
+            &[],
+            return_signature_CALL_GAS,
             GasWeight(0),
             DATA_ID_REGISTER,
         );
@@ -456,7 +456,12 @@ impl VersionedMpcContract {
             return Err(RespondError::InvalidSignature.into());
         }
         // First get the yield promise of the (potentially timed out) request.
-        if let Some(YieldIndex { data_id }) = self.get_pending_request(&request) {
+
+        let Self::V1(mpc_contract) = self else {
+            env::panic_str("expected V1")
+        };
+
+        if let Some(YieldIndex { data_id }) = mpc_contract.pending_requests.remove(&request) {
             // Finally, resolve the promise. This will have no effect if the request already timed.
             env::promise_yield_resume(&data_id, &serde_json::to_vec(&response).unwrap());
             Ok(())
@@ -831,15 +836,10 @@ impl VersionedMpcContract {
     /// Upon success, removes the signature from state and returns it.
     /// If the signature request times out, removes the signature request from state and panics to fail the original transaction
     #[private]
-    pub fn return_signature_and_clean_state_on_success(
+    pub fn return_signature(
         &mut self,
-        request: SignatureRequest, // this change here should actually be ok.
         #[callback_result] signature: Result<SignatureResponse, PromiseError>,
     ) -> PromiseOrValue<SignatureResponse> {
-        let Self::V1(mpc_contract) = self else {
-            env::panic_str("expected V1")
-        };
-        mpc_contract.pending_requests.remove(&request);
         match signature {
             Ok(signature) => PromiseOrValue::Value(signature),
             Err(_) => {
@@ -1001,10 +1001,7 @@ mod tests {
         match contract.respond(signature_request.clone(), signature_response.clone()) {
             Ok(_) => {
                 assert!(success);
-                contract.return_signature_and_clean_state_on_success(
-                    signature_request.clone(),
-                    Ok(signature_response),
-                );
+                contract.return_signature(signature_request.clone(), Ok(signature_response));
 
                 assert!(contract.get_pending_request(&signature_request).is_none(),);
             }
@@ -1044,10 +1041,7 @@ mod tests {
         );
         contract.sign(request);
         assert!(matches!(
-            contract.return_signature_and_clean_state_on_success(
-                signature_request.clone(),
-                Err(PromiseError::Failed)
-            ),
+            contract.return_signature(signature_request.clone(), Err(PromiseError::Failed)),
             PromiseOrValue::Promise(_)
         ));
         assert!(contract.get_pending_request(&signature_request).is_none());
