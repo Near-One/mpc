@@ -80,7 +80,7 @@ impl ProtocolContractState {
     ) -> Result<(), Error> {
         match self {
             ProtocolContractState::Running(running_state) => {
-                running_state.start(key_event_id, key_event_timeout_blocks)
+                running_state.start_key_resharing(key_event_id, key_event_timeout_blocks)
             }
             _ => Err(InvalidState::ProtocolStateNotRunning.into()),
         }

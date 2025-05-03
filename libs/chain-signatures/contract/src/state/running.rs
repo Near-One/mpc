@@ -288,7 +288,7 @@ impl RunningContractState {
 
     /// Starts a new attempt to reshare the key for the current domain.
     /// Returns an Error if the signer is not the leader (the participant with the lowest ID).
-    pub fn start(
+    pub fn start_key_resharing(
         &mut self,
         key_event_id: KeyEventId,
         key_event_timeout_blocks: u64,
@@ -604,17 +604,21 @@ pub mod running_tests {
                 assert!(running_state.vote_reshared(first_key_event_id).is_err());
                 assert!(running_state.vote_abort(first_key_event_id).is_err());
                 if *c != leader.0 {
-                    assert!(running_state.start(first_key_event_id, 1).is_err());
+                    assert!(running_state
+                        .start_key_resharing(first_key_event_id, 1)
+                        .is_err());
                 } else {
                     // Also check that starting with the wrong KeyEventId fails.
                     assert!(running_state
-                        .start(first_key_event_id.next_attempt(), 1)
+                        .start_key_resharing(first_key_event_id.next_attempt(), 1)
                         .is_err());
                 }
             }
             // start the resharing; verify that the resharing is for the right epoch and domain ID.
             env.set_signer(&leader.0);
-            assert!(running_state.start(first_key_event_id, 0).is_ok());
+            assert!(running_state
+                .start_key_resharing(first_key_event_id, 0)
+                .is_ok());
 
             let key_event = running_state
                 .resharing_key()
@@ -643,7 +647,7 @@ pub mod running_tests {
             // assert that votes for a different resharings do not count
             env.set_signer(&leader.0);
             assert!(running_state
-                .start(first_key_event_id.next_attempt(), 0)
+                .start_key_resharing(first_key_event_id.next_attempt(), 0)
                 .is_ok());
             let key_event = running_state
                 .resharing_key()
@@ -686,7 +690,7 @@ pub mod running_tests {
             env.advance_block_height(1);
             env.set_signer(&leader.0);
 
-            let start_result = running_state.start(key_event.next_attempt(), 0);
+            let start_result = running_state.start_key_resharing(key_event.next_attempt(), 0);
             assert_matches!(start_result, Ok(_));
 
             let key_event = running_state
@@ -703,7 +707,7 @@ pub mod running_tests {
 
             // assert that valid votes get counted correctly
             env.set_signer(&leader.0);
-            let start_result = running_state.start(key_event.next_attempt(), 0);
+            let start_result = running_state.start_key_resharing(key_event.next_attempt(), 0);
             assert_matches!(start_result, Ok(_));
 
             let key_event = running_state
@@ -784,7 +788,9 @@ pub mod running_tests {
             domain_id: running_state.domains.get_domain_by_index(0).unwrap().id,
             epoch_id: running_state.keyset.epoch_id.next(),
         };
-        assert!(running_state.start(first_key_event_id, 0).is_ok());
+        assert!(running_state
+            .start_key_resharing(first_key_event_id, 0)
+            .is_ok());
 
         let old_participants = running_state.parameters.participants().clone();
         {
