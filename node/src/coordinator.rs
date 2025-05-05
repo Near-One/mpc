@@ -1,9 +1,7 @@
 use crate::config::{ConfigFile, MpcConfig, ParticipantsConfig, SecretsConfig};
 use crate::db::{DBCol, SecretDB};
 use crate::indexer::handler::ChainBlockUpdate;
-use crate::indexer::participants::{
-    ContractKeyEventInstance, ContractResharingState, ContractRunningState, ContractState,
-};
+use crate::indexer::participants::{ContractKeyEventInstance, ContractRunningState, ContractState};
 use crate::indexer::types::ChainSendTransactionRequest;
 use crate::indexer::IndexerAPI;
 use crate::key_events::{
@@ -28,12 +26,10 @@ use cait_sith::{ecdsa, eddsa};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use mpc_contract::primitives::domain::{DomainId, SignatureScheme};
-use mpc_contract::primitives::key_state::EpochId;
 use near_time::Clock;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
-use tokio::select;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -367,6 +363,9 @@ impl Coordinator {
 
         let (sender, receiver) =
             new_tls_mesh_network(&mpc_config, &secrets.p2p_private_key).await?;
+        sender
+            .wait_for_ready(mpc_config.participants.threshold as usize)
+            .await?;
         let (network_client, mut channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
 
@@ -380,10 +379,12 @@ impl Coordinator {
                         // resharing message
                         MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
                         | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
-                            resharing_sender.send(network_channel)
+                            let _ = resharing_sender.send(network_channel);
                         }
                         // default to running channel
-                        _ => running_sender.send(network_channel),
+                        _ => {
+                            let _ = running_sender.send(network_channel);
+                        }
                     };
                 }
             });
@@ -403,17 +404,14 @@ impl Coordinator {
             let _ = update.commit();
             tracing::info!("Deleted all presignatures");
 
-            let secret_db = secret_db.clone();
-            let secrets = secrets.clone();
             let config_file = config_file.clone();
             let running_state = running_state.clone();
             let keyshare_storage = keyshare_storage.clone();
-            let mut chain_txn_sender: mpsc::Sender<ChainSendTransactionRequest> =
-                chain_txn_sender.clone();
+            let chain_txn_sender = chain_txn_sender.clone();
             let network_client = network_client.clone();
             let mpc_config = mpc_config.clone();
 
-            let resharing_handle = tokio::spawn(async move {
+            let _resharing_handle = tokio::spawn(async move {
                 Self::run_key_resharing(
                     &config_file,
                     keyshare_storage.clone(),
@@ -501,14 +499,6 @@ impl Coordinator {
             running_state.keyset.epoch_id, mpc_config.my_participant_id
         ));
 
-        let (sender, receiver) =
-            new_tls_mesh_network(&mpc_config, &secrets.p2p_private_key).await?;
-        sender
-            .wait_for_ready(mpc_config.participants.threshold as usize)
-            .await?;
-        let (network_client, channel_receiver, _handle) =
-            run_network_client(Arc::new(sender), Box::new(receiver));
-
         let sign_request_store = Arc::new(SignRequestStorage::new(secret_db.clone())?);
 
         let mut ecdsa_keyshares: HashMap<DomainId, ecdsa::KeygenOutput> = HashMap::new();
@@ -557,7 +547,7 @@ impl Coordinator {
         ));
         mpc_client
             .run(
-                channel_receiver,
+                running_receiver,
                 block_update_receiver,
                 chain_txn_sender,
                 signature_debug_request_receiver,

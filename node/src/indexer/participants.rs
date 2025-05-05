@@ -11,7 +11,6 @@ use mpc_contract::state::ProtocolContractState;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::watch;
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
