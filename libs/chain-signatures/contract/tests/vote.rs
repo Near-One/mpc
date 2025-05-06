@@ -168,7 +168,7 @@ async fn test_resharing() -> anyhow::Result<()> {
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     match state {
         ProtocolContractState::Running(RunningContractState {
-            resharing_state: Some(resharing_process),
+            resharing_process: Some(resharing_process),
             ..
         }) => {
             assert_eq!(
@@ -253,7 +253,7 @@ async fn test_repropose_resharing() -> anyhow::Result<()> {
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     match state {
         ProtocolContractState::Running(RunningContractState {
-            resharing_state: Some(resharing_process),
+            resharing_process: Some(resharing_process),
             ..
         }) => {
             assert_eq!(
@@ -280,7 +280,7 @@ async fn test_repropose_resharing() -> anyhow::Result<()> {
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     match state {
         ProtocolContractState::Running(RunningContractState {
-            resharing_state: Some(resharing_process),
+            resharing_process: Some(resharing_process),
             ..
         }) => {
             assert_eq!(
