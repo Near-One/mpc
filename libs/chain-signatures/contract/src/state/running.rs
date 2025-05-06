@@ -100,18 +100,20 @@ impl RunningContractState {
         }
     }
 
+    pub fn prospective_epoch_id(&self) -> EpochId {
+        match &self.resharing_process {
+            Some(active_resharing_process) => active_resharing_process.resharing_key.epoch_id(),
+            None => self.keyset.epoch_id,
+        }
+    }
+
     /// Casts a vote for a re-proposal. Requires the signer to be a participant of the prospective epoch.
     pub fn vote_new_parameters(
         &mut self,
         proposed_epoch_id: EpochId,
         proposal: &ThresholdParameters,
     ) -> Result<(), Error> {
-        let next_epoch_id = match &self.resharing_process {
-            Some(active_resharing_process) => {
-                active_resharing_process.resharing_key.epoch_id().next()
-            }
-            None => self.keyset.epoch_id.next(),
-        };
+        let next_epoch_id = self.prospective_epoch_id().next();
 
         if proposed_epoch_id != next_epoch_id {
             return Err(InvalidParameters::EpochMismatch.into());
