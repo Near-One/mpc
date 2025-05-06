@@ -26,12 +26,10 @@ pub enum ProtocolContractState {
 impl From<v0_state::ProtocolContractState> for ProtocolContractState {
     fn from(value: v0_state::ProtocolContractState) -> Self {
         match value {
-            v0_state::ProtocolContractState::NotInitialized => env::panic_str("not supported"),
-            v0_state::ProtocolContractState::Initializing(_) => env::panic_str("not supported"),
             v0_state::ProtocolContractState::Running(running) => {
                 ProtocolContractState::Running(running.into())
             }
-            v0_state::ProtocolContractState::Resharing(_) => env::panic_str("not supported"),
+            _ => env::panic_str("not supported"),
         }
     }
 }
@@ -94,8 +92,7 @@ impl ProtocolContractState {
             _ => Err(InvalidState::ProtocolStateNotRunning.into()),
         }
     }
-
-    /// Casts a vote for `public_key` in `key_event_id` during Initializtion.
+    /// Casts a vote for `public_key` in `key_event_id` during Initialization.
     /// Fails if the protocol is not in `Initializing` state.
     /// Returns the new protocol state if enough votes have been submitted.
     pub fn vote_pk(
@@ -156,13 +153,13 @@ impl From<&super::legacy_contract_state::ProtocolContractState> for ProtocolCont
         // can this be simplified?
         match &protocol_state {
             super::legacy_contract_state::ProtocolContractState::NotInitialized => {
-                ProtocolContractState::NotInitialized
+                Self::NotInitialized
             }
             super::legacy_contract_state::ProtocolContractState::Initializing(state) => {
-                ProtocolContractState::Initializing(state.into())
+                Self::Initializing(state.into())
             }
             super::legacy_contract_state::ProtocolContractState::Running(state) => {
-                ProtocolContractState::Running(state.into())
+                Self::Running(state.into())
             }
             super::legacy_contract_state::ProtocolContractState::Resharing(_) => {
                 unimplemented!("Migration of running state will not happen.")
@@ -180,10 +177,7 @@ impl ProtocolContractState {
         }
     }
     pub fn is_running(&self) -> bool {
-        if let ProtocolContractState::Running(_) = self {
-            return true;
-        }
-        false
+        matches!(self, ProtocolContractState::Running(_))
     }
     pub fn authenticate_update_vote(&self) -> Result<(), Error> {
         match &self {

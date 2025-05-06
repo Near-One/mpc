@@ -49,6 +49,7 @@ impl ThresholdParameters {
             Err(err) => Err(err),
         }
     }
+
     /// Ensures that the threshold `k` is sensible and meets the absolute and minimum requirements.
     /// That is:
     /// - threshold must be at least `MIN_THRESHOLD_ABSOLUTE`
@@ -71,6 +72,7 @@ impl ThresholdParameters {
         }
         Ok(())
     }
+
     pub fn validate(&self) -> Result<(), Error> {
         Self::validate_threshold(self.participants.len() as u64, self.threshold())?;
         self.participants.validate()
@@ -215,7 +217,7 @@ mod tests {
             assert_eq!(tp.threshold(), threshold);
             assert_eq!(tp.participants.len(), participants.len());
             assert_eq!(participants, *tp.participants());
-            // porbably overkill to test below
+            // probably overkill to test below
             for (account_id, _, _) in participants.participants() {
                 assert!(tp.participants.is_participant(account_id));
                 let expected_id = participants.id(account_id).unwrap();

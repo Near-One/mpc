@@ -533,7 +533,7 @@ class MpcCluster:
             Raises:
                 AssertionError:
                     - If the indexers fail to observe the signature requests before `constants.TIMEOUT` is reached.
-                    - If `sig_verification` raisese an AssertionError.
+                    - If `sig_verification` raises an AssertionError.
         """
         tx_hashes, _ = self.generate_and_send_signature_requests(
             requests_per_domains, add_gas, add_deposit)

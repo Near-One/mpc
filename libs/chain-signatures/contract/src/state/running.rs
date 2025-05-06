@@ -308,16 +308,15 @@ pub mod running_tests {
     use core::panic;
     use std::collections::BTreeSet;
 
-    use super::{ResharingState, RunningContractState};
-    use crate::primitives::domain::tests::gen_domain_registry;
-    use crate::primitives::domain::AddDomainsVotes;
-    use crate::primitives::key_state::{AttemptId, EpochId, KeyEventId, KeyForDomain, Keyset};
-    use crate::primitives::participants::{ParticipantId, Participants};
-    use crate::primitives::test_utils::{
-        bogus_ed25519_public_key_extended, gen_participant, gen_threshold_params,
+    use super::*;
+    use crate::primitives::{
+        domain::{tests::gen_domain_registry, AddDomainsVotes},
+        key_state::{AttemptId, EpochId, KeyForDomain, Keyset},
+        participants::{ParticipantId, Participants},
+        test_utils::{bogus_ed25519_public_key_extended, gen_participant, gen_threshold_params},
+        thresholds::{Threshold, ThresholdParameters},
+        votes::ThresholdParametersVotes,
     };
-    use crate::primitives::thresholds::{Threshold, ThresholdParameters};
-    use crate::primitives::votes::ThresholdParametersVotes;
     use crate::state::key_event::tests::{find_leader, Environment};
     use crate::state::key_event::KeyEvent;
     use assert_matches::assert_matches;
@@ -412,7 +411,7 @@ pub mod running_tests {
                 .vote_new_parameters(state.keyset.epoch_id.next().next(), &ksp)
                 .is_err());
         }
-        // Assert that disagreeing proposals do not reach concensus.
+        // Assert that disagreeing proposals do not reach consensus.
         // Generate an extra proposal for the next step.
         let mut proposals = Vec::new();
         for i in 0..participants.participants().len() + 1 {
@@ -438,7 +437,7 @@ pub mod running_tests {
             state
                 .vote_new_parameters(state.keyset.epoch_id.next(), &proposals[i])
                 .unwrap();
-            assert_matches!(state.resharing_state, None, "{:?}", i)
+            assert_matches!(state.resharing_process, None, "{:?}", i)
         }
 
         // Now let's vote for agreeing proposals.
@@ -458,7 +457,7 @@ pub mod running_tests {
                 .unwrap();
             if n_votes < proposal.participants().len() || num_domains == 0 {
                 assert_matches!(
-                    state.resharing_state,
+                    state.resharing_process,
                     None,
                     "votes {n_votes} domains: {num_domains}"
                 )
@@ -476,7 +475,7 @@ pub mod running_tests {
                 .unwrap();
             if n_votes < proposal.participants().len() || num_domains == 0 {
                 assert_matches!(
-                    state.resharing_state,
+                    state.resharing_process,
                     None,
                     "votes {n_votes} domains: {num_domains}"
                 )
@@ -543,7 +542,7 @@ pub mod running_tests {
                 .unwrap();
         }
 
-        assert_matches!(running_state.resharing_state, Some(_));
+        assert_matches!(running_state.resharing_process, Some(_));
         env
     }
 
@@ -718,7 +717,7 @@ pub mod running_tests {
             for (i, c) in candidates.clone().into_iter().enumerate() {
                 env.set_signer(&c);
 
-                assert_matches!(running_state.resharing_state, Some(_));
+                assert_matches!(running_state.resharing_process, Some(_));
                 assert_eq!(running_state.resharing_key().num_completed(), i);
                 assert_matches!(running_state.vote_reshared(key_event), Ok(()));
                 assert_matches!(running_state.vote_abort(key_event), Err(_));
@@ -730,7 +729,7 @@ pub mod running_tests {
         assert_eq!(new_keyset.epoch_id, expected_epoch_id_after_resharing);
 
         assert_matches!(
-            running_state.resharing_state,
+            running_state.resharing_process,
             None,
             "Resharing field is set to None when it is completed.",
         );
@@ -853,7 +852,7 @@ pub mod running_tests {
         for (account, _, _) in new_params_1.participants().participants() {
             env.set_signer(account);
             assert_matches!(
-                running_state.resharing_state,
+                running_state.resharing_process,
                 Some(_),
                 "Resharing is some wile not completed."
             );
@@ -863,7 +862,7 @@ pub mod running_tests {
         }
 
         assert_matches!(
-            running_state.resharing_state,
+            running_state.resharing_process,
             Some(_),
             "Resharing is some wile not completed."
         );

@@ -228,6 +228,7 @@ def test_update_v2_running():
                         ignore_vote_errors=True)
     cluster.send_and_await_signature_requests(1)
 
+    time.sleep(1)
     # introduce some state:
     args = {
         'prospective_epoch_id': 1,

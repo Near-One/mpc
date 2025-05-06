@@ -1,11 +1,11 @@
-use crate::assets::{DistributedAssetStorage, UniqueId};
+use crate::assets::DistributedAssetStorage;
 use crate::background::InFlightGenerationTracker;
 use crate::config::TripleConfig;
 use crate::db::SecretDB;
 use crate::metrics;
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-use crate::primitives::{participants_from_triples, ParticipantId};
+use crate::primitives::{participants_from_triples, ParticipantId, UniqueId};
 use crate::protocol::run_protocol;
 use crate::providers::ecdsa::{EcdsaSignatureProvider, EcdsaTaskId};
 use crate::providers::HasParticipants;
@@ -271,11 +271,10 @@ impl<const N: usize> MpcLeaderCentricComputation<()>
 #[cfg(test)]
 mod tests_many {
     use super::{ManyTripleGenerationComputation, PairedTriple};
-    use crate::assets::UniqueId;
     use crate::network::computation::MpcLeaderCentricComputation;
     use crate::network::testing::run_test_clients;
     use crate::network::{MeshNetworkClient, NetworkTaskChannel};
-    use crate::primitives::MpcTaskId;
+    use crate::primitives::{MpcTaskId, UniqueId};
     use crate::providers::ecdsa::EcdsaTaskId;
     use crate::tests::TestGenerators;
     use crate::tracing::init_logging;

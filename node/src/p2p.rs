@@ -716,7 +716,9 @@ mod tests {
     use crate::p2p::testing::{
         generate_keypair, generate_test_p2p_configs, keypair_to_raw_ed25519_secret_key, PortSeed,
     };
-    use crate::primitives::{MpcMessage, MpcTaskId, ParticipantId, PeerMessage};
+    use crate::primitives::{
+        ChannelId, MpcMessage, MpcStartMessage, MpcTaskId, ParticipantId, PeerMessage, UniqueId,
+    };
     use crate::providers::EcdsaTaskId;
     use crate::tracing::init_logging;
     use crate::tracking::testing::start_root_task_with_periodic_dump;
@@ -768,13 +770,17 @@ mod tests {
                 for _ in 0..n_attempts {
                     attempt_id = attempt_id.next();
                 }
+                let channel_id = ChannelId(UniqueId::generate(participant0));
                 let key_id =
                     KeyEventId::new(EpochId::new(epoch_id), DomainId(domain_id), attempt_id);
                 let msg0to1 = MpcMessage {
-                    task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing {
-                        key_event: key_id,
+                    channel_id,
+                    kind: crate::primitives::MpcMessageKind::Start(MpcStartMessage {
+                        task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing {
+                            key_event: key_id,
+                        }),
+                        participants: vec![participant0, participant1],
                     }),
-                    kind: crate::primitives::MpcMessageKind::Success,
                 };
                 sender0
                     .send(
@@ -790,9 +796,7 @@ mod tests {
                 assert_eq!(msg.message, msg0to1);
 
                 let msg1to0 = MpcMessage {
-                    task_id: MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing {
-                        key_event: key_id,
-                    }),
+                    channel_id,
                     kind: crate::primitives::MpcMessageKind::Abort("test".to_owned()),
                 };
                 sender1

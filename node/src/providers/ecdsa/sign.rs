@@ -1,7 +1,7 @@
-use crate::assets::UniqueId;
 use crate::metrics;
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::NetworkTaskChannel;
+use crate::primitives::UniqueId;
 use crate::protocol::run_protocol;
 use crate::providers::ecdsa::kdf::{derive_public_key, derive_randomness};
 use crate::providers::ecdsa::{

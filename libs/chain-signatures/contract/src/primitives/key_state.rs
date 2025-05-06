@@ -158,8 +158,8 @@ impl AuthenticatedParticipantId {
     }
 }
 
-/// This struct contains the account `env::signer_account_id()`, but is only contructible given a
-/// set of participants that includse the signer, thus acting as a typesystem-based enforcement
+/// This struct contains the account `env::signer_account_id()`, but is only constructible given a
+/// set of participants that include the signer, thus acting as a typesystem-based enforcement
 /// mechanism (albeit a best-effort one) for authenticating the signer.
 #[near(serializers=[borsh, json])]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
