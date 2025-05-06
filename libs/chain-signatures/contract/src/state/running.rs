@@ -534,7 +534,7 @@ pub mod running_tests {
                 running_state.resharing_process.is_none(),
                 "Running state should not start before all participants have voted."
             );
-            env.set_signer(&account);
+            env.set_signer(account);
             let next_epoch = running_state.keyset.epoch_id.next();
 
             running_state
@@ -554,7 +554,7 @@ pub mod running_tests {
             &self.resharing_process.as_ref().unwrap().resharing_key
         }
 
-        fn expect_resharing_state<'a>(&'a self) -> &'a ResharingState {
+        fn expect_resharing_state(&self) -> &ResharingState {
             self.resharing_process
                 .as_ref()
                 .expect("Running state has started resharing process when all votes are casted.")
@@ -780,7 +780,7 @@ pub mod running_tests {
         let mut env = start_resharing_process_for_running_state(&mut running_state);
 
         // Vote for first domain's key.
-        let leader = find_leader(&running_state.resharing_key());
+        let leader = find_leader(running_state.resharing_key());
         env.set_signer(&leader.0);
         let first_key_event_id = KeyEventId {
             attempt_id: AttemptId::new(),

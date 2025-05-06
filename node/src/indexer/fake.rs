@@ -85,7 +85,7 @@ impl FakeMpcContractState {
             panic!("Cannot start resharing from non-running state");
         };
 
-        let prev_epoch_id = running_state.keyset.epoch_id.clone();
+        let prev_epoch_id = running_state.keyset.epoch_id;
 
         running_state.resharing_process = Some(ResharingState {
             reshared_keys: Vec::new(),
