@@ -157,7 +157,8 @@ impl ContractState {
                 })
             }
             ProtocolContractState::Running(running_state) => {
-                let resharing_process = if let Some(state) = running_state.resharing_state.clone() {
+                let resharing_process = if let Some(state) = running_state.resharing_process.clone()
+                {
                     Some(ContractResharingState {
                         new_participants: convert_participant_infos(
                             state.resharing_key.proposed_parameters().clone(),

@@ -44,7 +44,7 @@ pub struct RunningContractState {
     pub parameters_votes: ThresholdParametersVotes,
     /// Votes for proposals to add new domains.
     pub add_domains_votes: AddDomainsVotes,
-    pub resharing_state: Option<ResharingState>,
+    pub resharing_process: Option<ResharingState>,
 }
 
 impl From<&legacy_contract_state::ResharingContractState> for RunningContractState {
@@ -62,7 +62,7 @@ impl From<v0_state::RunningContractState> for RunningContractState {
             parameters: value.parameters,
             parameters_votes: ThresholdParametersVotes::default(),
             add_domains_votes: value.add_domains_votes,
-            resharing_state: None,
+            resharing_process: None,
         }
     }
 }
@@ -96,7 +96,7 @@ impl RunningContractState {
             parameters,
             parameters_votes: ThresholdParametersVotes::default(),
             add_domains_votes: AddDomainsVotes::default(),
-            resharing_state: None,
+            resharing_process: None,
         }
     }
 
@@ -106,7 +106,7 @@ impl RunningContractState {
         proposed_epoch_id: EpochId,
         proposal: &ThresholdParameters,
     ) -> Result<(), Error> {
-        let next_epoch_id = match &self.resharing_state {
+        let next_epoch_id = match &self.resharing_process {
             Some(active_resharing_process) => {
                 active_resharing_process.resharing_key.epoch_id().next()
             }
@@ -145,7 +145,7 @@ impl RunningContractState {
 
             match first_domain {
                 Some(first_domain) => {
-                    self.resharing_state = Some(ResharingState {
+                    self.resharing_process = Some(ResharingState {
                         reshared_keys: Vec::new(),
                         resharing_key: KeyEvent::new(
                             next_epoch_id,
@@ -166,7 +166,7 @@ impl RunningContractState {
     }
 
     pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
-        let Some(resharing_process) = &mut self.resharing_state else {
+        let Some(resharing_process) = &mut self.resharing_process else {
             return Err(InvalidState::ProtocolRunningStateIsNotResharing.into());
         };
 
@@ -236,7 +236,7 @@ impl RunningContractState {
             VoteOutcome::AllDomainsReshared(new_keyset, new_threshold_parameters) => {
                 self.keyset = new_keyset;
                 self.parameters = new_threshold_parameters;
-                self.resharing_state = None;
+                self.resharing_process = None;
             }
             VoteOutcome::VoteCollected | VoteOutcome::NextDomainResharing => {}
         }
@@ -279,7 +279,7 @@ impl RunningContractState {
     /// After aborting, another call to start() is necessary to start a new attempt.
     /// Returns error if there is no active attempt, or if the signer is not a proposed participant.
     pub fn vote_abort(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
-        let Some(resharing_process) = &mut self.resharing_state else {
+        let Some(resharing_process) = &mut self.resharing_process else {
             return Err(InvalidState::ProtocolRunningStateIsNotResharing.into());
         };
 
@@ -293,7 +293,7 @@ impl RunningContractState {
         key_event_id: KeyEventId,
         key_event_timeout_blocks: u64,
     ) -> Result<(), Error> {
-        let Some(resharing_process) = &mut self.resharing_state else {
+        let Some(resharing_process) = &mut self.resharing_process else {
             return Err(InvalidState::ProtocolRunningStateIsNotResharing.into());
         };
 
@@ -532,7 +532,7 @@ pub mod running_tests {
         for (account, _, _) in proposal.participants().participants() {
             env.set_signer(account);
             assert!(
-                running_state.resharing_state.is_none(),
+                running_state.resharing_process.is_none(),
                 "Running state should not start before all participants have voted."
             );
             env.set_signer(&account);
@@ -552,11 +552,11 @@ pub mod running_tests {
 
     impl RunningContractState {
         fn resharing_key(&self) -> &KeyEvent {
-            &self.resharing_state.as_ref().unwrap().resharing_key
+            &self.resharing_process.as_ref().unwrap().resharing_key
         }
 
         fn expect_resharing_state<'a>(&'a self) -> &'a ResharingState {
-            self.resharing_state
+            self.resharing_process
                 .as_ref()
                 .expect("Running state has started resharing process when all votes are casted.")
         }
