@@ -1,4 +1,5 @@
 from collections import deque
+import logging
 import os
 import requests
 from subprocess import run
@@ -6,14 +7,15 @@ import sys
 import time
 import traceback
 
-IMAGE_DIGEST_FILE="/mnt/shared/image-hash"
-DEFAULT_MANIFEST_HASH='sha256:d56f37c7f9597c1fcc17a9db40d1eb663018d4f0df3de6668b7dcd3a90eab904'
-DEFAULT_IMAGE_HASH='sha256:84831fe2c8e9acd06086f466e1d4c14e7d976362e4cb3457c6e1da26a2365c6c'
+# If we change any of these, the launcher's code identity changes. This is by design. Don't ever let these variables be set from outside this script!
+IMAGE_DIGEST_FILE="/mnt/shared/image-digest"
+DEFAULT_IMAGE_HASH='sha256:04640ae75248a94e4a9e542c2bfbfb59d438328a6a6afcd40092a654f956813d'
+
+# Parameters irrelevant for security.
 DEFAULT_IMAGE_NAME='thomasknauthnear/mpc-node'
 DEFAULT_TAGS='latest'
 
-# thomasknauthnear/mpc-node@sha256:d56f37c7f9597c1fcc17a9db40d1eb663018d4f0df3de6668b7dcd3a90eab904
-# thomasknauthnear/mpc-node@sha256:eea23e28b0045a58de933f70ee813b240397bcb9211395b37a2b197554365bf3
+# TODO try with mpc-node-gcp
 
 # docker image pull <repo/name:tag>@sha256:<repo digest>
 #
@@ -29,17 +31,34 @@ DEFAULT_TAGS='latest'
 
 # Image integrity is only checked on `docker pull`. Afterwards, modifications are not detected.
 
+def parse_env_file(path):
+    env = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            key, _, value = line.partition("=")
+            env[key.strip()] = value.strip()
+    return env
+
 def main():
 
-    tags = os.environ.get("LAUNCHER_IMAGE_TAGS", DEFAULT_TAGS).split(',')
+    # In dstack, /tapp/user_config provides unmeasured data to the CVM.
+    # We use this interface to make some aspects of the launcher configurable.
+    # *** Only security-irrelevant parts *** may be made configurable in this way, e.g., the specific image tag(s) we look up.
+    DSTACK_USER_CONFIG_FILE = '/tapp/user_config'
+    user_vars = parse_env_file('/tapp/user_config') if os.path.isfile(DSTACK_USER_CONFIG_FILE) else {}
 
-    if not os.path.isfile(IMAGE_DIGEST_FILE):
-        with open(IMAGE_DIGEST_FILE, 'w') as f:
-            f.write(DEFAULT_IMAGE_HASH)
+    tags = user_vars.get("LAUNCHER_IMAGE_TAGS", DEFAULT_TAGS).split(',')
 
-    # security: here we trust image registry and pre-image resistance
-    # go fetch hardcoded image has, `docker image pull image_name_and_hash`?
-    image_digest = open(IMAGE_DIGEST_FILE).readline().strip()
+    image_digest = DEFAULT_IMAGE_HASH
+
+    if os.path.isfile(IMAGE_DIGEST_FILE):
+        image_digest = open(IMAGE_DIGEST_FILE).readline().strip()
+        logging.info(f'Using image digest {image_digest} from file.')
+
+    logging.info(f"Using tags {tags} to find matching image.")
 
     REGISTRY = 'registry.hub.docker.com'
     manifest_digest = get_manifest_digest(REGISTRY, DEFAULT_IMAGE_NAME, tags, image_digest)
@@ -64,11 +83,13 @@ def main():
     if pulled_image_digest != image_digest:
         raise RuntimeError("Wrong image digest %s. Expected digest is %s" % (pulled_image_digest, image_digest))
 
-    # TODO extend rtmr3 with image_digest; API https://github.com/Dstack-TEE/dstack/pull/160
+    # Python's requests package cannot natively talk HTTP over a unix socket (which is the API exposed by dstack's guest agent). To avoid installing another Python depdendency, namely requests-unixsocket, we just use curl.
+    extend_rtmr3_json = '{"event": "launcher-image-digest","payload": "%s"}' % image_digest.split(':')[1]
+    proc = run(['curl', '--unix-socket', '/var/run/dstack.sock', '-X', 'POST', 'http://dstack/EmitEvent', '-H', 'Content-Type: application/json', '-d', extend_rtmr3_json])
 
     # use docker compose/run to start image
     # exec('docker run %s' % image_name_and_hash)
-    proc = run(['docker', 'run', image_digest])
+    proc = run(['docker', 'run', '--detach', image_digest])
 
     if proc.returncode:
         raise RuntimeError("docker run non-zero exit code %d", proc.returncode)
@@ -99,7 +120,7 @@ def get_manifest_digest(registry_url: str, image_name: str, tags: list[str], ima
         if manifest_resp.status_code != 200:
             print(f"Warning: Could not fetch manifest for tag {tag}: {manifest_resp.text} {manifest_resp.headers}")
             continue
-        
+
         manifest = manifest_resp.json()
 
         match manifest['mediaType']:
@@ -123,6 +144,11 @@ def get_manifest_digest(registry_url: str, image_name: str, tags: list[str], ima
 
 if __name__ == "__main__":
     try:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(message)s'
+        )
+
         main()
         sys.exit(0)
     except Exception as e:
