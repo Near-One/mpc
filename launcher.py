@@ -83,9 +83,26 @@ def main():
     if pulled_image_digest != image_digest:
         raise RuntimeError("Wrong image digest %s. Expected digest is %s" % (pulled_image_digest, image_digest))
 
+    # Generate a quote before extending RTMR3 with the image digest
+    proc = run(['curl', '--unix-socket', '/var/run/dstack.sock', '-X', 'POST', 'http://dstack/GetQuote', '-H', 'Content-Type: application/json', '-d', '{"report_data": ""}'],
+               capture_output=True)
+    if proc.returncode:
+        raise RuntimeError("getting quote failed with error code %d" % proc.returncode)
+    logging.info("Quote: %s" % proc.stdout.decode('utf-8').strip())
+
     # Python's requests package cannot natively talk HTTP over a unix socket (which is the API exposed by dstack's guest agent). To avoid installing another Python depdendency, namely requests-unixsocket, we just use curl.
     extend_rtmr3_json = '{"event": "launcher-image-digest","payload": "%s"}' % image_digest.split(':')[1]
     proc = run(['curl', '--unix-socket', '/var/run/dstack.sock', '-X', 'POST', 'http://dstack/EmitEvent', '-H', 'Content-Type: application/json', '-d', extend_rtmr3_json])
+
+    if proc.returncode:
+        raise RuntimeError("extending rtmr3 failed with error code %d" % proc.returncode)
+
+    # Get quote after extending RTMR3 with the image digest
+    proc = run(['curl', '--unix-socket', '/var/run/dstack.sock', '-X', 'POST', 'http://dstack/GetQuote', '-H', 'Content-Type: application/json', '-d', '{"report_data": ""}'],
+               capture_output=True)
+    if proc.returncode:
+        raise RuntimeError("getting quote failed with error code %d" % proc.returncode)
+    logging.info("Quote: %s" % proc.stdout.decode('utf-8').strip())
 
     # use docker compose/run to start image
     # exec('docker run %s' % image_name_and_hash)
