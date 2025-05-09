@@ -8,6 +8,7 @@ mod devnet;
 mod funding;
 mod loadtest;
 mod mpc;
+mod queries;
 mod rpc;
 mod terraform;
 mod tx;

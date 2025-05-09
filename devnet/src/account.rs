@@ -12,6 +12,7 @@
 //! because we need a mutable reference to it to add access keys to our local state. On the other
 //! hand, sending an arbitrary transfer of NEAR tokens is in OperatingAccessKey, since no local
 //! state needs changing (other than updating the nonce, which is per access key).
+use crate::queries;
 use crate::rpc::NearRpcClients;
 use crate::types::{ContractSetup, MpcParticipantSetup, NearAccount, NearAccountKind};
 use futures::FutureExt;
@@ -183,8 +184,7 @@ impl OperatingAccessKey {
             ),
             wait_until: TxExecutionStatus::Final,
         };
-        let rpc = self.client.lease().await;
-        rpc.call(request).await.unwrap();
+        self.client.submit(request).await.unwrap();
         NearAccount {
             account_id: new_account_id,
             access_keys: vec![secret_key],
@@ -216,8 +216,7 @@ impl OperatingAccessKey {
             ),
             wait_until: TxExecutionStatus::Final,
         };
-        let rpc = self.client.lease().await;
-        rpc.call(request).await.unwrap();
+        self.client.submit(request).await.unwrap();
     }
 
     /// Submits a transaction to the chain to mutably call a function on a contract.
@@ -260,8 +259,7 @@ impl OperatingAccessKey {
             ),
             wait_until,
         };
-        let rpc = self.client.lease().await;
-        Ok(rpc.call(request).await?)
+        Ok(self.client.submit(request).await?)
     }
 
     pub fn secret_key(&self) -> SecretKey {
@@ -356,8 +354,7 @@ impl OperatingAccount {
             ),
             wait_until: TxExecutionStatus::Final,
         };
-        let rpc = self.client.lease().await;
-        rpc.call(request).await.unwrap();
+        self.client.submit(request).await.unwrap();
         self.account_data.kind = NearAccountKind::Contract(ContractSetup {
             deployed_filename: from_path.to_string(),
         });
@@ -373,8 +370,7 @@ impl OperatingAccount {
                 args: FunctionArgs::from(args),
             },
         };
-        let rpc = self.client.lease().await;
-        let result = rpc.call(request).await?;
+        let result = self.client.submit(request).await?;
         match result.kind {
             QueryResponseKind::CallResult(result) => Ok(result),
             _ => anyhow::bail!("Unexpected response: {:?}", result),
@@ -383,18 +379,9 @@ impl OperatingAccount {
 
     /// Queries the code of the contract.
     pub async fn get_contract_code(&self) -> anyhow::Result<Vec<u8>> {
-        let request = methods::query::RpcQueryRequest {
-            block_reference: BlockReference::Finality(Finality::Final),
-            request: QueryRequest::ViewCode {
-                account_id: self.account_data.account_id.clone(),
-            },
-        };
-        let rpc = self.client.lease().await;
-        let result = rpc.call(request).await.unwrap();
-        match result.kind {
-            QueryResponseKind::ViewCode(code) => Ok(code.code),
-            _ => panic!("Unexpected response"),
-        }
+        let res =
+            queries::get_contract_code(&self.client, self.account_data.account_id.clone()).await?;
+        Ok(res.code)
     }
 
     /// Returns the first access key, for transactions that don't need parallelism.
@@ -478,8 +465,7 @@ impl OperatingAccounts {
             ),
             wait_until: TxExecutionStatus::Final,
         };
-        let rpc = self.client.lease().await;
-        rpc.call(request).await.unwrap();
+        self.client.submit(request).await.unwrap();
     }
 
     /// Creates a new account from the Testnet faucet, using it as a funding account to create or

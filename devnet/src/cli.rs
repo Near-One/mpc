@@ -30,15 +30,6 @@ impl Cli {
                     MpcNetworkSubCmd::ViewContract(cmd) => {
                         cmd.run(&name, config).await;
                     }
-                    MpcNetworkSubCmd::V1Join(cmd) => {
-                        cmd.run(&name, config).await;
-                    }
-                    MpcNetworkSubCmd::V1VoteJoin(cmd) => {
-                        cmd.run(&name, config).await;
-                    }
-                    MpcNetworkSubCmd::V1VoteLeave(cmd) => {
-                        cmd.run(&name, config).await;
-                    }
                     MpcNetworkSubCmd::ProposeUpdateContract(cmd) => {
                         cmd.run(&name, config).await;
                     }
@@ -109,12 +100,6 @@ pub enum MpcNetworkSubCmd {
     RemoveContract(RemoveContractCmd),
     /// View the contract state.
     ViewContract(MpcViewContractCmd),
-    /// Send a join() transaction to the contract to propose adding a participant.
-    V1Join(MpcV1JoinCmd),
-    /// Send vote_join() transactions to the contract to vote on adding a participant.
-    V1VoteJoin(MpcV1VoteJoinCmd),
-    /// Send vote_leave() transactions to the contract to vote on removing a participant.
-    V1VoteLeave(MpcV1VoteLeaveCmd),
     /// Send a propose_update() transaction to propose an update to the contract.
     ProposeUpdateContract(MpcProposeUpdateContractCmd),
     /// Send vote_update() transactions to the contract to vote on an update.
@@ -191,11 +176,9 @@ pub struct UpdateMpcNetworkCmd {
 #[derive(clap::Parser)]
 pub struct MpcDeployContractCmd {
     /// File path that contains the contract code.
-    /// The default is `constants::DEFAULT_MPC_CONTRACT_PATH`.
+    /// If not set, then the contract from TESTNET_CONTRACT_ACCOUNT_ID is fetched and deployed.
     #[clap(long)]
     pub path: Option<String>,
-    #[clap(long)]
-    pub v1: bool,
     /// The number of participants to initialize with; the participants will be from 0 to
     /// init_participants-1.
     #[clap(long)]
@@ -217,30 +200,6 @@ pub struct RemoveContractCmd {}
 
 #[derive(clap::Parser)]
 pub struct MpcViewContractCmd {}
-
-#[derive(clap::Parser)]
-pub struct MpcV1JoinCmd {
-    /// The index of the participant that proposes to join the network.
-    pub account_index: usize,
-}
-
-#[derive(clap::Parser)]
-pub struct MpcV1VoteJoinCmd {
-    /// The index of the participant that is joining the network.
-    pub for_account_index: usize,
-    /// The indices of the voters; leave empty to vote from every other participant.
-    #[clap(long, value_delimiter = ',')]
-    pub voters: Vec<usize>,
-}
-
-#[derive(clap::Parser)]
-pub struct MpcV1VoteLeaveCmd {
-    /// The index of the participant that is leaving the network.
-    pub for_account_index: usize,
-    /// The indices of the voters; leave empty to vote from every other participant.
-    #[clap(long, value_delimiter = ',')]
-    pub voters: Vec<usize>,
-}
 
 #[derive(clap::Parser)]
 pub struct MpcProposeUpdateContractCmd {

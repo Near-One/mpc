@@ -6,11 +6,10 @@ pub const MINIMUM_BALANCE_TO_REMAIN_IN_ACCOUNTS: u128 = ONE_NEAR / 10;
 /// end up topping up accounts all the time with tiny amounts.
 pub const PERCENT_OF_ORIGINAL_BALANCE_BELOW_WHICH_TO_REFILL: u128 = 70;
 
-/// The default contract to use.
-pub const DEFAULT_MPC_CONTRACT_PATH: &str =
-    "../libs/chain-signatures/compiled-contracts/v2.0.0-rc.1.wasm";
 /// The default docker image to deploy the node with.
 pub const DEFAULT_MPC_DOCKER_IMAGE: &str = "nearone/mpc-node-gcp:testnet-release";
 /// The default parallel signing contract path to test with.
 pub const DEFAULT_PARALLEL_SIGN_CONTRACT_PATH: &str =
     "../pytest/tests/test_contracts/parallel/res/contract.wasm";
+/// Address of the mpc contract on testnet
+pub const TESTNET_CONTRACT_ACCOUNT_ID: &str = "v1.signer-prod.testnet";

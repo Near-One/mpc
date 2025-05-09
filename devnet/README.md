@@ -62,8 +62,6 @@ target/debug/devnet mpc my-test deploy-contract \
   --init-participants 2 --threshold 2
 ```
 
-Note: For legacy V1, the `--v1` argument is needed.
-
 The `--init-participants` can be fewer than the total number of participants,
 if we wish to have fewer participants join the network at the beginning.
 
@@ -184,6 +182,8 @@ with the docker image tag, e.g.
 target/debug/devnet mpc my-test deploy-nomad --docker-image nearone/mpc-node-gcp:my-test-1234567
 ```
 
+Available docker images can be seen [here](https://hub.docker.com/r/nearone/mpc-node-gcp/tags).
+
 ### Cleaning up the Infra
 After you're done with testing the cluster, please bring down the machines to save resources:
 ```
@@ -210,24 +210,6 @@ target/debug/devnet mpc my-test deploy-nomad
 ```
 This will clear all the local data on the nodes except the near blockchain data. That way,
 the effect is similar to remaking the cluster, but without having to wait for state sync again.
-
-### Legacy V1 instructions
-
-The legacy V1 contract only supports one key (secp256k1), and so the `vote-add-domains` step
-should be skipped.
-
-For adding nodes to the participant set, we need to first call join:
-```
-target/debug/devnet mpc my-test join --account-index 2
-```
-
-And then have everyone vote_join:
-```
-target/debug/devnet mpc my-test vote-join --for-account-index 2
-```
-
-#### Testing V1 -> V2 Upgrade
-See the description of https://github.com/Near-One/mpc/pull/349 .
 
 ## Creating a Loadtest Setup
 Create a loadtest set of accounts: (The name does **not** need to be
@@ -270,5 +252,4 @@ specified, we will send one sign call per transaction. This parameter is useful
 if we want to send a high amount of load.
 
 The `--domain-id` parameter specifies which key to use for the signature
-requests. For V1, this parameter should be omitted to use the legacy API. For
-V2, this parameter *may* be omitted to test compatibility with the legacy API.
+requests. This parameter *may* be omitted to test compatibility with the legacy API.

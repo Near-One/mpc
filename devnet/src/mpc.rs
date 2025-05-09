@@ -1,19 +1,17 @@
 #![allow(clippy::expect_fun_call)] // to reduce verbosity of expect calls
-use crate::account::OperatingAccounts;
+use crate::account::{OperatingAccount, OperatingAccounts};
 use crate::cli::{
-    MpcDeployContractCmd, MpcDescribeCmd, MpcProposeUpdateContractCmd, MpcV1JoinCmd,
-    MpcV1VoteJoinCmd, MpcV1VoteLeaveCmd, MpcViewContractCmd, MpcVoteAddDomainsCmd,
-    MpcVoteNewParametersCmd, MpcVoteUpdateCmd, NewMpcNetworkCmd, RemoveContractCmd,
-    UpdateMpcNetworkCmd,
+    MpcDeployContractCmd, MpcDescribeCmd, MpcProposeUpdateContractCmd, MpcViewContractCmd,
+    MpcVoteAddDomainsCmd, MpcVoteNewParametersCmd, MpcVoteUpdateCmd, NewMpcNetworkCmd,
+    RemoveContractCmd, UpdateMpcNetworkCmd,
 };
-use crate::constants::{DEFAULT_MPC_CONTRACT_PATH, ONE_NEAR};
+use crate::constants::{ONE_NEAR, TESTNET_CONTRACT_ACCOUNT_ID};
 use crate::devnet::OperatingDevnetSetup;
 use crate::funding::{fund_accounts, AccountToFund};
+use crate::queries;
 use crate::tx::IntoReturnValueExt;
 use crate::types::{MpcNetworkSetup, MpcParticipantSetup, NearAccount, ParsedConfig};
 use borsh::{BorshDeserialize, BorshSerialize};
-use legacy_mpc_contract::config::InitConfigV1;
-use legacy_mpc_contract::primitives::{self, CandidateInfo};
 use mpc_contract::config::InitConfig;
 use mpc_contract::primitives::domain::{DomainConfig, DomainId, SignatureScheme};
 use mpc_contract::primitives::key_state::EpochId;
@@ -24,7 +22,6 @@ use mpc_contract::utils::protocol_state_to_string;
 use near_crypto::SecretKey;
 use near_sdk::{borsh, AccountId};
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::str::FromStr;
 
 /// Bring the MPC network up to the desired parameterization.
@@ -182,15 +179,25 @@ impl UpdateMpcNetworkCmd {
 
 impl MpcDeployContractCmd {
     pub async fn run(&self, name: &str, config: ParsedConfig) {
-        let contract_path = self
-            .path
-            .clone()
-            .unwrap_or(DEFAULT_MPC_CONTRACT_PATH.to_string());
-        println!(
-            "Going to deploy contract for MPC network {} using {}",
-            name, contract_path
-        );
-        let contract_data = std::fs::read(&contract_path).unwrap();
+        let (contract_data, contract_path) = match &self.path {
+            Some(contract_path) => (std::fs::read(contract_path).unwrap(), contract_path.clone()),
+            None => {
+                println!(
+                    "fetching and deploying contract from testnet account {}",
+                    TESTNET_CONTRACT_ACCOUNT_ID
+                );
+                (
+                    queries::get_contract_code(
+                        &config.rpc,
+                        TESTNET_CONTRACT_ACCOUNT_ID.parse().unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .code,
+                    TESTNET_CONTRACT_ACCOUNT_ID.to_string(),
+                )
+            }
+        };
         let mut setup = OperatingDevnetSetup::load(config.rpc).await;
         let mpc_setup = setup
             .mpc_setups
@@ -245,54 +252,27 @@ impl MpcDeployContractCmd {
             .any_access_key()
             .await;
 
-        let args = if !self.v1 {
-            let mut participants = Participants::new();
-            for (i, account_id) in mpc_setup
-                .participants
-                .iter()
-                .enumerate()
-                .take(self.init_participants)
-            {
-                let info = mpc_account_to_candidate_info(&setup.accounts, account_id, i);
-                participants
-                    .insert(
-                        account_id.clone(),
-                        ParticipantInfo {
-                            url: info.url,
-                            sign_pk: info.sign_pk,
-                        },
-                    )
-                    .unwrap();
-            }
-            let parameters =
-                ThresholdParameters::new(participants, Threshold::new(self.threshold)).unwrap();
-            serde_json::to_vec(&InitV2Args {
-                parameters,
-                init_config: None,
-            })
-            .unwrap()
-        } else {
-            serde_json::to_vec(&InitV1Args {
-                threshold: self.threshold,
-                init_config: Some(InitConfigV1 {
-                    max_num_requests_to_remove: self.max_requests_to_remove,
-                    request_timeout_blocks: None,
-                }),
-                candidates: mpc_setup
-                    .participants
-                    .iter()
-                    .take(self.init_participants)
-                    .enumerate()
-                    .map(|(i, account_id)| {
-                        (
-                            account_id.clone(),
-                            mpc_account_to_candidate_info(&setup.accounts, account_id, i),
-                        )
-                    })
-                    .collect(),
-            })
-            .unwrap()
-        };
+        let mut participants = Participants::new();
+        for (i, account_id) in mpc_setup
+            .participants
+            .iter()
+            .enumerate()
+            .take(self.init_participants)
+        {
+            participants
+                .insert(
+                    account_id.clone(),
+                    mpc_account_to_participant_info(setup.accounts.account(account_id), i),
+                )
+                .unwrap();
+        }
+        let parameters =
+            ThresholdParameters::new(participants, Threshold::new(self.threshold)).unwrap();
+        let args = serde_json::to_vec(&InitV2Args {
+            parameters,
+            init_config: None,
+        })
+        .unwrap();
 
         access_key
             .submit_tx_to_call_function(
@@ -311,28 +291,14 @@ impl MpcDeployContractCmd {
 }
 
 #[derive(Serialize)]
-struct InitV1Args {
-    threshold: u64,
-    candidates: BTreeMap<AccountId, CandidateInfo>,
-    init_config: Option<InitConfigV1>,
-}
-
-#[derive(Serialize)]
 struct InitV2Args {
     parameters: ThresholdParameters,
     init_config: Option<InitConfig>,
 }
 
-fn mpc_account_to_candidate_info(
-    accounts: &OperatingAccounts,
-    account_id: &AccountId,
-    index: usize,
-) -> CandidateInfo {
-    let account = accounts.account(account_id);
+fn mpc_account_to_participant_info(account: &OperatingAccount, index: usize) -> ParticipantInfo {
     let mpc_setup = account.get_mpc_participant().unwrap();
-    CandidateInfo {
-        account_id: account_id.clone(),
-        cipher_pk: [0; 32],
+    ParticipantInfo {
         sign_pk: near_sdk::PublicKey::from_str(&mpc_setup.p2p_private_key.public_key().to_string())
             .unwrap(),
         url: format!("http://mpc-node-{}.service.mpc.consul:3000", index),
@@ -379,65 +345,6 @@ impl MpcViewContractCmd {
     }
 }
 
-impl MpcV1JoinCmd {
-    pub async fn run(&self, name: &str, config: ParsedConfig) {
-        println!(
-            "Going to join MPC network {} as participant {}",
-            name, self.account_index
-        );
-        let mut setup = OperatingDevnetSetup::load(config.rpc).await;
-        let mpc_setup = setup
-            .mpc_setups
-            .get_mut(name)
-            .expect(&format!("MPC network {} does not exist", name));
-        if self.account_index >= mpc_setup.participants.len() {
-            panic!(
-                "Account index {} is out of bounds for {} participants",
-                self.account_index,
-                mpc_setup.participants.len()
-            );
-        }
-        let contract = mpc_setup
-            .contract
-            .clone()
-            .expect("Contract is not deployed");
-        let account = setup
-            .accounts
-            .account(&mpc_setup.participants[self.account_index]);
-        let mut key = account.any_access_key().await;
-
-        let candidate = mpc_account_to_candidate_info(
-            &setup.accounts,
-            &mpc_setup.participants[self.account_index],
-            self.account_index,
-        );
-        key.submit_tx_to_call_function(
-            &contract,
-            "join",
-            &serde_json::to_vec(&JoinArgs {
-                url: candidate.url,
-                cipher_pk: candidate.cipher_pk,
-                sign_pk: candidate.sign_pk,
-            })
-            .unwrap(),
-            300,
-            0,
-            near_primitives::views::TxExecutionStatus::Final,
-            true,
-        )
-        .await
-        .into_return_value()
-        .unwrap();
-    }
-}
-
-#[derive(Serialize)]
-struct JoinArgs {
-    url: String,
-    cipher_pk: primitives::hpke::PublicKey,
-    sign_pk: near_sdk::PublicKey,
-}
-
 /// Gets a list of voters who would send the vote txn, based on the cmdline flag (empty list means
 /// all participants; otherwise it's the precise list of participant indices).
 fn get_voter_account_ids<'a>(
@@ -451,143 +358,6 @@ fn get_voter_account_ids<'a>(
         .filter(|(i, _)| voters.is_empty() || voters.contains(i))
         .map(|(_, account_id)| account_id)
         .collect::<Vec<_>>()
-}
-
-impl MpcV1VoteJoinCmd {
-    pub async fn run(&self, name: &str, config: ParsedConfig) {
-        println!(
-            "Going to vote_join MPC network {} for participant {}",
-            name, self.for_account_index
-        );
-        let mut setup = OperatingDevnetSetup::load(config.rpc).await;
-        let mpc_setup = setup
-            .mpc_setups
-            .get_mut(name)
-            .expect(&format!("MPC network {} does not exist", name));
-        if self.for_account_index >= mpc_setup.participants.len() {
-            panic!(
-                "Target account index {} is out of bounds for {} participants",
-                self.for_account_index,
-                mpc_setup.participants.len()
-            );
-        }
-        let contract = mpc_setup
-            .contract
-            .clone()
-            .expect("Contract is not deployed");
-        // This may make some voters that aren't part of the network vote, but that's OK.
-        let from_accounts = get_voter_account_ids(mpc_setup, &self.voters);
-
-        let mut futs = Vec::new();
-        for account_id in from_accounts {
-            let account = setup.accounts.account(account_id);
-            let mut key = account.any_access_key().await;
-            let contract = contract.clone();
-            let candidate = mpc_setup.participants[self.for_account_index].clone();
-            futs.push(async move {
-                key.submit_tx_to_call_function(
-                    &contract,
-                    "vote_join",
-                    &serde_json::to_vec(&VoteJoinArgs { candidate }).unwrap(),
-                    300,
-                    0,
-                    near_primitives::views::TxExecutionStatus::Final,
-                    true,
-                )
-                .await
-            });
-        }
-        let results = futures::future::join_all(futs).await;
-        for (i, result) in results.into_iter().enumerate() {
-            match result.into_return_value() {
-                Ok(_) => {
-                    println!(
-                        "Participant {} vote_join({}) succeed",
-                        i, self.for_account_index
-                    );
-                }
-                Err(err) => {
-                    println!(
-                        "Participant {} vote_join({}) failed: {:?}",
-                        i, self.for_account_index, err
-                    );
-                }
-            }
-        }
-    }
-}
-
-impl MpcV1VoteLeaveCmd {
-    pub async fn run(&self, name: &str, config: ParsedConfig) {
-        println!(
-            "Going to vote_leave MPC network {} for participant {}",
-            name, self.for_account_index
-        );
-        let mut setup = OperatingDevnetSetup::load(config.rpc).await;
-        let mpc_setup = setup
-            .mpc_setups
-            .get_mut(name)
-            .expect(&format!("MPC network {} does not exist", name));
-        if self.for_account_index >= mpc_setup.participants.len() {
-            panic!(
-                "Target account index {} is out of bounds for {} participants",
-                self.for_account_index,
-                mpc_setup.participants.len()
-            );
-        }
-        let contract = mpc_setup
-            .contract
-            .clone()
-            .expect("Contract is not deployed");
-        let from_accounts = get_voter_account_ids(mpc_setup, &self.voters);
-
-        let mut futs = Vec::new();
-        for account_id in from_accounts {
-            let account = setup.accounts.account(account_id);
-            let mut key = account.any_access_key().await;
-            let contract = contract.clone();
-            let kick = mpc_setup.participants[self.for_account_index].clone();
-            futs.push(async move {
-                key.submit_tx_to_call_function(
-                    &contract,
-                    "vote_leave",
-                    &serde_json::to_vec(&VoteLeaveArgs { kick }).unwrap(),
-                    300,
-                    0,
-                    near_primitives::views::TxExecutionStatus::Final,
-                    true,
-                )
-                .await
-            });
-        }
-        let results = futures::future::join_all(futs).await;
-        for (i, result) in results.into_iter().enumerate() {
-            match result.into_return_value() {
-                Ok(_) => {
-                    println!(
-                        "Participant {} vote_leave({}) succeed",
-                        i, self.for_account_index
-                    );
-                }
-                Err(err) => {
-                    println!(
-                        "Participant {} vote_leave({}) failed: {:?}",
-                        i, self.for_account_index, err
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct VoteJoinArgs {
-    candidate: AccountId,
-}
-
-#[derive(Serialize)]
-struct VoteLeaveArgs {
-    kick: AccountId,
 }
 
 impl MpcProposeUpdateContractCmd {
@@ -859,18 +629,13 @@ impl MpcVoteNewParametersCmd {
                 "Participant {} is already in the network",
                 account_id
             );
-            let info = mpc_account_to_candidate_info(
-                &setup.accounts,
-                &mpc_setup.participants[*participant_index],
-                *participant_index,
-            );
             participants
                 .insert(
                     account_id.clone(),
-                    ParticipantInfo {
-                        url: info.url,
-                        sign_pk: info.sign_pk,
-                    },
+                    mpc_account_to_participant_info(
+                        setup.accounts.account(&account_id),
+                        *participant_index,
+                    ),
                 )
                 .unwrap();
         }
