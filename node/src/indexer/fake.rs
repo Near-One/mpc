@@ -6,6 +6,7 @@ use crate::config::ParticipantsConfig;
 use crate::sign_request::SignatureId;
 use crate::signing::recent_blocks_tracker::tests::TestBlockMaker;
 use crate::tracking::{AutoAbortTask, AutoAbortTaskCollection};
+use assert_matches::assert_matches;
 use mpc_contract::config::Config;
 use mpc_contract::primitives::domain::{DomainConfig, DomainRegistry};
 use mpc_contract::primitives::key_state::{EpochId, KeyEventId, Keyset};
@@ -85,6 +86,8 @@ impl FakeMpcContractState {
             panic!("Cannot start resharing from non-running state");
         };
 
+        assert_matches!(running_state.resharing_process, None);
+
         let prev_epoch_id = running_state.keyset.epoch_id;
 
         running_state.resharing_process = Some(ResharingState {
@@ -99,6 +102,8 @@ impl FakeMpcContractState {
                 participants_config_to_threshold_parameters(&new_participants),
             ),
         });
+
+        assert_matches!(running_state.resharing_process, Some(_));
     }
 
     pub fn vote_pk(&mut self, account_id: AccountId, key_id: KeyEventId, pk: PublicKey) {
@@ -254,6 +259,9 @@ impl FakeIndexerCore {
                 loop {
                     {
                         let state = contract.lock().await;
+                        if !state.pending_signatures.is_empty() {
+                            tracing::info!("PENDING SIGNATURES: {:?}", state.pending_signatures);
+                        }
                         let config = ContractState::from_contract_state(
                             &state.state,
                             state.env.block_height,

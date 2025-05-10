@@ -1,5 +1,6 @@
 pub mod common;
 
+use assert_matches::assert_matches;
 use common::{check_call_success, gen_accounts, init_env_secp256k1};
 use mpc_contract::primitives::thresholds::{Threshold, ThresholdParameters};
 use mpc_contract::state::running::RunningContractState;
@@ -215,6 +216,7 @@ async fn test_resharing() -> anyhow::Result<()> {
     match state {
         ProtocolContractState::Running(state) => {
             assert_eq!(state.parameters.participants().len(), 4);
+            assert!(state.resharing_process.is_none());
             assert_eq!(state.keyset.epoch_id.get(), 6); // we started with 5.
         }
         _ => panic!("should be in running state"),

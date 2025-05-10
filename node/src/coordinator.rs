@@ -30,8 +30,10 @@ use near_time::Clock;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+use tokio::select;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{broadcast, mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
 /// Main entry point for the MPC node logic. Assumes the existence of an
 /// indexer. Queries and monitors the contract for state transitions, and act
@@ -140,6 +142,11 @@ impl Coordinator {
                     }
                 }
                 ContractState::Running(running_state) => {
+                    tracing::info!(
+                        "Resharing process is: {:?}",
+                        running_state.resharing_process()
+                    );
+
                     // In resharing state, we perform key resharing, again with a timeout.
                     let (key_event_sender, key_event_receiver) =
                         match running_state.resharing_process().map(|resharing_process| {
@@ -150,6 +157,8 @@ impl Coordinator {
                             }
                             None => (None, None),
                         };
+
+                    tracing::info!("Key event sender is: {:?}", key_event_receiver);
 
                     MpcJob {
                         name: "Running",
@@ -176,15 +185,23 @@ impl Coordinator {
 
                         stop_fn: Box::new(move |new_state: &ContractState| match new_state {
                             ContractState::Running(new_state) => {
+                                tracing::info!(
+                                    "NEW resharing process is: {:?}",
+                                    running_state.resharing_process()
+                                );
                                 let epoch_changed =
                                     new_state.keyset.epoch_id != running_state.keyset.epoch_id;
 
                                 let resharing_process_changed =
                                     match (new_state.resharing_process(), &key_event_sender) {
                                         (Some(new_resharing_process), Some(key_event_sender)) => {
-                                            let resharing_epoch_changed =
-                                                new_resharing_process.key_event.id.epoch_id
-                                                    == key_event_sender.borrow().id.epoch_id;
+                                            let new_resharing_epoch_id =
+                                                new_resharing_process.key_event.id.epoch_id;
+                                            let current_resharing_epoch_id =
+                                                key_event_sender.borrow().id.epoch_id;
+
+                                            let resharing_epoch_changed = new_resharing_epoch_id
+                                                != current_resharing_epoch_id;
 
                                             let key_event_failed = key_event_sender
                                                 .send(
@@ -346,6 +363,8 @@ impl Coordinator {
         signature_debug_request_receiver: broadcast::Receiver<SignatureDebugRequest>,
         resharing_state_receiver: Option<watch::Receiver<ContractKeyEventInstance>>,
     ) -> anyhow::Result<MpcJobResult> {
+        tracing::info!("Entering running state.");
+
         let keyshare_storage = Arc::new(keyshare_storage);
 
         let participants = match &running_state.resharing_process() {
@@ -361,19 +380,65 @@ impl Coordinator {
             return Ok(MpcJobResult::HaltUntilInterrupted);
         };
 
+        tracing::info!("Creating tls mesh");
+
+        // let (sender, receiver) =
+        //     new_tls_mesh_network(&mpc_config, &secrets.p2p_private_key).await?;
+        // sender
+        //     .wait_for_ready(mpc_config.participants.threshold as usize)
+        //     .await?;
+        // let (network_client, channel_receiver, _handle) =
+        //     run_network_client(Arc::new(sender), Box::new(receiver));
+
         let (sender, receiver) =
             new_tls_mesh_network(&mpc_config, &secrets.p2p_private_key).await?;
+
+        tracing::info!("wait for ready.");
         sender
             .wait_for_ready(mpc_config.participants.threshold as usize)
             .await?;
+
+        tracing::info!("Creating network client.");
         let (network_client, mut channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
+
+        let cancellation_token = CancellationToken::new();
+        let cancellation_token_child = cancellation_token.child_token();
+        let _drop_guard = cancellation_token.drop_guard();
 
         let (running_receiver, resharing_receiver) = {
             let (running_sender, running_receiver) = unbounded_channel();
             let (resharing_sender, resharing_receiver) = unbounded_channel();
 
             let _multiplexer_handle = tokio::spawn(async move {
+                loop {
+                    select! {
+                        network_channel = channel_receiver.recv() => {
+                            let Some(network_channel) = network_channel else {
+                                tracing::info!("channel sender is dropped.");
+                                break;
+                            };
+                            tracing::info!("received channel {:?}", network_channel.task_id());
+
+                            match &network_channel.task_id() {
+                                // resharing message
+                                MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
+                                | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
+                                    let _ = resharing_sender.send(network_channel);
+                                }
+                                // default to running channel
+                                _ => {
+                                    let _ = running_sender.send(network_channel);
+                                }
+                            };
+                        },
+                        _ = cancellation_token_child.cancelled() => {
+                            tracing::info!("cancelled token.");
+                            break;
+                        }
+
+                    }
+                }
                 while let Some(network_channel) = channel_receiver.recv().await {
                     match &network_channel.task_id() {
                         // resharing message
@@ -411,7 +476,7 @@ impl Coordinator {
             let network_client = network_client.clone();
             let mpc_config = mpc_config.clone();
 
-            let _resharing_handle = tokio::spawn(async move {
+            let _resharing_handle = tracking::spawn("key_resharing", async move {
                 Self::run_key_resharing(
                     &config_file,
                     keyshare_storage.clone(),
