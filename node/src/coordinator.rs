@@ -229,7 +229,7 @@ impl Coordinator {
             loop {
                 tokio::select! {
                     res = &mut job.fut => {
-                        match Ok::<_, ()>(res.unwrap()) {
+                        match res {
                             Err(e) => {
                                 tracing::error!("[{}] failed: {:?}", job.name, e);
                                 break;
