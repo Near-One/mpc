@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::handler::{ChainBlockUpdate, SignatureRequestFromChain};
 use super::participants::ContractState;
 use super::types::{ChainRespondArgs, ChainSendTransactionRequest};
