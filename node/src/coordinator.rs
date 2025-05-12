@@ -410,7 +410,7 @@ impl Coordinator {
             let (running_sender, running_receiver) = unbounded_channel();
             let (resharing_sender, resharing_receiver) = unbounded_channel();
 
-            let _multiplexer_handle = tokio::spawn(async move {
+            let _multiplexer_handle = tracking::spawn("resharing handle", async move {
                 loop {
                     select! {
                         network_channel = channel_receiver.recv() => {
