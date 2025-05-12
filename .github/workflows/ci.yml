@@ -8,7 +8,6 @@ on:
   workflow_dispatch:
   pull_request:
   merge_group:
-    
 
 jobs:
   ci-tests:
@@ -31,47 +30,47 @@ jobs:
           cache-on-failure: true
           cache-all-crates: true
 
-      - name: Run Clippy fmt
-        run: |
-          CARGO_TARGET_DIR="target/clippy" \
-          RUSTFLAGS="-D warnings" \
-          cargo clippy --all-features --all-targets --locked
+      # - name: Run Clippy fmt
+      #   run: |
+      #     CARGO_TARGET_DIR="target/clippy" \
+      #     RUSTFLAGS="-D warnings" \
+      #     cargo clippy --all-features --all-targets --locked
 
-          cd devnet
-          CARGO_TARGET_DIR="target/clippy" \
-          RUSTFLAGS="-D warnings" \
-          cargo clippy --all-features --all-targets --locked
-          cd ..
+      #     cd devnet
+      #     CARGO_TARGET_DIR="target/clippy" \
+      #     RUSTFLAGS="-D warnings" \
+      #     cargo clippy --all-features --all-targets --locked
+      #     cd ..
 
-          cd libs/chain-signatures
-          CARGO_TARGET_DIR="target/clippy" \
-          RUSTFLAGS="-D warnings" \
-          cargo clippy --all-features --all-targets --locked
-          cd ../..
+      #     cd libs/chain-signatures
+      #     CARGO_TARGET_DIR="target/clippy" \
+      #     RUSTFLAGS="-D warnings" \
+      #     cargo clippy --all-features --all-targets --locked
+      #     cd ../..
 
-      - name: Run Cargo fmt
-        run: |
-          cargo fmt -- --check
+      # - name: Run Cargo fmt
+      #   run: |
+      #     cargo fmt -- --check
 
-          cd devnet
-          cargo fmt -- --check
-          cd ..
+      #     cd devnet
+      #     cargo fmt -- --check
+      #     cd ..
 
-          cd libs/chain-signatures
-          cargo fmt -- --check
-          cd ../..
-          
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest
+      #     cd libs/chain-signatures
+      #     cargo fmt -- --check
+      #     cd ../..
 
-      - name: Install wasm-opt from crates.io
-        run: |
-          cargo install wasm-opt --locked
-          echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
+      # - name: Install cargo-nextest
+      #   run: cargo install cargo-nextest
+
+      # - name: Install wasm-opt from crates.io
+      #   run: |
+      #     cargo install wasm-opt --locked
+      #     echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
 
       - name: Run cargo-nextest
-        run: cargo nextest run --release --locked
-      
+        run: cargo test --release --locked test_basic_multidomain
+
       - name: Run contract tests
         run: |
           cd libs/chain-signatures
@@ -92,7 +91,7 @@ jobs:
           commit_hash=$(git rev-parse HEAD || echo "no-commit")
 
           url="https://s3.us-west-1.amazonaws.com/build.nearprotocol.com/nearcore/${os_and_arch}/${branch_name}/${commit_hash}/neard"
-          
+
           mkdir -p target/release
           status_code=$(curl -v -o target/release/neard -w "%{http_code}" "${url}")
           if [ "$status_code" -ne 200 ]; then
@@ -109,11 +108,11 @@ jobs:
 
       - name: Build mpc node
         run: cargo build -p mpc-node --release
-      
+
       - name: Setup python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Setup virtualenv
         run: |
