@@ -30,10 +30,10 @@ use near_time::Clock;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
-use tokio::select;
+// use tokio::select;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{broadcast, mpsc, watch};
-use tokio_util::sync::CancellationToken;
+// use tokio_util::sync::CancellationToken;
 
 /// Main entry point for the MPC node logic. Assumes the existence of an
 /// indexer. Queries and monitors the contract for state transitions, and act
@@ -402,9 +402,9 @@ impl Coordinator {
         let (network_client, mut channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
 
-        let cancellation_token = CancellationToken::new();
-        let cancellation_token_child = cancellation_token.child_token();
-        let _drop_guard = cancellation_token.drop_guard();
+        // let cancellation_token = CancellationToken::new();
+        // let cancellation_token_child = cancellation_token.child_token();
+        // let _drop_guard = cancellation_token.drop_guard();
 
         let (running_receiver, resharing_receiver) = {
             let (running_sender, running_receiver) = unbounded_channel();
@@ -437,19 +437,6 @@ impl Coordinator {
                     // }
 
                     // }
-                }
-                while let Some(network_channel) = channel_receiver.recv().await {
-                    match &network_channel.task_id() {
-                        // resharing message
-                        MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
-                        | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
-                            let _ = resharing_sender.send(network_channel);
-                        }
-                        // default to running channel
-                        _ => {
-                            let _ = running_sender.send(network_channel);
-                        }
-                    };
                 }
             });
 
