@@ -299,14 +299,15 @@ impl MpcClient {
         mpc_client: Arc<MpcClient>,
     ) -> anyhow::Result<()> {
         let mut tasks = AutoAbortTaskCollection::new();
-        loop {
-            let channel = channel_receiver.recv().await.unwrap();
+        while let Some(channel) = channel_receiver.recv().await {
             let mpc_clone = mpc_client.clone();
             tasks.spawn_checked(
                 &format!("passive task {:?}", channel.task_id()),
                 async move { mpc_clone.process_channel_task(channel).await },
             );
         }
+
+        Ok(())
     }
 
     async fn process_channel_task(
