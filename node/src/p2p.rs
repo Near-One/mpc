@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::config::MpcConfig;
 use crate::network::conn::{
     AllNodeConnectivities, ConnectionVersion, NodeConnectivity, NodeConnectivityInterface,

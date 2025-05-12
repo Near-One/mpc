@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use cait_sith::ecdsa::presign::PresignOutput;
 use cait_sith::ecdsa::triples::TripleGenerationOutput;
 use cait_sith::protocol::{run_protocol, Participant, Protocol};
