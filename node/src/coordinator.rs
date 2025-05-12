@@ -229,7 +229,7 @@ impl Coordinator {
             loop {
                 tokio::select! {
                     res = &mut job.fut => {
-                        match res {
+                        match Ok::<_, ()>(res.unwrap()) {
                             Err(e) => {
                                 tracing::error!("[{}] failed: {:?}", job.name, e);
                                 break;
@@ -412,32 +412,31 @@ impl Coordinator {
 
             let _multiplexer_handle = tracking::spawn("resharing handle", async move {
                 loop {
-                    select! {
-                        network_channel = channel_receiver.recv() => {
-                            let Some(network_channel) = network_channel else {
-                                tracing::info!("channel sender is dropped.");
-                                break;
-                            };
-                            tracing::info!("received channel {:?}", network_channel.task_id());
+                    // select! {
+                    while let Some(network_channel) = channel_receiver.recv().await {
+                        tracing::info!("received channel {:?}", network_channel.task_id());
 
-                            match &network_channel.task_id() {
-                                // resharing message
-                                MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
-                                | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
-                                    let _ = resharing_sender.send(network_channel);
-                                }
-                                // default to running channel
-                                _ => {
-                                    let _ = running_sender.send(network_channel);
-                                }
-                            };
-                        },
-                        _ = cancellation_token_child.cancelled() => {
-                            tracing::info!("cancelled token.");
-                            break;
-                        }
-
+                        match &network_channel.task_id() {
+                            // resharing message
+                            MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
+                            | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
+                                let _ = resharing_sender.send(network_channel);
+                            }
+                            // default to running channel
+                            _ => {
+                                let _ = running_sender.send(network_channel);
+                            }
+                        };
                     }
+
+                    tracing::info!("network channel receiver is dropped",);
+
+                    // _ = cancellation_token_child.cancelled() => {
+                    //     tracing::info!("cancelled token.");
+                    //     break;
+                    // }
+
+                    // }
                 }
                 while let Some(network_channel) = channel_receiver.recv().await {
                     match &network_channel.task_id() {
@@ -489,56 +488,8 @@ impl Coordinator {
                 )
                 .await
             });
-
-            // let resharing_process_epoch_id = resharing_state.key_event.id.epoch_id;
-            // loop {
-            //     select! {
-            //         resharing_result = &mut resharing_process_future => {
-            //             todo!("Use the `resharing_result`. Break if failed?");
-            //             break;
-            //         }
-            //         change = resharing_state_receiver.changed() => {
-            //             if let Err(receive_error) = change {
-            //                 tracing::info!("Receive error for resharing state watcher: {:?}", receive_error);
-            //                 return;
-            //             }
-
-            //             enum UpdateStatus {
-            //                 CurrentResharingUpdate(ContractResharingState),
-            //                 NewResharingState,
-            //                 CurrentResharingCancelled,
-            //             }
-
-            //             let update_status = match resharing_state_receiver.borrow_and_update().clone() {
-            //                 Some(resharing_state) => {
-            //                     let new_resharing_state_epoch_id = resharing_state.key_event.id.epoch_id;
-            //                     let update_for_same_epoch_id = new_resharing_state_epoch_id == resharing_process_epoch_id;
-
-            //                     if update_for_same_epoch_id {
-            //                         UpdateStatus::CurrentResharingUpdate(resharing_state)
-            //                     } else {
-            //                         UpdateStatus::NewResharingState
-            //                     }
-
-            //                 },
-            //                 None => UpdateStatus::CurrentResharingCancelled,
-            //             };
-
-            //             match update_status {
-            //                 UpdateStatus::CurrentResharingUpdate(state) => {
-            //                     // TODO: Should break here as well if the send fails.
-            //                     let _ = key_event_sender.send(state.key_event.clone());
-            //                 },
-            //                 UpdateStatus::CurrentResharingCancelled | UpdateStatus::NewResharingState => {
-            //                     resharing_state_receiver.mark_unchanged();
-            //                     break;
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
-            // }
-            // });
+        } else {
+            drop(resharing_receiver)
         }
 
         tracing::info!("Entering running state: {}", mpc_config.my_participant_id);
