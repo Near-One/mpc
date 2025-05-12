@@ -27,11 +27,8 @@ impl OperatingDevnetSetup {
         }
         let setup_data = std::fs::read_to_string(Self::SETUP_FILENAME).unwrap();
         let setup: DevnetSetupRepository = serde_yaml::from_str(&setup_data).unwrap();
-
         let recent_block_hash = client
-            .lease()
-            .await
-            .call(methods::block::RpcBlockRequest {
+            .submit(methods::block::RpcBlockRequest {
                 block_reference: near_primitives::types::BlockReference::Finality(
                     near_primitives::types::Finality::Final,
                 ),

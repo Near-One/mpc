@@ -1,7 +1,7 @@
 use crate::types::RpcConfig;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use near_jsonrpc_client::JsonRpcClient;
+use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -85,6 +85,14 @@ impl NearRpcClients {
         let (permit, _, _) =
             futures::future::select_all(self.rpcs.iter().map(|rpc| rpc.ready().boxed())).await;
         permit
+    }
+
+    pub async fn submit<M>(&self, method: M) -> MethodCallResult<M::Response, M::Error>
+    where
+        M: methods::RpcMethod,
+    {
+        let rpc = self.lease().await;
+        rpc.call(method).await
     }
 
     /// Convenient function to perform a request with retries. Each request is subject to the same
