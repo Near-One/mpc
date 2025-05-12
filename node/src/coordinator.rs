@@ -398,42 +398,43 @@ impl Coordinator {
         // let cancellation_token_child = cancellation_token.child_token();
         // let _drop_guard = cancellation_token.drop_guard();
 
-        // let (running_receiver, resharing_receiver) = {
-        //     let (running_sender, running_receiver) = unbounded_channel();
-        //     let (resharing_sender, resharing_receiver) = unbounded_channel();
+        let (mut running_receiver, resharing_receiver) = {
+            let (running_sender, running_receiver) = unbounded_channel();
+            let (resharing_sender, resharing_receiver) = unbounded_channel();
 
-        //     let _multiplexer_handle = tracking::spawn("resharing handle", async move {
-        //         loop {
-        //             // select! {
-        //             while let Some(network_channel) = channel_receiver.recv().await {
-        //                 tracing::info!("received channel {:?}", network_channel.task_id());
+            let _multiplexer_handle = tracking::spawn("resharing handle", async move {
+                // loop {
+                // select! {
+                while let Some(network_channel) = channel_receiver.recv().await {
+                    tracing::info!("received channel {:?}", network_channel.task_id());
 
-        //                 match &network_channel.task_id() {
-        //                     // resharing message
-        //                     MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
-        //                     | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
-        //                         let _ = resharing_sender.send(network_channel);
-        //                     }
-        //                     // default to running channel
-        //                     _ => {
-        //                         let _ = running_sender.send(network_channel);
-        //                     }
-        //                 };
-        //             }
+                    match &network_channel.task_id() {
+                        // resharing message
+                        MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
+                        | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
+                            tracing::info!("Got resharing message");
+                            let _ = resharing_sender.send(network_channel);
+                        }
+                        // default to running channel
+                        _ => {
+                            let _ = running_sender.send(network_channel);
+                        }
+                    };
+                }
 
-        //             tracing::info!("network channel receiver is dropped",);
+                tracing::info!("network channel receiver is dropped",);
 
-        //             // _ = cancellation_token_child.cancelled() => {
-        //             //     tracing::info!("cancelled token.");
-        //             //     break;
-        //             // }
+                // _ = cancellation_token_child.cancelled() => {
+                //     tracing::info!("cancelled token.");
+                //     break;
+                // }
 
-        //             // }
-        //         }
-        //     });
+                // }
+                // }
+            });
 
-        //     (running_receiver, resharing_receiver)
-        // };
+            (running_receiver, resharing_receiver)
+        };
 
         // if let Some(key_event_receiver) = resharing_state_receiver {
         //     // Delete all triples and presignatures from the previous epoch;
@@ -542,7 +543,7 @@ impl Coordinator {
         ));
         mpc_client
             .run(
-                channel_receiver,
+                running_receiver,
                 block_update_receiver,
                 chain_txn_sender,
                 signature_debug_request_receiver,
