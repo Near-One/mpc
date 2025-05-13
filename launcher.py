@@ -11,11 +11,6 @@ import traceback
 # To avoid concurrent modifications, the launcher mounts the volume read-only!
 IMAGE_DIGEST_FILE="/mnt/shared/image-digest"
 
-# Parameters irrelevant for security.
-DEFAULT_IMAGE_NAME='thomasknauthnear/mpc-node'
-DEFAULT_TAGS='latest'
-REGISTRY = 'registry.hub.docker.com'
-
 def parse_env_file(path):
     '''
     Parse .env-style files.
@@ -42,9 +37,11 @@ def main():
     # We use this interface to make some aspects of the launcher configurable.
     # *** Only security-irrelevant parts *** may be made configurable in this way, e.g., the specific image tag(s) we look up.
     DSTACK_USER_CONFIG_FILE = '/tapp/user_config'
-    user_vars = parse_env_file('/tapp/user_config') if os.path.isfile(DSTACK_USER_CONFIG_FILE) else {}
+    user_vars = parse_env_file(DSTACK_USER_CONFIG_FILE) if os.path.isfile(DSTACK_USER_CONFIG_FILE) else {}
 
-    tags = user_vars.get("LAUNCHER_IMAGE_TAGS", DEFAULT_TAGS).split(',')
+    tags = user_vars.get('LAUNCHER_IMAGE_TAGS', 'latest').split(',')
+    image_name = user_vars.get('LAUNCHER_IMAGE_NAME', 'nearone/mpc-node')
+    registry = user_vars.get('LAUNCHER_REGISTRY', 'registry.hub.docker.com')
 
     # DEFAULT_IMAGE_DIGEST originates from the app-compose.json and its value is contained in the app's measurement.
     image_digest = os.environ["DEFAULT_IMAGE_DIGEST"]
@@ -55,9 +52,9 @@ def main():
     logging.info(f'Using image digest {image_digest}.')
     logging.info(f"Using tags {tags} to find matching image.")
 
-    manifest_digest = get_manifest_digest(REGISTRY, DEFAULT_IMAGE_NAME, tags, image_digest)
+    manifest_digest = get_manifest_digest(registry, image_name, tags, image_digest)
 
-    name_and_digest = DEFAULT_IMAGE_NAME + "@" + manifest_digest
+    name_and_digest = image_name + "@" + manifest_digest
 
     proc = run(["docker", "pull", name_and_digest])
 
