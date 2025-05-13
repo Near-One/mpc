@@ -7,31 +7,21 @@ import sys
 import time
 import traceback
 
-# If we change any of these, the launcher's code identity changes. This is by design. Don't ever let these variables be set from outside this script!
+# The volume where this file resides is shared between launcher and app.
+# To avoid concurrent modifications, the launcher mounts the volume read-only!
 IMAGE_DIGEST_FILE="/mnt/shared/image-digest"
-DEFAULT_IMAGE_HASH='sha256:04640ae75248a94e4a9e542c2bfbfb59d438328a6a6afcd40092a654f956813d'
 
 # Parameters irrelevant for security.
 DEFAULT_IMAGE_NAME='thomasknauthnear/mpc-node'
 DEFAULT_TAGS='latest'
-
-# TODO try with mpc-node-gcp
-
-# docker image pull <repo/name:tag>@sha256:<repo digest>
-#
-# <repo digest> != <image id>
-# <repo digest> ... docker image inspect alpine --format 'Digest: {{index .RepoDigests 0}}'
-# <image id>    ... docker image inspect alpine --format 'ID: {{.Id}}'
-
-# We use `docker pull nearone/mpc-node:latest` to fetch a new image after an update.
-# We write the <image id> into $IMAGE_HASH_FILE
-# 
-
-# We want to globally enable DOCKER_CONTENT_TRUST=1 to ensure integrity of Docker images.
-
-# Image integrity is only checked on `docker pull`. Afterwards, modifications are not detected.
+REGISTRY = 'registry.hub.docker.com'
 
 def parse_env_file(path):
+    '''
+    Parse .env-style files.
+
+    Provide implementation here to avoid external dependency.
+    '''
     env = {}
     with open(path) as f:
         for line in f:
@@ -44,6 +34,10 @@ def parse_env_file(path):
 
 def main():
 
+    # We want to globally enable DOCKER_CONTENT_TRUST=1 to ensure integrity of Docker images.
+    if os.environ.get('DOCKER_CONTENT_TRUST', '0') != '1':
+        raise RuntimeError("Environment variable DOCKER_CONTENT_TRUST must be set to 1.")
+
     # In dstack, /tapp/user_config provides unmeasured data to the CVM.
     # We use this interface to make some aspects of the launcher configurable.
     # *** Only security-irrelevant parts *** may be made configurable in this way, e.g., the specific image tag(s) we look up.
@@ -52,23 +46,20 @@ def main():
 
     tags = user_vars.get("LAUNCHER_IMAGE_TAGS", DEFAULT_TAGS).split(',')
 
-    image_digest = DEFAULT_IMAGE_HASH
+    # DEFAULT_IMAGE_DIGEST originates from the app-compose.json and its value is contained in the app's measurement.
+    image_digest = os.environ["DEFAULT_IMAGE_DIGEST"]
 
     if os.path.isfile(IMAGE_DIGEST_FILE):
         image_digest = open(IMAGE_DIGEST_FILE).readline().strip()
-        logging.info(f'Using image digest {image_digest} from file.')
 
+    logging.info(f'Using image digest {image_digest}.')
     logging.info(f"Using tags {tags} to find matching image.")
 
-    REGISTRY = 'registry.hub.docker.com'
     manifest_digest = get_manifest_digest(REGISTRY, DEFAULT_IMAGE_NAME, tags, image_digest)
 
     name_and_digest = DEFAULT_IMAGE_NAME + "@" + manifest_digest
 
-    env = os.environ.copy()
-    # TODO Check if we need DOCKER_CONTENT_TRUST=1 to have docker verify the integrity of an image.
-    env['DOCKER_CONTENT_TRUST'] = '1'
-    proc = run(["docker", "pull", name_and_digest], env=env)
+    proc = run(["docker", "pull", name_and_digest])
 
     if proc.returncode:
         raise RuntimeError("docker pull returned non-zero exit code %d" % proc.returncode)
@@ -90,7 +81,8 @@ def main():
         raise RuntimeError("getting quote failed with error code %d" % proc.returncode)
     logging.info("Quote: %s" % proc.stdout.decode('utf-8').strip())
 
-    # Python's requests package cannot natively talk HTTP over a unix socket (which is the API exposed by dstack's guest agent). To avoid installing another Python depdendency, namely requests-unixsocket, we just use curl.
+    # Python's requests package cannot natively talk HTTP over a unix socket (which is the API exposed by dstack's guest agent).
+    # To avoid installing another Python depdendency, namely requests-unixsocket, we just use curl.
     extend_rtmr3_json = '{"event": "launcher-image-digest","payload": "%s"}' % image_digest.split(':')[1]
     proc = run(['curl', '--unix-socket', '/var/run/dstack.sock', '-X', 'POST', 'http://dstack/EmitEvent', '-H', 'Content-Type: application/json', '-d', extend_rtmr3_json])
 
@@ -104,23 +96,23 @@ def main():
         raise RuntimeError("getting quote failed with error code %d" % proc.returncode)
     logging.info("Quote: %s" % proc.stdout.decode('utf-8').strip())
 
-    # use docker compose/run to start image
-    # exec('docker run %s' % image_name_and_hash)
+    # Start the app.
     proc = run(['docker', 'run', '--detach', image_digest])
 
     if proc.returncode:
         raise RuntimeError("docker run non-zero exit code %d", proc.returncode)
 
-# API doc https://distribution.github.io/distribution/spec/api/
 def get_manifest_digest(registry_url: str, image_name: str, tags: list[str], image_digest: str):
     '''Given an `image_digest` returns a manifest digest.
     
-       Manifest digest can be used with `docker pull` whereas image digest cannot.
+       `docker pull` requires a manifest digest. This function translates an image digest into a manifest digest.
+
+       API doc for image registry https://distribution.github.io/distribution/spec/api/
     '''
     if not tags:
         raise Exception(f"No tags found for image {image_name}")
 
-    # We need a token to fetch manifests
+    # We need an authorization token to fetch manifests.
     token_resp = requests.get(f'https://auth.docker.io/token?service=registry.docker.io&scope=repository:{image_name}:pull')
     token_resp.raise_for_status()
     token = token_resp.json().get('token', [])
