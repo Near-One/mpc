@@ -398,11 +398,11 @@ impl Coordinator {
         // let cancellation_token_child = cancellation_token.child_token();
         // let _drop_guard = cancellation_token.drop_guard();
 
-        let (mut running_receiver, resharing_receiver) = {
+        let (running_receiver, resharing_receiver, _handle) = {
             let (running_sender, running_receiver) = unbounded_channel();
             let (resharing_sender, resharing_receiver) = unbounded_channel();
 
-            let _multiplexer_handle = tracking::spawn("resharing handle", async move {
+            let multiplexer_handle = tracking::spawn("resharing handle", async move {
                 // loop {
                 // select! {
                 while let Some(network_channel) = channel_receiver.recv().await {
@@ -433,7 +433,7 @@ impl Coordinator {
                 // }
             });
 
-            (running_receiver, resharing_receiver)
+            (running_receiver, resharing_receiver, multiplexer_handle)
         };
 
         // if let Some(key_event_receiver) = resharing_state_receiver {
