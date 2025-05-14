@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  web:
+    image: thomasknauthnear/launcher:latest
+    container_name: launcher
+    environment:
+      - DOCKER_CONTENT_TRUST=1
+      - DEFAULT_IMAGE_DIGEST=sha256:04640ae75248a94e4a9e542c2bfbfb59d438328a6a6afcd40092a654f956813d
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - /tapp:/tapp:ro
+      - shared-volume:/mnt/shared:ro
+volumes:
+  shared-volume:
+    name: launcher_shared_volume
