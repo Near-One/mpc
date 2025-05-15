@@ -30,6 +30,8 @@ use near_time::Clock;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+use tokio::select;
+use tokio_util::sync::CancellationToken;
 // use tokio::select;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -394,43 +396,39 @@ impl Coordinator {
         let (network_client, mut channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
 
-        // let cancellation_token = CancellationToken::new();
-        // let cancellation_token_child = cancellation_token.child_token();
-        // let _drop_guard = cancellation_token.drop_guard();
+        let cancellation_token = CancellationToken::new();
+        let cancellation_token_child = cancellation_token.child_token();
+        let _drop_guard = cancellation_token.drop_guard();
 
         let (running_receiver, resharing_receiver, _handle) = {
             let (running_sender, running_receiver) = unbounded_channel();
             let (resharing_sender, resharing_receiver) = unbounded_channel();
 
-            let multiplexer_handle = tracking::spawn("resharing handle", async move {
-                // loop {
-                // select! {
-                while let Some(network_channel) = channel_receiver.recv().await {
-                    tracing::info!("received channel {:?}", network_channel.task_id());
+            let multiplexer_handle = tokio::spawn(async move {
+                loop {
+                    select! {
+                        Some(network_channel) = channel_receiver.recv()  => {
+                            tracing::info!("received channel {:?}", network_channel.task_id());
+                            let is_resharing_message = matches!(
+                                network_channel.task_id(),
+                                MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
+                                    | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. })
+                            );
 
-                    match &network_channel.task_id() {
-                        // resharing message
-                        MpcTaskId::EcdsaTaskId(EcdsaTaskId::KeyResharing { .. })
-                        | MpcTaskId::EddsaTaskId(EddsaTaskId::KeyResharing { .. }) => {
-                            tracing::info!("Got resharing message");
-                            let _ = resharing_sender.send(network_channel);
+                            if is_resharing_message {
+                                let _ = resharing_sender.send(network_channel);
+                            } else {
+                                let _ = running_sender.send(network_channel);
+                            }
                         }
-                        // default to running channel
-                        _ => {
-                            let _ = running_sender.send(network_channel);
+
+                        _ = cancellation_token_child.cancelled() => {
+                            tracing::info!("cancelled token.");
+                            break;
                         }
-                    };
+
+                    }
                 }
-
-                tracing::info!("network channel receiver is dropped",);
-
-                // _ = cancellation_token_child.cancelled() => {
-                //     tracing::info!("cancelled token.");
-                //     break;
-                // }
-
-                // }
-                // }
             });
 
             (running_receiver, resharing_receiver, multiplexer_handle)
