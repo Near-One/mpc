@@ -493,6 +493,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert_matches"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b34d609dfbaf33d6889b2b7106d3ca345eacad44200913df5ba02bfd31d2ba9"
+
+[[package]]
 name = "async-channel"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3948,6 +3954,7 @@ dependencies = [
  "actix",
  "aes-gcm",
  "anyhow",
+ "assert_matches",
  "async-trait",
  "axum 0.7.9",
  "borsh",
@@ -7105,7 +7112,7 @@ dependencies = [
  "errno 0.3.10",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
