@@ -172,9 +172,32 @@ pub enum LoadtestSubCmd {
     DrainExpiredRequests(DrainExpiredRequestsCmd),
 }
 
+//#[derive(clap::Parser)]
+//pub struct TestDockerUpdateCmd {
+//    /// Deploys a cluster of two nodes with threshold two.
+//    /// tests the update from docker_begin to docker_end, one by one.
+//    /// Tracks:
+//    /// - number of succesful signatures with docker_begin,
+//    /// - number of successful signature requests with docker_begin & docker_end
+//    /// - number of succesful signaturse with docker_end
+//    /// (as percentage)
+//    ///
+//}
+//#[derive(clap::Parser)]
+//pub struct TestContractUpdateCmd {
+//    /// Deploys a cluster of two nodes with threshold two.
+//    /// tests the update from contract_begin to contract_end, one by one.
+//    /// Tracks:
+//    /// - number of succesful signatures with docker_begin,
+//    /// - number of successful signature requests with docker_begin & docker_end
+//    /// - number of succesful signaturse with docker_end
+//    /// (as percentage)
+//    ///
+//}
+
 #[derive(clap::Parser)]
 pub struct NewMpcNetworkCmd {
-    /// Number of participants that will participant in the network at some point. This can be
+    /// Number of participants that will participate in the network at some point. This can be
     /// increased later, but it's recommended to pick the highest number you intend to use,
     /// because initializing new machines is slow.
     #[clap(long)]
