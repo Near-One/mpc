@@ -60,6 +60,8 @@ pub fn candidates(names: Option<Vec<AccountId>>) -> Participants {
                     "ed25519:J75xXmF7WUPS3xCm3hy2tgwLCKdYM1iJd4BWF8sWVnae",
                 )
                 .unwrap(),
+                tee_quote: vec![],
+                quote_collateral: String::new(),
             },
         );
     }

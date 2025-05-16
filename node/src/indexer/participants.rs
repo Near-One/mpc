@@ -324,7 +324,15 @@ mod tests {
             let url = url.to_string();
             let sign_pk = near_sdk::PublicKey::from_str(&pk).unwrap();
             participants
-                .insert(account_id.clone(), ParticipantInfo { url, sign_pk })
+                .insert(
+                    account_id.clone(),
+                    ParticipantInfo {
+                        url,
+                        sign_pk,
+                        tee_quote: vec![],
+                        quote_collateral: String::new(),
+                    },
+                )
                 .unwrap();
         }
         participants

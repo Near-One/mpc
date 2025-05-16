@@ -78,8 +78,9 @@ impl ThresholdParameters {
         self.participants.validate()
     }
 
-    /// Validates the incoming proposal against the current, checking that it is allowed for the
-    /// current set of participants and threshold setting to propose the new parameters.
+    /// Validates the incoming proposal against the current one, ensuring it's allowed based on the
+    /// current participants and threshold settings. Also verifies the TEE quote of the participant
+    /// who submitted the proposal.
     pub fn validate_incoming_proposal(&self, proposal: &ThresholdParameters) -> Result<(), Error> {
         // ensure the proposed threshold parameters are valid:
         // if performance issue, inline and merge with loop below

@@ -493,6 +493,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "asn1_der"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "155a5a185e42c6b77ac7b88a15143d930a9e9727a5b7b77eed417404ab15c247"
+
+[[package]]
 name = "async-channel"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1166,6 +1172,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byte-slice-cast"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
+
+[[package]]
 name = "bytecheck"
 version = "0.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1478,6 +1490,26 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "const_format"
+version = "0.2.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "126f97965c8ad46d6d9163268ff28432e8f6a1196a55578867832e3049df63dd"
+dependencies = [
+ "const_format_proc_macros",
+]
+
+[[package]]
+name = "const_format_proc_macros"
+version = "0.2.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d57c2eccfb16dbac1f4e61e206105db5820c9d26c3c472bc17c774259ef7744"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-xid",
+]
 
 [[package]]
 name = "constant_time_eq"
@@ -1866,6 +1898,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 
 [[package]]
+name = "dcap-qvl"
+version = "0.2.2"
+source = "git+https://github.com/mattlockyer/dcap-qvl#3caedd8fd0f365841abaf1430ff2922fcb09d9db"
+dependencies = [
+ "anyhow",
+ "asn1_der",
+ "base64 0.22.1",
+ "byteorder",
+ "chrono",
+ "const-oid",
+ "der",
+ "hex",
+ "log",
+ "parity-scale-codec",
+ "pem 3.0.5",
+ "ring 0.17.9",
+ "rustls-webpki 0.103.0",
+ "scale-info",
+ "serde",
+ "serde-human-bytes",
+ "serde_json",
+ "urlencoding",
+ "wasm-bindgen-futures",
+ "x509-cert",
+]
+
+[[package]]
 name = "debugless-unwrap"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1878,6 +1937,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f55bf8e7b65898637379c1b74eb1551107c8294ed26d855ceb9fd1a09cfc9bc0"
 dependencies = [
  "const-oid",
+ "der_derive",
+ "flagset",
  "zeroize",
 ]
 
@@ -1893,6 +1954,17 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rusticata-macros",
+]
+
+[[package]]
+name = "der_derive"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8034092389675178f570469e6c3b0465d3d30b4505c294a6550db47f3c17ad18"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -2403,6 +2475,12 @@ checksum = "cfcf0ed7fe52a17a03854ec54a9f76d6d84508d1c0e66bc1793301c73fc8493c"
 dependencies = [
  "static_assertions",
 ]
+
+[[package]]
+name = "flagset"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "flate2"
@@ -3040,7 +3118,7 @@ dependencies = [
  "hyper 1.6.0",
  "hyper-util",
  "rustls",
- "rustls-pki-types",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -3308,6 +3386,17 @@ name = "impl-more"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8a5a9a0ff0086c7a148acb942baaabeadf9504d10400b5a05645853729b9cd2"
+
+[[package]]
+name = "impl-trait-for-tuples"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0eb5a3343abf848c0984fe4604b2b105da9539376e24fc0a3b0007411ae4fd9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
 
 [[package]]
 name = "indexmap"
@@ -3926,6 +4015,7 @@ dependencies = [
  "anyhow",
  "borsh",
  "curve25519-dalek",
+ "dcap-qvl",
  "getrandom 0.2.15",
  "hex",
  "k256",
@@ -5765,6 +5855,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "parity-scale-codec"
+version = "3.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9fde3d0718baf5bc92f577d652001da0f8d54cd03a7974e118d04fc888dc23d"
+dependencies = [
+ "arrayvec",
+ "bitvec",
+ "byte-slice-cast",
+ "const_format",
+ "impl-trait-for-tuples",
+ "parity-scale-codec-derive",
+ "rustversion",
+ "serde",
+]
+
+[[package]]
+name = "parity-scale-codec-derive"
+version = "3.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "581c837bb6b9541ce7faa9377c20616e4fb7650f6b0f68bc93c827ee504fb7b3"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "parity-wasm"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6414,7 +6532,7 @@ dependencies = [
  "ring 0.17.14",
  "rustc-hash 2.1.1",
  "rustls",
- "rustls-pki-types",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "slab",
  "thiserror 2.0.12",
  "tinyvec",
@@ -6583,7 +6701,7 @@ checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
 dependencies = [
  "pem 3.0.5",
  "ring 0.17.14",
- "rustls-pki-types",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "time",
  "yasna",
 ]
@@ -6806,7 +6924,7 @@ dependencies = [
  "quinn",
  "rustls",
  "rustls-pemfile 2.2.0",
- "rustls-pki-types",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -6850,6 +6968,18 @@ dependencies = [
  "untrusted 0.7.1",
  "web-sys",
  "winapi",
+]
+
+[[package]]
+name = "ring"
+version = "0.17.9"
+source = "git+https://github.com/mattlockyer/ring#ec827590cd2346a401e0c3cfea6b2fe6a757ce4d"
+dependencies = [
+ "cc",
+ "cfg-if 1.0.0",
+ "libc",
+ "untrusted 0.9.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7117,8 +7247,8 @@ dependencies = [
  "log",
  "once_cell",
  "ring 0.17.14",
- "rustls-pki-types",
- "rustls-webpki",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustls-webpki 0.103.1",
  "subtle",
  "zeroize",
 ]
@@ -7138,7 +7268,7 @@ version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
 dependencies = [
- "rustls-pki-types",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -7151,13 +7281,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-pki-types"
+version = "1.11.0"
+source = "git+https://github.com/mattlockyer/pki-types#8da373e6ea84f1ca072faa6aea52f9bd5ac0b12b"
+dependencies = [
+ "web-time",
+]
+
+[[package]]
+name = "rustls-webpki"
+version = "0.103.0"
+source = "git+https://github.com/mattlockyer/webpki#219c5df474ed26d018a262f6d844d30eff085334"
+dependencies = [
+ "ring 0.17.9",
+ "rustls-pki-types 1.11.0 (git+https://github.com/mattlockyer/pki-types)",
+ "untrusted 0.9.0",
+]
+
+[[package]]
 name = "rustls-webpki"
 version = "0.103.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fef8b8769aaccf73098557a87cd1816b4f9c7c16811c9c77142aa695c16f2c03"
 dependencies = [
  "ring 0.17.14",
- "rustls-pki-types",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "untrusted 0.9.0",
 ]
 
@@ -7189,6 +7337,31 @@ name = "ryu"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
+
+[[package]]
+name = "scale-info"
+version = "2.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "346a3b32eba2640d17a9cb5927056b08f3de90f65b72fe09402c2ad07d684d0b"
+dependencies = [
+ "bitvec",
+ "cfg-if 1.0.0",
+ "derive_more 1.0.0",
+ "parity-scale-codec",
+ "scale-info-derive",
+]
+
+[[package]]
+name = "scale-info-derive"
+version = "2.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6630024bf739e2179b91fb424b28898baf819414262c5d376677dbff1fe7ebf"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
 
 [[package]]
 name = "scc"
@@ -7361,6 +7534,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-human-bytes"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78ef65cb41f3f9cef63c431193229067e8b98b53c4d4c4ed38a8ca87c4d07676"
+dependencies = [
+ "hex",
+ "serde",
+]
+
+[[package]]
 name = "serde-xml-rs"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7418,6 +7601,7 @@ version = "1.0.140"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
 dependencies = [
+ "indexmap 2.8.0",
  "itoa",
  "memchr",
  "ryu",
@@ -9161,7 +9345,7 @@ version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
 dependencies = [
- "rustls-pki-types",
+ "rustls-pki-types 1.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -9549,6 +9733,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "x509-cert"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
+dependencies = [
+ "const-oid",
+ "der",
+ "spki",
 ]
 
 [[package]]

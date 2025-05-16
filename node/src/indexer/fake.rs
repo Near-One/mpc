@@ -224,6 +224,8 @@ fn participants_config_to_threshold_parameters(
                 ParticipantInfo {
                     sign_pk: info.p2p_public_key.to_string().parse().unwrap(),
                     url: format!("http://{}:{}", info.address, info.port),
+                    tee_quote: vec![],
+                    quote_collateral: String::new(),
                 },
                 ParticipantId(info.id.raw()),
             )

@@ -2,28 +2,65 @@ use crate::{
     errors::{Error, InvalidCandidateSet, InvalidParameters},
     legacy_contract_state,
 };
+use dcap_qvl::verify::{self, VerifiedReport};
 use near_sdk::{log, near, AccountId, PublicKey};
-use std::collections::BTreeSet;
-use std::fmt::Display;
+use std::{
+    collections::BTreeSet,
+    fmt::{self, Display},
+    time::SystemTime,
+};
+
+use super::tee::quote::get_collateral;
 
 pub mod hpke {
     pub type PublicKey = [u8; 32];
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct ParticipantInfo {
     pub url: String,
     /// The public key used for verifying messages.
     pub sign_pk: PublicKey,
+    /// TEE Remote Attestation Quote that proves the participant's identity.
+    pub tee_quote: Vec<u8>,
+    /// Supplemental data for the TEE quote, including Intel certificates to verify it came from
+    /// genuine Intel hardware, along with details about the Trusted Computing Base (TCB)
+    /// versioning, status, and other relevant info.
+    pub quote_collateral: String,
 }
 
-/* Migration helper */
+/// We do not use #[derive(Debug)] for ParticipantInfo because TEE quote and collateral fields are
+/// long and can cause HostError(TotalLogLengthExceeded { length: 120461, limit: 16384 }) errors.
+impl fmt::Debug for ParticipantInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParticipantInfo")
+            .field("url", &self.url)
+            .field("sign_pk", &self.sign_pk)
+            .finish()
+    }
+}
+
+impl ParticipantInfo {
+    pub fn verify_quote(&self) -> Result<VerifiedReport, Error> {
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("Failed to get current time")
+            .as_secs();
+        let tee_collateral = get_collateral(self.quote_collateral.clone());
+        let verification_result = verify::verify(&self.tee_quote, &tee_collateral, now);
+        verification_result.map_err(|_| InvalidCandidateSet::InvalidParticipantsTeeQuote.into())
+    }
+}
+
+/// Migration helper
 impl From<&legacy_contract_state::ParticipantInfo> for ParticipantInfo {
     fn from(info: &legacy_contract_state::ParticipantInfo) -> ParticipantInfo {
         ParticipantInfo {
             url: info.url.clone(),
             sign_pk: info.sign_pk.clone(),
+            tee_quote: vec![],
+            quote_collateral: "".to_string(),
         }
     }
 }
@@ -58,6 +95,7 @@ impl Default for Participants {
         Self::new()
     }
 }
+
 impl Participants {
     pub fn new() -> Self {
         Participants {
@@ -104,14 +142,18 @@ impl Participants {
     ///  - All participant IDs are unique.
     ///  - All account IDs are unique.
     ///  - The next_id is greater than all participant IDs.
+    ///  - All participant TEE quotes are valid.
     pub fn validate(&self) -> Result<(), Error> {
         let mut ids: BTreeSet<ParticipantId> = BTreeSet::new();
         let mut accounts: BTreeSet<AccountId> = BTreeSet::new();
-        for (acc_id, pid, _) in &self.participants {
+        for (acc_id, pid, pinfo) in &self.participants {
             accounts.insert(acc_id.clone());
             ids.insert(pid.clone());
             if self.next_id.get() <= pid.get() {
                 return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+            }
+            if pinfo.verify_quote().is_err() {
+                return Err(InvalidCandidateSet::InvalidParticipantsTeeQuote.into());
             }
         }
         if ids.len() != self.len() {
@@ -190,8 +232,7 @@ impl Participants {
     }
 }
 
-/* Migration helpers */
-/// hopefully not required
+/// Migration helpers - hopefully not required
 fn migrate_inconsistent_participants(
     participants: legacy_contract_state::Participants,
 ) -> Participants {
@@ -243,11 +284,10 @@ impl From<legacy_contract_state::Candidates> for Participants {
 
 #[cfg(test)]
 pub mod tests {
-
     use crate::legacy_contract_state;
-    use crate::primitives::participants::{ParticipantId, Participants};
-    use crate::primitives::test_utils::{
-        gen_accounts_and_info, gen_legacy_candidates, gen_legacy_participants,
+    use crate::primitives::{
+        participants::{ParticipantId, Participants},
+        test_utils::{gen_accounts_and_info, gen_legacy_candidates, gen_legacy_participants},
     };
     use rand::Rng;
 
@@ -301,12 +341,15 @@ pub mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Invalid quote collateral JSON")]
     fn test_migration_candidates() {
         let n: usize = rand::thread_rng().gen_range(2..600);
         let candidates = gen_legacy_candidates(n);
         let mp: Participants = candidates.clone().into();
         assert_candidate_migration(&candidates, &mp);
-        assert!(mp.validate().is_ok());
+        // Validation is expected to panic since legacy candidates do not have a notion of TEE quote
+        // collateral, so the new participants have it empty
+        let _ = mp.validate();
     }
 
     pub fn assert_participant_migration(
@@ -340,11 +383,14 @@ pub mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Invalid quote collateral JSON")]
     fn test_migration_participants() {
         let n: usize = rand::thread_rng().gen_range(2..600);
         let legacy_participants = gen_legacy_participants(n);
         let participants: Participants = legacy_participants.clone().into();
         assert_participant_migration(&legacy_participants, &participants);
-        assert!(participants.validate().is_ok());
+        // Validation is expected to panic since legacy candidates do not have a notion of TEE quote
+        // collateral, so the new participants have it empty
+        let _ = participants.validate();
     }
 }
