@@ -71,62 +71,51 @@ pub fn protocol_state_to_string(contract_state: &ProtocolContractState) -> Strin
             }
             output.push_str("  Parameters:\n");
             params_to_string(&mut output, &state.parameters);
-        }
-        ProtocolContractState::Resharing(state) => {
-            output.push_str("Contract is in Resharing state\n");
-            output.push_str(&format!(
-                "  Epoch transition: original {} --> prospective {}\n",
-                state.previous_running_state.keyset.epoch_id,
-                state.prospective_epoch_id()
-            ));
-            output.push_str("  Domains:\n");
-            for (i, domain) in state
-                .previous_running_state
-                .domains
-                .domains()
-                .iter()
-                .enumerate()
-            {
-                output.push_str(&format!(
-                    "    Domain {}: {:?}, original key from attempt {}, ",
-                    domain.id,
-                    domain.scheme,
-                    state.previous_running_state.keyset.domains[i].attempt
-                ));
 
-                #[allow(clippy::comparison_chain)]
-                if i < state.reshared_keys.len() {
+            if let Some(resharing_process) = &state.resharing_process {
+                output.push_str("Contract is in Resharing state\n");
+                output.push_str("  Domains:\n");
+                for (i, domain) in state.domains.domains().iter().enumerate() {
                     output.push_str(&format!(
-                        "reshared (attempt ID {})\n",
-                        state.reshared_keys[i].attempt
+                        "    Domain {}: {:?}, original key from attempt {}, ",
+                        domain.id, domain.scheme, state.keyset.domains[i].attempt
                     ));
-                } else if i == state.reshared_keys.len() {
-                    output.push_str("resharing key: ");
-                    if state.resharing_key.is_active() {
-                        output.push_str(&format!(
-                            "active; current attempt ID: {}\n",
-                            state
-                                .resharing_key
-                                .current_key_event_id()
-                                .unwrap()
-                                .attempt_id
-                        ));
-                    } else {
-                        output.push_str(&format!(
-                            "not active; next attempt ID: {}\n",
-                            state.resharing_key.next_attempt_id()
-                        ));
-                    }
-                } else {
-                    output.push_str("queued for resharing\n");
-                }
-            }
-            output.push_str("  Previous Parameters:\n");
-            params_to_string(&mut output, &state.previous_running_state.parameters);
-            output.push_str("  Proposed Parameters:\n");
-            params_to_string(&mut output, state.resharing_key.proposed_parameters());
 
-            output.push_str("  Warning: this tool does not calculate automatic timeouts for resharing attempts\n");
+                    #[allow(clippy::comparison_chain)]
+                    if i < resharing_process.reshared_keys.len() {
+                        output.push_str(&format!(
+                            "reshared (attempt ID {})\n",
+                            resharing_process.reshared_keys[i].attempt
+                        ));
+                    } else if i == resharing_process.reshared_keys.len() {
+                        output.push_str("resharing key: ");
+                        if resharing_process.resharing_key.is_active() {
+                            output.push_str(&format!(
+                                "active; current attempt ID: {}\n",
+                                resharing_process
+                                    .resharing_key
+                                    .current_key_event_id()
+                                    .unwrap()
+                                    .attempt_id
+                            ));
+                        } else {
+                            output.push_str(&format!(
+                                "not active; next attempt ID: {}\n",
+                                resharing_process.resharing_key.next_attempt_id()
+                            ));
+                        }
+                    } else {
+                        output.push_str("queued for resharing\n");
+                    }
+                }
+                output.push_str("  Proposed Parameters:\n");
+                params_to_string(
+                    &mut output,
+                    resharing_process.resharing_key.proposed_parameters(),
+                );
+
+                output.push_str("  Warning: this tool does not calculate automatic timeouts for resharing attempts\n");
+            }
         }
     }
     output

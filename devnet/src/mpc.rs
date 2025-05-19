@@ -597,13 +597,11 @@ impl MpcVoteNewParametersCmd {
         // participants must have contiguous participant IDs.
         let contract_state = read_contract_state_v2(&setup.accounts, &contract).await;
         let prospective_epoch_id = match &contract_state {
-            ProtocolContractState::Running(state) => state.keyset.epoch_id.next(),
-            ProtocolContractState::Resharing(state) => state.prospective_epoch_id().next(),
+            ProtocolContractState::Running(state) => state.prospective_epoch_id().next(),
             _ => panic!(),
         };
         let parameters = match contract_state {
             ProtocolContractState::Running(state) => state.parameters,
-            ProtocolContractState::Resharing(state) => state.previous_running_state.parameters,
             _ => {
                 panic!(
                     "Cannot vote for new parameters when not in the running or resharing state: {:?}",
