@@ -151,33 +151,38 @@ impl ContractState {
                     ),
                 })
             }
-            ProtocolContractState::Running(state) => ContractState::Running(ContractRunningState {
-                keyset: state.keyset.clone(),
-                participants: convert_participant_infos(state.parameters.clone(), port_override)?,
-            }),
-            ProtocolContractState::Resharing(state) => {
-                ContractState::Resharing(ContractResharingState {
-                    previous_running_state: ContractRunningState {
-                        keyset: state.previous_running_state.keyset.clone(),
-                        participants: convert_participant_infos(
-                            state.previous_running_state.parameters.clone(),
+            ProtocolContractState::Running(running_state) => {
+                match &running_state.resharing_process {
+                    Some(resharing_state) => ContractState::Resharing(ContractResharingState {
+                        previous_running_state: ContractRunningState {
+                            keyset: running_state.keyset.clone(),
+                            participants: convert_participant_infos(
+                                running_state.parameters.clone(),
+                                port_override,
+                            )?,
+                        },
+                        new_participants: convert_participant_infos(
+                            resharing_state.resharing_key.proposed_parameters().clone(),
                             port_override,
                         )?,
-                    },
-                    new_participants: convert_participant_infos(
-                        state.resharing_key.proposed_parameters().clone(),
-                        port_override,
-                    )?,
-                    reshared_keys: Keyset {
-                        epoch_id: state.prospective_epoch_id(),
-                        domains: state.reshared_keys.clone(),
-                    },
-                    key_event: convert_key_event_to_instance(
-                        &state.resharing_key,
-                        height,
-                        state.reshared_keys.clone(),
-                    ),
-                })
+                        reshared_keys: Keyset {
+                            epoch_id: resharing_state.prospective_epoch_id(),
+                            domains: resharing_state.reshared_keys.clone(),
+                        },
+                        key_event: convert_key_event_to_instance(
+                            &resharing_state.resharing_key,
+                            height,
+                            resharing_state.reshared_keys.clone(),
+                        ),
+                    }),
+                    None => ContractState::Running(ContractRunningState {
+                        keyset: running_state.keyset.clone(),
+                        participants: convert_participant_infos(
+                            running_state.parameters.clone(),
+                            port_override,
+                        )?,
+                    }),
+                }
             }
         })
     }
