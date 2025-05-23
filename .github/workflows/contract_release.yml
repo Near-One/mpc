@@ -1,0 +1,99 @@
+name: Contract Build and Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch name, tag or commit SHA) to release from'
+        required: true
+        type: string
+      flair:
+        description: "Use 'official-release', in case this is the official release. The resulting tag will be 'contract-release-x.y.z'. If this is not the official release, use any string and the resulting tag will be '<your-username>-<flair>-contract-x.y.z'" 
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo at selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+          override: true
+
+      - name: Install wasm-opt
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+      
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest
+
+      - name: Run contract tests
+        run: |
+          cd libs/chain-signatures
+          cargo build -p mpc-contract --release --locked --target=wasm32-unknown-unknown
+          wasm-opt -Oz -o target/wasm32-unknown-unknown/release/mpc_contract.wasm target/wasm32-unknown-unknown/release/mpc_contract.wasm
+          cargo nextest run -p mpc-contract --release --locked
+
+      - name: Install tomlq
+        run: cargo install --locked tomlq
+
+      - name: Compute tag name
+        id: compute_tag
+        run: |
+          version=$(tomlq -r '.package.version' libs/chain-signatures/contract/Cargo.toml)
+          if [ "${FLAIR}" = "official-release" ]; then
+            tag="contract-release-$version"
+          else
+            tag="${ACTOR}-${FLAIR}-contract-$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        env:
+          ACTOR: ${{ github.actor }}
+          FLAIR: ${{ inputs.flair }}
+
+      - name: Check if tag already exists
+        run: |
+          tag=${{ steps.compute_tag.outputs.tag }}
+          if git ls-remote --tags origin | grep "refs/tags/${tag}$"; then
+            echo "❌ Tag $tag already exists. Aborting."
+            exit 1
+          fi
+
+      - name: Build contract
+        run: |
+          cd libs/chain-signatures/contract
+          cargo build --release --target wasm32-unknown-unknown
+
+      - name: Optimize wasm
+        run: |
+          wasm_path="libs/chain-signatures/contract/target/wasm32-unknown-unknown/release/mpc_contract.wasm"
+          wasm-opt -Oz -o "$wasm_path" "$wasm_path"
+
+      - name: Create Git tag
+        run: |
+          tag=${{ steps.compute_tag.outputs.tag }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${tag}"
+          git push origin "${tag}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.compute_tag.outputs.tag }}
+          name: Contract Release v${{ steps.compute_tag.outputs.tag }}
+          files: libs/chain-signatures/contract/target/wasm32-unknown-unknown/release/mpc_contract.wasm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
