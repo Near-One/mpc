@@ -53,6 +53,7 @@ pub enum Cli {
         #[arg(long, default_value = "8192")]
         desired_presignatures_to_buffer: usize,
     },
+    Version
 }
 
 #[derive(Parser, Debug)]
@@ -129,6 +130,10 @@ pub struct ExportKeyshareCmd {
     /// Hex-encoded 16 byte AES key for local storage encryption
     #[arg(help = "Hex-encoded 16 byte AES key for local storage encryption")]
     pub local_encryption_key_hex: String,
+}
+
+#[derive(Parser, Debug)]
+pub struct Version {
 }
 
 impl StartCmd {
@@ -272,8 +277,21 @@ impl Cli {
                     desired_presignatures_to_buffer,
                 )
                 .await
+            },
+            Cli::Version => {
+                Cli::print_version()
             }
         }
+    }
+
+    fn print_version() -> anyhow::Result<()> {
+        println!(
+            "{} {} (git {})",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+            env!("GIT_HASH")
+        );
+        Ok(())
     }
 
     async fn run_generate_test_configs(
