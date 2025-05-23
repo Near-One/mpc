@@ -1,6 +1,16 @@
 use lazy_static::lazy_static;
 
 lazy_static! {
+    pub static ref MPC_NODE_VERSION: prometheus::IntGaugeVec =
+        prometheus::register_int_gauge_vec!(
+            "mpc_node_version",
+            "Version of the MPC node",
+            &["version"],
+        )
+        .unwrap();
+}
+
+lazy_static! {
     pub static ref MPC_NUM_TRIPLES_GENERATED: prometheus::IntCounter =
         prometheus::register_int_counter!(
             "mpc_num_triples_generated",

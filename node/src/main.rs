@@ -31,5 +31,7 @@ mod web;
 
 fn main() -> anyhow::Result<()> {
     init_logging();
+    // Set the version metric
+    metrics::MPC_NODE_VERSION.with_label_values(&[env!("CARGO_PKG_VERSION")]).set(1);
     futures::executor::block_on(cli::Cli::parse().run())
 }

@@ -31,6 +31,7 @@ use std::{
 use tokio::sync::oneshot;
 
 #[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
 pub enum Cli {
     Start(StartCmd),
     /// Generates/downloads required files for Near node to run
