@@ -11,6 +11,7 @@ pub mod utils;
 pub mod v0_state;
 
 use crate::errors::Error;
+use crate::primitives::tee::proposal::AllowedTeeProposals;
 use crate::update::{ProposeUpdateArgs, ProposedUpdates, Update, UpdateId};
 use config::{Config, InitConfig};
 use crypto_shared::{
@@ -19,6 +20,7 @@ use crypto_shared::{
     near_public_key_to_affine_point,
     types::{PublicKeyExtended, PublicKeyExtendedConversionError, SignatureResponse},
 };
+use dcap_qvl::verify;
 use errors::{
     DomainError, InvalidParameters, InvalidState, PublicKeyError, RespondError, SignError,
 };
@@ -28,31 +30,36 @@ use near_sdk::{
     env::{self, ed25519_verify},
     log, near, near_bindgen,
     store::LookupMap,
-    AccountId, BlockHeight, CryptoHash, CurveType, Gas, GasWeight, NearToken, Promise,
-    PromiseError, PromiseOrValue, PublicKey,
+    AccountId, CryptoHash, CurveType, Gas, GasWeight, NearToken, Promise, PromiseError,
+    PromiseOrValue, PublicKey,
 };
 use primitives::{
-    code_hash::CodeHash,
     domain::{DomainConfig, DomainId, DomainRegistry, SignatureScheme},
-    key_state::{EpochId, KeyEventId, Keyset},
+    key_state::{AuthenticatedParticipantId, EpochId, KeyEventId, Keyset},
     signature::{SignRequest, SignRequestArgs, SignatureRequest, YieldIndex},
+    tee::{
+        code_hash::{CodeHash, CodeHashesVotes},
+        proposal::TeeProposal,
+        quote::verify_codehash,
+        quote::{get_collateral, TeeQuote},
+    },
     thresholds::{Threshold, ThresholdParameters},
 };
-use primitives::{code_hash::CodeHashesVotes, key_state::AuthenticatedParticipantId};
 use state::{running::RunningContractState, ProtocolContractState};
 use storage_keys::StorageKey;
 use v0_state::MpcContractV0;
 
 // Gas required for a sign request
 const GAS_FOR_SIGN_CALL: Gas = Gas::from_tgas(10);
+
 // Register used to receive data id from `promise_await_data`.
 const DATA_ID_REGISTER: u64 = 0;
+
 // Prepaid gas for a `return_signature_and_clean_state_on_success` call
 const RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_GAS: Gas = Gas::from_tgas(5);
+
 // Prepaid gas for a `update_config` call
 const UPDATE_CONFIG_GAS: Gas = Gas::from_tgas(5);
-// Maximum time after which TEE MPC nodes must be upgraded to the latest version
-const TEE_UPGRADE_PERIOD: BlockHeight = 604800; // ~7 days
 
 /// Store two version of the MPC contract for migration and backward compatibility purposes.
 /// Note: Probably, you don't need to change this struct.
@@ -72,80 +79,53 @@ impl Default for VersionedMpcContract {
 }
 
 #[near(serializers=[borsh])]
-#[derive(Debug, Clone)]
-pub struct AllowedCodeHash {
-    code_hash: CodeHash,
-    added: BlockHeight,
-}
-
-#[near(serializers=[borsh])]
-#[derive(Debug, Default)]
-pub struct AllowedCodeHashes {
-    allowed_code_hashes: Vec<AllowedCodeHash>, // ordered by `start`
-}
-
-impl AllowedCodeHashes {
-    /// Removes all expired code hashes and returns the number of removed entries.
-    fn clean(&mut self, current_block_height: BlockHeight) -> usize {
-        // Find the first non-expired entry
-        let expired_count = self
-            .allowed_code_hashes
-            .iter()
-            .position(|entry| entry.added + TEE_UPGRADE_PERIOD >= current_block_height)
-            .unwrap_or(self.allowed_code_hashes.len());
-
-        // Remove all expired entries
-        self.allowed_code_hashes.drain(0..expired_count);
-
-        // Return the number of removed entries
-        expired_count
-    }
-    /// Inserts a new code hash into the list after cleaning expired entries. Maintains the sorted
-    /// order by `added` (ascending). Returns `true` if the insertion was successful, `false` if the
-    /// code hash already exists.
-    pub fn insert(&mut self, code_hash: CodeHash) -> bool {
-        // Clean expired entries
-        let current_block_height = env::block_height();
-        self.clean(current_block_height);
-
-        // Check if the code hash already exists
-        if self
-            .allowed_code_hashes
-            .iter()
-            .any(|entry| entry.code_hash == code_hash)
-        {
-            return false;
-        }
-
-        // Create the new entry
-        let new_entry = AllowedCodeHash {
-            code_hash,
-            added: current_block_height,
-        };
-
-        // Find the correct position to maintain sorted order by `added`
-        let insert_index = self
-            .allowed_code_hashes
-            .iter()
-            .position(|entry| new_entry.added <= entry.added)
-            .unwrap_or(self.allowed_code_hashes.len());
-
-        // Insert at the correct position
-        self.allowed_code_hashes.insert(insert_index, new_entry);
-        true
-    }
-    pub fn get(&mut self, current_block_height: BlockHeight) -> Vec<AllowedCodeHash> {
-        self.clean(current_block_height);
-        self.allowed_code_hashes.clone()
-    }
-}
-
-#[near(serializers=[borsh])]
 #[derive(Debug)]
 pub struct TeeState {
-    allowed_code_hashes: AllowedCodeHashes,
-    historical_code_hashes: Vec<CodeHash>,
+    allowed_tee_proposals: AllowedTeeProposals,
+    historical_tee_proposals: Vec<TeeProposal>,
     votes: CodeHashesVotes,
+}
+
+impl TeeState {
+    pub fn is_code_hash_allowed(
+        &mut self,
+        _code_hash: CodeHash,
+        expected_rtmr3: &[u8; 48],
+        raw_tcb_info: String,
+    ) -> bool {
+        // self.historical_tee_proposals
+        //     .iter()
+        //     .chain(
+        //         self.allowed_tee_proposals
+        //             .get(env::block_height())
+        //             .iter()
+        //             .map(|entry| &entry.proposal),
+        //     )
+        //     .any(|proposal| proposal.tee_quote.get_rtmr3().unwrap() == *expected_rtmr3)
+        // TODO TODO TODO should be:
+        // .any(|proposal| hash(proposal.tee_quote.get_rtmr3().unwrap() || code_hash) == *expected_rtmr3)
+        let expected_rtmr3 = hex::encode(expected_rtmr3);
+        let code_hash = verify_codehash(raw_tcb_info, expected_rtmr3);
+        self.historical_tee_proposals
+            .iter()
+            .chain(
+                self.allowed_tee_proposals
+                    .get(env::block_height())
+                    .iter()
+                    .map(|entry| &entry.proposal),
+            )
+            .any(|proposal| proposal.code_hash.as_hex() == code_hash)
+    }
+
+    pub fn whitelist_tee_proposal(&mut self, tee_proposal: TeeProposal) {
+        self.votes.clear_votes();
+        self.historical_tee_proposals.push(tee_proposal.clone());
+        self.allowed_tee_proposals.insert(
+            tee_proposal.code_hash,
+            tee_proposal.tee_quote,
+            env::block_height(),
+        );
+    }
 }
 
 #[near(serializers=[borsh])]
@@ -199,8 +179,8 @@ impl MpcContract {
             proposed_updates: ProposedUpdates::default(),
             config: Config::from(init_config),
             tee_state: TeeState {
-                allowed_code_hashes: AllowedCodeHashes::default(),
-                historical_code_hashes: vec![],
+                allowed_tee_proposals: AllowedTeeProposals::default(),
+                historical_tee_proposals: vec![],
                 votes: CodeHashesVotes::default(),
             },
         }
@@ -275,24 +255,46 @@ impl MpcContract {
         Ok(())
     }
 
-    pub fn vote_code_hash(&mut self, code_hash: CodeHash) -> Result<(), Error> {
+    pub fn vote_code_hash(
+        &mut self,
+        code_hash: CodeHash,
+        tee_quote: &[u8],
+        tee_collateral: String,
+        raw_tcb_info: String,
+    ) -> Result<(), Error> {
         // Ensure the protocol is in the Running state
         let ProtocolContractState::Running(state) = &self.protocol_state else {
             return Err(InvalidState::ProtocolStateNotRunning.into());
         };
 
-        // Authenticate the participant and cast a vote
-        // TODO: Verify TEE quote here. See GitHub issue #378: https://github.com/Near-One/mpc/issues/378
-        let participant = AuthenticatedParticipantId::new(state.parameters.participants())?;
-        let votes = self.tee_state.votes.vote(code_hash.clone(), &participant);
+        // Check participant identity, verify their TEE quote, and cast a vote
+        let now = env::block_timestamp_ms() / 1_000;
+        let collateral = get_collateral(tee_collateral);
+        let verification_result =
+            verify::verify(tee_quote, &collateral, now).map_err(|err: anyhow::Error| {
+                InvalidParameters::InvalidTeeRemoteAttestation.message(err.to_string())
+            })?;
 
-        // If the vote threshold is met, update the state
-        if votes >= self.threshold()?.value() {
-            self.tee_state.votes.clear_votes();
-            self.tee_state
-                .historical_code_hashes
-                .push(code_hash.clone());
-            self.tee_state.allowed_code_hashes.insert(code_hash);
+        let participant = AuthenticatedParticipantId::new(state.parameters.participants())?;
+        let tee_proposal = TeeProposal {
+            code_hash: code_hash.clone(),
+            tee_quote: TeeQuote::new(tee_quote.to_vec()),
+        };
+        let votes = self
+            .tee_state
+            .votes
+            .vote(tee_proposal.clone(), &participant);
+
+        let expected_rtmr3 = verification_result.report.as_td10().unwrap().rt_mr3;
+
+        // If the vote threshold is met and the new Docker hash is allowed by the TEE's RTMR3,
+        // update the state
+        if votes >= self.threshold()?.value()
+            && self
+                .tee_state
+                .is_code_hash_allowed(code_hash, &expected_rtmr3, raw_tcb_info)
+        {
+            self.tee_state.whitelist_tee_proposal(tee_proposal);
         }
 
         Ok(())
@@ -300,10 +302,10 @@ impl MpcContract {
 
     pub fn allowed_code_hashes(&mut self) -> Vec<CodeHash> {
         self.tee_state
-            .allowed_code_hashes
+            .allowed_tee_proposals
             .get(env::block_height())
             .into_iter()
-            .map(|entry| entry.code_hash)
+            .map(|entry| entry.proposal.code_hash)
             .collect()
     }
 
@@ -826,15 +828,29 @@ impl VersionedMpcContract {
     }
 
     #[handle_result]
-    pub fn vote_code_hash(&mut self, code_hash: CodeHash) -> Result<(), Error> {
+    pub fn vote_code_hash(
+        &mut self,
+        code_hash: CodeHash,
+        tee_quote: Vec<u8>,
+        tee_collateral: String,
+        raw_tcb_info: String,
+    ) -> Result<(), Error> {
         log!(
-            "vote_code_hash: signer={}, code_hash={:?}",
+            "vote_code_hash: signer={}, code_hash={:?}, tee_quote={:?}, tee_collateral={:?}, raw_tcb_info={:?}",
             env::signer_account_id(),
             code_hash,
+            tee_quote,
+            tee_collateral,
+            raw_tcb_info,
         );
         self.voter_or_panic();
         match self {
-            Self::V1(contract) => contract.vote_code_hash(code_hash)?,
+            Self::V1(contract) => contract.vote_code_hash(
+                code_hash,
+                tee_quote.as_slice(),
+                tee_collateral,
+                raw_tcb_info,
+            )?,
             _ => env::panic_str("expected V1"),
         }
         Ok(())
@@ -920,8 +936,8 @@ impl VersionedMpcContract {
             pending_requests: LookupMap::new(StorageKey::PendingRequestsV2),
             proposed_updates: ProposedUpdates::default(),
             tee_state: TeeState {
-                allowed_code_hashes: AllowedCodeHashes::default(),
-                historical_code_hashes: vec![],
+                allowed_tee_proposals: AllowedTeeProposals::default(),
+                historical_tee_proposals: vec![],
                 votes: CodeHashesVotes::default(),
             },
         }))
@@ -1057,6 +1073,7 @@ mod tests {
     use near_sdk::{test_utils::VMContextBuilder, testing_env, VMContext};
     use primitives::key_state::{AttemptId, KeyForDomain};
     use rand::{rngs::OsRng, RngCore};
+    use std::time::Duration;
 
     pub fn derive_secret_key(secret_key: &k256::SecretKey, tweak: &Tweak) -> k256::SecretKey {
         let tweak = k256::Scalar::from_repr(tweak.as_bytes().into()).unwrap();
@@ -1064,8 +1081,11 @@ mod tests {
     }
 
     fn basic_setup() -> (VMContext, VersionedMpcContract, SigningKey) {
+        let now_sec = 1_747_785_600u64; // 2025-05-21 00:00:00 UTC for TEE quote verification
+        let now_ns = Duration::from_secs(now_sec).as_nanos() as u64; // nanoseconds since epoch
         let context = VMContextBuilder::new()
             .attached_deposit(NearToken::from_yoctonear(1))
+            .block_timestamp(now_ns)
             .build();
         testing_env!(context.clone());
         let secret_key = SigningKey::random(&mut OsRng);

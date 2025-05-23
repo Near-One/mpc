@@ -286,6 +286,8 @@ impl KeyEventInstance {
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests {
+    use std::time::Duration;
+
     use crate::primitives::participants::ParticipantId;
     use crate::primitives::test_utils::{gen_account_id, gen_seed};
     use crate::state::key_event::KeyEvent;
@@ -302,12 +304,14 @@ pub mod tests {
             block_height: Option<BlockHeight>,
             signer: Option<AccountId>,
             seed: Option<[u8; 32]>,
+            block_timestamp: Option<u64>,
         ) -> Self {
             let seed = seed.unwrap_or(gen_seed());
             let mut ctx = VMContextBuilder::new();
             let block_height = block_height.unwrap_or(rand::thread_rng().gen());
             ctx.block_height(block_height);
             ctx.random_seed(seed);
+            ctx.block_timestamp(block_timestamp.unwrap_or(0));
             let signer = signer.unwrap_or(gen_account_id());
             ctx.signer_account_id(signer.clone());
             testing_env!(ctx.build());
@@ -326,6 +330,9 @@ pub mod tests {
             ctx.block_height(self.block_height);
             ctx.random_seed(self.seed);
             ctx.signer_account_id(self.signer.clone());
+            let now_sec = 1_747_785_600u64; // 2025-05-21 00:00:00 UTC for TEE quote verification
+            let now_ns = Duration::from_secs(now_sec).as_nanos() as u64; // nanoseconds since epoch
+            ctx.block_timestamp(now_ns);
             testing_env!(ctx.build());
         }
         pub fn set_block_height(&mut self, block_height: BlockHeight) {

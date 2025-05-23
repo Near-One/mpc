@@ -30,6 +30,7 @@ k256 = { version = "0.13.4", features = [
     "arithmetic",
     "expose-field",
 ] }
+dcap-qvl = { git = "https://github.com/mattlockyer/dcap-qvl" }
 
 near-gas = { version = "0.2.5", features = ["serde", "borsh", "schemars"] }
 near-account-id = "1"
@@ -39,7 +40,6 @@ hex = "0.4.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2.12", features = ["custom"] }
-
 
 [dev-dependencies]
 rand = "0.8"

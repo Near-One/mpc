@@ -318,7 +318,7 @@ pub struct DeployParallelSignContractCmd {
 
 #[derive(clap::Parser)]
 pub struct RunLoadtestCmd {
-    /// The name of the MPC network to run the loadtest against.
+    /// The name of the MPC Cluster to run the loadtest against.
     #[clap(long)]
     pub mpc_network: String,
     /// The QPS to send. The loadtest framework will try to send this many

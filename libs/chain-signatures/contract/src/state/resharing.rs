@@ -144,15 +144,19 @@ impl ResharingContractState {
 }
 #[cfg(test)]
 mod tests {
-    use crate::primitives::domain::{AddDomainsVotes, DomainId};
-    use crate::primitives::key_state::{AttemptId, KeyEventId};
-    use crate::primitives::test_utils::gen_account_id;
-    use crate::primitives::thresholds::{Threshold, ThresholdParameters};
-    use crate::primitives::votes::ThresholdParametersVotes;
-    use crate::state::key_event::tests::{find_leader, Environment};
-    use crate::state::resharing::ResharingContractState;
-    use crate::state::running::running_tests::{gen_running_state, gen_valid_params_proposal};
-    use crate::state::running::RunningContractState;
+    use crate::primitives::{
+        domain::{AddDomainsVotes, DomainId},
+        key_state::{AttemptId, KeyEventId},
+        test_utils::{gen_account_id, set_test_env_for_tee_quote_verification},
+        thresholds::{Threshold, ThresholdParameters},
+        votes::ThresholdParametersVotes,
+    };
+    use crate::state::{
+        key_event::tests::{find_leader, Environment},
+        resharing::ResharingContractState,
+        running::running_tests::{gen_running_state, gen_valid_params_proposal},
+        running::RunningContractState,
+    };
     use near_sdk::AccountId;
     use std::collections::BTreeSet;
 
@@ -160,7 +164,8 @@ mod tests {
     /// We do this by starting from the Running state and calling vote_new_parameters to have it
     /// transition into Resharing. (This also tests the transitioning code path.)
     fn gen_resharing_state(num_domains: usize) -> (Environment, ResharingContractState) {
-        let mut env = Environment::new(Some(100), None, None);
+        let block_timestamp = 1757785600_u64 * 1_000_000_u64; // 2025-05-21 00:00:00 UTC to ensure TEE quote verification succeeds
+        let mut env = Environment::new(Some(100), None, None, Some(block_timestamp));
         let mut running = gen_running_state(num_domains);
         let proposal = gen_valid_params_proposal(&running.parameters);
         let mut resharing_state = None;
@@ -178,6 +183,8 @@ mod tests {
     }
 
     fn test_resharing_contract_state_for(num_domains: usize) {
+        set_test_env_for_tee_quote_verification();
+
         println!("Testing with {} domains", num_domains);
         let (mut env, mut state) = gen_resharing_state(num_domains);
         let candidates: BTreeSet<AccountId> = state

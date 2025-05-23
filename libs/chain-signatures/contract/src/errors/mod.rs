@@ -91,6 +91,8 @@ pub enum InvalidParameters {
     NextDomainIdMismatch,
     #[error("Invalid domain ID.")]
     InvalidDomainId,
+    #[error("Invalid TEE Remote Attestation.")]
+    InvalidTeeRemoteAttestation,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -135,6 +137,8 @@ pub enum InvalidCandidateSet {
     NewParticipantIdsNotContiguous,
     #[error("New Participant ids need to not skip any unused participant ids.")]
     NewParticipantIdsTooHigh,
+    #[error("Invalid participants TEE Remote Attestation Quote.")]
+    InvalidParticipantsTeeQuote,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]

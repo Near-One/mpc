@@ -1,18 +1,47 @@
+use super::tee::quote::get_collateral;
 use crate::errors::{Error, InvalidCandidateSet, InvalidParameters};
-use near_sdk::{near, AccountId, PublicKey};
-use std::collections::BTreeSet;
-use std::fmt::Display;
+use dcap_qvl::verify::{self, VerifiedReport};
+use near_sdk::{env, near, AccountId, PublicKey};
+use std::{
+    collections::BTreeSet,
+    fmt::{self, Display},
+};
 
 pub mod hpke {
     pub type PublicKey = [u8; 32];
 }
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct ParticipantInfo {
     pub url: String,
     /// The public key used for verifying messages.
     pub sign_pk: PublicKey,
+    /// TEE Remote Attestation Quote that proves the participant's identity.
+    pub tee_quote: Vec<u8>,
+    /// Supplemental data for the TEE quote, including Intel certificates to verify it came from
+    /// genuine Intel hardware, along with details about the Trusted Computing Base (TCB)
+    /// versioning, status, and other relevant info.
+    pub quote_collateral: String,
+}
+
+/// We do not use #[derive(Debug)] for ParticipantInfo because TEE quote and collateral fields are
+/// long and can cause HostError(TotalLogLengthExceeded { length: 120461, limit: 16384 }) errors.
+impl fmt::Debug for ParticipantInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParticipantInfo")
+            .field("url", &self.url)
+            .field("sign_pk", &self.sign_pk)
+            .finish()
+    }
+}
+
+impl ParticipantInfo {
+    pub fn verify_quote(&self, timestamp: u64) -> Result<VerifiedReport, Error> {
+        let tee_collateral = get_collateral(self.quote_collateral.clone());
+        let verification_result = verify::verify(&self.tee_quote, &tee_collateral, timestamp);
+        verification_result.map_err(|_| InvalidCandidateSet::InvalidParticipantsTeeQuote.into())
+    }
 }
 
 #[near(serializers=[borsh, json])]
@@ -45,6 +74,7 @@ impl Default for Participants {
         Self::new()
     }
 }
+
 impl Participants {
     pub fn new() -> Self {
         Participants {
@@ -91,14 +121,19 @@ impl Participants {
     ///  - All participant IDs are unique.
     ///  - All account IDs are unique.
     ///  - The next_id is greater than all participant IDs.
+    ///  - All participant TEE quotes are valid.
     pub fn validate(&self) -> Result<(), Error> {
         let mut ids: BTreeSet<ParticipantId> = BTreeSet::new();
         let mut accounts: BTreeSet<AccountId> = BTreeSet::new();
-        for (acc_id, pid, _) in &self.participants {
+        for (acc_id, pid, pinfo) in &self.participants {
             accounts.insert(acc_id.clone());
             ids.insert(pid.clone());
             if self.next_id.get() <= pid.get() {
                 return Err(InvalidCandidateSet::IncoherentParticipantIds.into());
+            }
+            let now_sec = env::block_timestamp_ms() / 1_000;
+            if pinfo.verify_quote(now_sec).is_err() {
+                return Err(InvalidCandidateSet::InvalidParticipantsTeeQuote.into());
             }
         }
         if ids.len() != self.len() {
@@ -179,13 +214,22 @@ impl Participants {
 
 #[cfg(test)]
 pub mod tests {
-
-    use crate::primitives::participants::{ParticipantId, Participants};
-    use crate::primitives::test_utils::gen_accounts_and_info;
+    use crate::primitives::{
+        participants::{ParticipantId, Participants},
+        test_utils::gen_accounts_and_info,
+    };
+    use near_sdk::{test_utils::VMContextBuilder, testing_env};
     use rand::Rng;
+    use std::time::Duration;
 
     #[test]
     fn test_participants() {
+        let now_sec = 1_747_785_600u64; // 2025-05-21 00:00:00 UTC for TEE quote verification
+        let now_ns = Duration::from_secs(now_sec).as_nanos() as u64; // nanoseconds since epoch
+        let mut ctx = VMContextBuilder::new();
+        ctx.block_timestamp(now_ns);
+        testing_env!(ctx.build());
+
         let n = rand::thread_rng().gen_range(1..800);
         let expected = gen_accounts_and_info(n);
         let mut participants = Participants::new();
