@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::handler::{ChainBlockUpdate, SignatureRequestFromChain};
 use super::participants::ContractState;
 use super::types::{ChainRespondArgs, ChainSendTransactionRequest};
@@ -8,7 +6,6 @@ use crate::config::ParticipantsConfig;
 use crate::sign_request::SignatureId;
 use crate::signing::recent_blocks_tracker::tests::TestBlockMaker;
 use crate::tracking::{AutoAbortTask, AutoAbortTaskCollection};
-use assert_matches::assert_matches;
 use mpc_contract::config::Config;
 use mpc_contract::primitives::domain::{DomainConfig, DomainRegistry};
 use mpc_contract::primitives::key_state::{EpochId, KeyEventId, Keyset};
@@ -18,7 +15,8 @@ use mpc_contract::primitives::thresholds::{Threshold, ThresholdParameters};
 use mpc_contract::state::initializing::InitializingContractState;
 use mpc_contract::state::key_event::tests::Environment;
 use mpc_contract::state::key_event::KeyEvent;
-use mpc_contract::state::running::{ResharingState, RunningContractState};
+use mpc_contract::state::resharing::ResharingContractState;
+use mpc_contract::state::running::RunningContractState;
 use mpc_contract::state::ProtocolContractState;
 use near_crypto::PublicKey;
 use near_sdk::AccountId;
@@ -84,19 +82,23 @@ impl FakeMpcContractState {
     }
 
     pub fn start_resharing(&mut self, new_participants: ParticipantsConfig) {
-        let ProtocolContractState::Running(running_state) = &mut self.state else {
-            panic!("Cannot start resharing from non-running state");
+        let (previous_running_state, prev_epoch_id) = match &self.state {
+            ProtocolContractState::Running(state) => (state, state.keyset.epoch_id),
+            ProtocolContractState::Resharing(state) => {
+                (&state.previous_running_state, state.prospective_epoch_id())
+            }
+            _ => panic!("Cannot start resharing from non-running state"),
         };
-
-        assert_matches!(running_state.resharing_process, None);
-
-        let prev_epoch_id = running_state.keyset.epoch_id;
-
-        running_state.resharing_process = Some(ResharingState {
+        self.state = ProtocolContractState::Resharing(ResharingContractState {
+            previous_running_state: RunningContractState::new(
+                previous_running_state.domains.clone(),
+                previous_running_state.keyset.clone(),
+                previous_running_state.parameters.clone(),
+            ),
             reshared_keys: Vec::new(),
             resharing_key: KeyEvent::new(
                 prev_epoch_id.next(),
-                running_state
+                previous_running_state
                     .domains
                     .get_domain_by_index(0)
                     .unwrap()
@@ -104,8 +106,6 @@ impl FakeMpcContractState {
                 participants_config_to_threshold_parameters(&new_participants),
             ),
         });
-
-        assert_matches!(running_state.resharing_process, Some(_));
     }
 
     pub fn vote_pk(&mut self, account_id: AccountId, key_id: KeyEventId, pk: PublicKey) {
@@ -156,15 +156,11 @@ impl FakeMpcContractState {
             ProtocolContractState::Initializing(state) => {
                 if let Err(e) = state.vote_abort(id) {
                     tracing::info!("vote_abort_key_event transaction failed: {}", e);
-                } else {
-                    tracing::info!("vote_abort_key_event succeeded on initializing");
                 }
             }
-            ProtocolContractState::Running(state) => {
+            ProtocolContractState::Resharing(state) => {
                 if let Err(e) = state.vote_abort(id) {
                     tracing::info!("vote_abort_key_event transaction failed: {}", e);
-                } else {
-                    tracing::info!("vote_abort_key_event succeeded on running");
                 }
             }
             _ => {
@@ -177,10 +173,9 @@ impl FakeMpcContractState {
 
     pub fn vote_start_reshare(&mut self, account_id: AccountId, id: KeyEventId) {
         match &mut self.state {
-            ProtocolContractState::Running(state) => {
+            ProtocolContractState::Resharing(state) => {
                 self.env.set_signer(&account_id);
-                if let Err(e) = state.start_key_resharing(id, self.config.key_event_timeout_blocks)
-                {
+                if let Err(e) = state.start(id, self.config.key_event_timeout_blocks) {
                     tracing::info!("vote_start_reshare transaction failed: {}", e);
                 }
             }
@@ -194,11 +189,18 @@ impl FakeMpcContractState {
 
     pub fn vote_reshared(&mut self, account_id: AccountId, key_id: KeyEventId) {
         match &mut self.state {
-            ProtocolContractState::Running(state) => {
+            ProtocolContractState::Resharing(state) => {
                 self.env.set_signer(&account_id);
-                if let Err(e) = state.vote_reshared(key_id) {
-                    tracing::info!("vote_reshared transaction failed: {}", e);
+                let result = match state.vote_reshared(key_id) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::info!("vote_reshared transaction failed: {}", e);
+                        return;
+                    }
                 };
+                if let Some(new_state) = result {
+                    self.state = ProtocolContractState::Running(new_state);
+                }
             }
             _ => {
                 tracing::info!(
@@ -265,9 +267,6 @@ impl FakeIndexerCore {
                 loop {
                     {
                         let state = contract.lock().await;
-                        if !state.pending_signatures.is_empty() {
-                            tracing::info!("PENDING SIGNATURES: {:?}", state.pending_signatures);
-                        }
                         let config = ContractState::from_contract_state(
                             &state.state,
                             state.env.block_height,

@@ -216,6 +216,13 @@ impl MpcContract {
             .start_reshare_instance(key_event_id, self.config.key_event_timeout_blocks)
     }
 
+    pub fn vote_reshared(&mut self, key_event_id: KeyEventId) -> Result<(), Error> {
+        if let Some(new_state) = self.protocol_state.vote_reshared(key_event_id)? {
+            self.protocol_state = new_state;
+        }
+        Ok(())
+    }
+
     pub fn vote_pk(
         &mut self,
         key_event_id: KeyEventId,
@@ -242,6 +249,20 @@ impl MpcContract {
 
     pub fn vote_cancel_keygen(&mut self, next_domain_id: u64) -> Result<(), Error> {
         if let Some(new_state) = self.protocol_state.vote_cancel_keygen(next_domain_id)? {
+            self.protocol_state = new_state;
+        }
+        Ok(())
+    }
+
+    pub fn vote_new_parameters(
+        &mut self,
+        prospective_epoch_id: EpochId,
+        proposal: &ThresholdParameters,
+    ) -> Result<(), Error> {
+        if let Some(new_state) = self
+            .protocol_state
+            .vote_new_parameters(prospective_epoch_id, proposal)?
+        {
             self.protocol_state = new_state;
         }
         Ok(())
@@ -585,13 +606,7 @@ impl VersionedMpcContract {
         );
         match self {
             Self::V1(mpc_contract) => {
-                let ProtocolContractState::Running(running_state) =
-                    &mut mpc_contract.protocol_state
-                else {
-                    return Err(InvalidState::ProtocolStateNotRunning.into());
-                };
-
-                running_state.vote_new_parameters(prospective_epoch_id, &proposal)
+                mpc_contract.vote_new_parameters(prospective_epoch_id, &proposal)
             }
             _ => env::panic_str("expected V1"),
         }
@@ -694,9 +709,8 @@ impl VersionedMpcContract {
             env::signer_account_id(),
             key_event_id,
         );
-
         match self {
-            Self::V1(contract_state) => contract_state.protocol_state.vote_reshared(key_event_id),
+            Self::V1(contract_state) => contract_state.vote_reshared(key_event_id),
             _ => env::panic_str("expected V1"),
         }
     }

@@ -157,35 +157,58 @@ impl ContractState {
                 })
             }
             ProtocolContractState::Running(running_state) => {
-                let resharing_process = if let Some(state) = running_state.resharing_process.clone()
-                {
-                    Some(ContractResharingState {
-                        new_participants: convert_participant_infos(
-                            state.resharing_key.proposed_parameters().clone(),
-                            port_override,
-                        )?,
-                        reshared_keys: Keyset {
-                            epoch_id: state.prospective_epoch_id(),
-                            domains: state.reshared_keys.clone(),
-                        },
-                        key_event: convert_key_event_to_instance(
-                            &state.resharing_key,
-                            height,
-                            state.reshared_keys.clone(),
-                        ),
-                    })
-                } else {
-                    None
-                };
-
                 ContractState::Running(ContractRunningState {
                     keyset: running_state.keyset.clone(),
                     participants: convert_participant_infos(
                         running_state.parameters.clone(),
                         port_override,
                     )?,
-                    resharing_process,
+                    resharing_process: None,
                 })
+            }
+            ProtocolContractState::Resharing(resharing_state) => {
+                let resharing_process = ContractResharingState {
+                    new_participants: convert_participant_infos(
+                        resharing_state.resharing_key.proposed_parameters().clone(),
+                        port_override,
+                    )?,
+                    reshared_keys: Keyset {
+                        epoch_id: resharing_state.prospective_epoch_id(),
+                        domains: resharing_state.reshared_keys.clone(),
+                    },
+                    key_event: convert_key_event_to_instance(
+                        &resharing_state.resharing_key,
+                        height,
+                        resharing_state.reshared_keys.clone(),
+                    ),
+                };
+
+                let previous_running_state = resharing_state.previous_running_state.clone();
+
+                ContractState::Running(ContractRunningState {
+                    keyset: previous_running_state.keyset.clone(),
+                    participants: convert_participant_infos(
+                        previous_running_state.parameters.clone(),
+                        port_override,
+                    )?,
+                    resharing_process: Some(resharing_process),
+                })
+
+                // let resharing_process = ContractResharingState {
+                //     new_participants: convert_participant_infos(
+                //         resharing_state.resharing_key.proposed_parameters().clone(),
+                //         port_override,
+                //     )?,
+                //     reshared_keys: Keyset {
+                //         epoch_id: state.prospective_epoch_id(),
+                //         domains: state.reshared_keys.clone(),
+                //     },
+                //     key_event: convert_key_event_to_instance(
+                //         &state.resharing_key,
+                //         height,
+                //         state.reshared_keys.clone(),
+                //     ),
+                // };
             }
         })
     }

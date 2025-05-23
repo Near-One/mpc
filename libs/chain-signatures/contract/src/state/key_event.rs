@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone)]
 pub struct KeyEvent {
     /// The epoch ID that we're generating or resharing keys for.
-    pub epoch_id: EpochId,
+    epoch_id: EpochId,
     /// The domain that we're generating or resharing the key for.
     domain: DomainConfig,
     /// The participants and threshold that shall participate in the key event.

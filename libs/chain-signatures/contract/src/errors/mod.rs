@@ -97,12 +97,12 @@ pub enum InvalidParameters {
 pub enum InvalidState {
     #[error("The protocol is not Running.")]
     ProtocolStateNotRunning,
-    #[error("A resharing process is ongoing.")]
-    ProtocolIsResharingKeys,
-    #[error("Protocol state is running, but no resharing process has started.")]
-    ProtocolRunningStateIsNotResharing,
+    #[error("Protocol state is not resharing.")]
+    ProtocolStateNotResharing,
     #[error("Protocol state is not initializing.")]
     ProtocolStateNotInitializing,
+    #[error("Protocol state is not running, nor resharing.")]
+    ProtocolStateNotRunningNorResharing,
     #[error("Unexpected protocol state.")]
     UnexpectedProtocolState,
     #[error("Cannot load in contract due to missing state")]
