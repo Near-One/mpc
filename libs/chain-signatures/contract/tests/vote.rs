@@ -2,6 +2,7 @@ pub mod common;
 
 use common::{check_call_success, gen_accounts, init_env_secp256k1};
 use mpc_contract::primitives::thresholds::{Threshold, ThresholdParameters};
+use mpc_contract::state::running::RunningContractState;
 use mpc_contract::state::ProtocolContractState;
 use near_sdk::PublicKey;
 use serde_json::json;
@@ -166,13 +167,16 @@ async fn test_resharing() -> anyhow::Result<()> {
     }
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     match state {
-        ProtocolContractState::Resharing(resharing_contract_state) => {
+        ProtocolContractState::Running(RunningContractState {
+            resharing_process: Some(resharing_process),
+            ..
+        }) => {
             assert_eq!(
-                resharing_contract_state.resharing_key.proposed_parameters(),
+                resharing_process.resharing_key.proposed_parameters(),
                 &proposal
             );
         }
-        _ => panic!("should be in resharing state"),
+        _ => panic!("should be in running state."),
     }
 
     check_call_success(
@@ -211,6 +215,7 @@ async fn test_resharing() -> anyhow::Result<()> {
     match state {
         ProtocolContractState::Running(state) => {
             assert_eq!(state.parameters.participants().len(), 4);
+            assert!(state.resharing_process.is_none());
             assert_eq!(state.keyset.epoch_id.get(), 6); // we started with 5.
         }
         _ => panic!("should be in running state"),
@@ -248,8 +253,14 @@ async fn test_repropose_resharing() -> anyhow::Result<()> {
     }
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     match state {
-        ProtocolContractState::Resharing(state) => {
-            assert_eq!(state.resharing_key.proposed_parameters(), &proposal);
+        ProtocolContractState::Running(RunningContractState {
+            resharing_process: Some(resharing_process),
+            ..
+        }) => {
+            assert_eq!(
+                resharing_process.resharing_key.proposed_parameters(),
+                &proposal
+            );
         }
         _ => panic!("should be in resharing state"),
     }
@@ -269,16 +280,19 @@ async fn test_repropose_resharing() -> anyhow::Result<()> {
 
     let state: ProtocolContractState = contract.view("state").await.unwrap().json()?;
     match state {
-        ProtocolContractState::Resharing(state) => {
+        ProtocolContractState::Running(RunningContractState {
+            resharing_process: Some(resharing_process),
+            ..
+        }) => {
             assert_eq!(
-                state
+                resharing_process
                     .resharing_key
                     .proposed_parameters()
                     .participants()
                     .len(),
                 3
             );
-            assert_eq!(state.resharing_key.epoch_id().get(), 7); // we started with 5.
+            assert_eq!(resharing_process.resharing_key.epoch_id().get(), 7); // we started with 5.
         }
         _ => panic!("should be in resharing state"),
     };

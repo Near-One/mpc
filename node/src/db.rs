@@ -1,10 +1,19 @@
 use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::aead::Aead;
 use aes_gcm::{AeadCore, Aes128Gcm, AesGcm, KeyInit};
+use mpc_contract::primitives::key_state::EpochId;
 use rocksdb::IteratorMode;
 use std::fmt::Display;
 use std::path::Path;
 use std::sync::Arc;
+use tracing::{error, info};
+
+const EPOCH_ID_KEY: &[u8] = b"EPOCH_ID";
+
+pub enum UpdateResult {
+    AlreadyPresent,
+    Updated,
+}
 
 /// Key-value store that encrypts all values with AES-GCM.
 /// The keys of the key-value store are NOT encrypted.
@@ -19,6 +28,7 @@ pub enum DBCol {
     Triple,
     Presignature,
     SignRequest,
+    EpochId,
 }
 
 impl DBCol {
@@ -27,11 +37,17 @@ impl DBCol {
             DBCol::Triple => "triple",
             DBCol::Presignature => "presignature",
             DBCol::SignRequest => "sign_request",
+            DBCol::EpochId => "epoch_id",
         }
     }
 
-    fn all() -> [DBCol; 3] {
-        [DBCol::Triple, DBCol::Presignature, DBCol::SignRequest]
+    fn all() -> [DBCol; 4] {
+        [
+            DBCol::Triple,
+            DBCol::Presignature,
+            DBCol::SignRequest,
+            DBCol::EpochId,
+        ]
     }
 }
 
@@ -81,6 +97,47 @@ impl SecretDB {
     pub fn get(&self, col: DBCol, key: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
         let value = self.db.get_cf(&self.cf_handle(col), key)?;
         value.map(|v| decrypt(&self.cipher, &v)).transpose()
+    }
+
+    /// Updates the epoch id of the running state.
+    pub fn update_running_epoch_id(
+        self: &Arc<Self>,
+        new_epoch_id: EpochId,
+    ) -> anyhow::Result<UpdateResult> {
+        let previous_epoch_id: Option<EpochId> = self
+            .db
+            .get_cf(&self.cf_handle(DBCol::EpochId), EPOCH_ID_KEY)?
+            .and_then(|bytes: Vec<u8>| {
+                let bytes_array = decrypt(&self.cipher, &bytes)
+                    .inspect_err(|err| error!("Failed to decrypt epoch id: {:?}", err))
+                    .ok()?
+                    .try_into()
+                    .inspect_err(|bytes| error!("ENTRY NOT u64: {:?}", bytes))
+                    .ok()?;
+                let epoch_id_number = u64::from_be_bytes(bytes_array);
+
+                Some(EpochId::new(epoch_id_number))
+            });
+
+        let new_epoch_id_is_seen =
+            previous_epoch_id.is_some_and(|previous_epoch_id| previous_epoch_id == new_epoch_id);
+
+        if new_epoch_id_is_seen {
+            info!("EPOCH UNCHANGED: {:?}", new_epoch_id.get());
+            Ok(UpdateResult::AlreadyPresent)
+        } else {
+            info!(
+                "NEW EPOCH: {:?}, OLD EPOCH {:?}",
+                new_epoch_id.get(),
+                previous_epoch_id
+            );
+            let mut update_writer = self.update();
+            let big_endian_bytes_repr = &new_epoch_id.get().to_be_bytes();
+            update_writer.put(DBCol::EpochId, EPOCH_ID_KEY, big_endian_bytes_repr);
+            update_writer.commit()?;
+
+            Ok(UpdateResult::Updated)
+        }
     }
 
     /// Returns the undecrypted ciphertext, for testing.

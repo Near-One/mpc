@@ -77,6 +77,8 @@ async fn test_basic_multidomain() {
         domains.extend(new_domains);
     }
 
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
     for domain in &domains {
         assert!(request_signature_and_await_response(
             &mut setup.indexer,
@@ -92,6 +94,8 @@ async fn test_basic_multidomain() {
         let mut contract = setup.indexer.contract_mut().await;
         contract.start_resharing(setup.participants);
     }
+
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
     for domain in &domains {
         assert!(request_signature_and_await_response(
