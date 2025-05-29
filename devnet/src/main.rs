@@ -4,6 +4,7 @@ use cli::Cli;
 mod account;
 mod cli;
 mod constants;
+mod contracts;
 mod devnet;
 mod funding;
 mod loadtest;

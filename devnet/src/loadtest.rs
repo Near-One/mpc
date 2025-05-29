@@ -1,26 +1,29 @@
 #![allow(clippy::expect_fun_call)] // to reduce verbosity of expect calls
 use crate::account::{OperatingAccessKey, OperatingAccounts};
 use crate::cli::{
-    DeployParallelSignContractCmd, DrainExpiredRequestsCmd, NewLoadtestCmd, RunLoadtestCmd,
-    UpdateLoadtestCmd,
+    DeployParallelSignContractCmd, NewLoadtestCmd, RunLoadtestCmd, UpdateLoadtestCmd,
 };
 use crate::constants::{DEFAULT_PARALLEL_SIGN_CONTRACT_PATH, ONE_NEAR};
+use crate::contracts::{
+    make_legacy_sign_action, make_parallel_sign_call_action, make_sign_action, ActionCall,
+};
 use crate::devnet::OperatingDevnetSetup;
 use crate::funding::{fund_accounts, AccountToFund};
 use crate::mpc::read_contract_state_v2;
+use crate::rpc::NearRpcClients;
 use crate::types::{LoadtestSetup, NearAccount, ParsedConfig};
+use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use legacy_mpc_contract::primitives::SignRequest;
-use mpc_contract::primitives::domain::SignatureScheme;
-use mpc_contract::primitives::signature::{Bytes, Payload, SignRequestArgs};
-use near_jsonrpc_client::methods::tx::RpcTransactionResponse;
-use near_sdk::AccountId;
-use rand::RngCore;
-use serde::Serialize;
-use std::collections::BTreeMap;
+use near_jsonrpc_client::errors::JsonRpcError;
+use near_jsonrpc_client::methods;
+use near_jsonrpc_client::methods::tx::{RpcTransactionError, RpcTransactionResponse};
+use near_primitives::transaction::SignedTransaction;
+use near_primitives::views::{FinalExecutionStatus, TxExecutionStatus};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::OwnedMutexGuard;
 
 /// Bring the loadtest setup to the desired parameterization.
@@ -216,8 +219,15 @@ impl RunLoadtestCmd {
                         .expect("no such domain")
                         .clone(),
                 ),
+                mpc_contract::state::ProtocolContractState::Resharing(state) => state
+                    .previous_running_state
+                    .domains
+                    .domains()
+                    .iter()
+                    .find(|domain| domain.id.0 == domain_id)
+                    .cloned(),
                 _ => {
-                    panic!("MPC network is not running");
+                    panic!("MPC network is not running or resharing");
                 }
             }
         } else {
@@ -240,226 +250,91 @@ impl RunLoadtestCmd {
             println!("WARNING: Transactions to send per second is {}, but the RPC servers are only capable of handling an aggregate of {} QPS",
                 tx_per_sec, config.rpc.total_qps());
         }
+        let rpc_clone = config.rpc.clone();
 
-        let sender: LoadSenderAsyncFn<RpcTransactionResponse> = if let Some(
-            signatures_per_contract_call,
-        ) =
+        let actions: ActionCall = if let Some(signatures_per_contract_call) =
             self.signatures_per_contract_call
         {
-            let contract = loadtest_setup.parallel_signatures_contract.clone().expect(
-                "Signatures per contract call specified, but no parallel signatures contract is deployed",
+            let parallel_sign_contract = loadtest_setup.parallel_signatures_contract.clone().expect(
+                "Signatures per contract call specified, but no parallel signatures contract is deployed");
+            let actions = make_parallel_sign_call_action(
+                parallel_sign_contract,
+                mpc_account,
+                domain_config.clone().expect("require domain"),
+                signatures_per_contract_call as u64,
             );
-            Arc::new(move |key: &mut OperatingAccessKey| {
-                let contract = contract.clone();
-                let mpc_contract = mpc_account.clone();
-                let domain_config = domain_config.clone();
-                async move {
-                    let args = if let Some(domain_config) = domain_config {
-                        let mut ecdsa_calls_by_domain = BTreeMap::new();
-                        let mut eddsa_calls_by_domain = BTreeMap::new();
-                        match domain_config.scheme {
-                            SignatureScheme::Secp256k1 => {
-                                ecdsa_calls_by_domain.insert(
-                                    domain_config.id.0,
-                                    signatures_per_contract_call as u64,
-                                );
-                            }
-                            SignatureScheme::Ed25519 => {
-                                eddsa_calls_by_domain.insert(
-                                    domain_config.id.0,
-                                    signatures_per_contract_call as u64,
-                                );
-                            }
-                        }
-                        serde_json::to_vec(&ParallelSignArgsV2 {
-                            target_contract: mpc_contract,
-                            ecdsa_calls_by_domain,
-                            eddsa_calls_by_domain,
-                            seed: rand::random(),
-                        })
-                        .unwrap()
-                    } else {
-                        serde_json::to_vec(&ParallelSignArgsV1 {
-                            target_contract: mpc_contract,
-                            num_calls: signatures_per_contract_call as u64,
-                            seed: rand::random(),
-                        })
-                        .unwrap()
-                    };
-
-                    key.submit_tx_to_call_function(
-                        &contract,
-                        "make_parallel_sign_calls",
-                        &args,
-                        300,
-                        1,
-                        near_primitives::views::TxExecutionStatus::Included,
-                        false,
-                    )
-                    .await
-                }
-                .boxed()
-            })
-        } else if let Some(domain_config) = domain_config {
-            Arc::new(move |key: &mut OperatingAccessKey| {
-                let mpc_contract = mpc_account.clone();
-                let domain_config = domain_config.clone();
-                async move {
-                    let payload = match domain_config.scheme {
-                        SignatureScheme::Secp256k1 => {
-                            Payload::Ecdsa(Bytes::new(rand::random::<[u8; 32]>().to_vec()).unwrap())
-                        }
-                        SignatureScheme::Ed25519 => {
-                            let len = rand::random_range(32..=1232);
-                            let mut payload = vec![0; len];
-                            rand::rng().fill_bytes(&mut payload);
-                            Payload::Eddsa(Bytes::new(payload).unwrap())
-                        }
-                    };
-                    key.submit_tx_to_call_function(
-                        &mpc_contract,
-                        "sign",
-                        &serde_json::to_vec(&SignArgsV2 {
-                            request: SignRequestArgs {
-                                domain_id: Some(domain_config.id),
-                                path: "".to_string(),
-                                payload_v2: Some(payload),
-                                ..Default::default()
-                            },
-                        })
-                        .unwrap(),
-                        10,
-                        1,
-                        near_primitives::views::TxExecutionStatus::Included,
-                        false,
-                    )
-                    .await
-                }
-                .boxed()
-            })
+            actions
+        } else if let Some(domain_config) = &domain_config {
+            make_sign_action(mpc_account, domain_config.clone())
         } else {
+            make_legacy_sign_action(mpc_account)
+        };
+        let sender: LoadSenderAsyncFn<TxRpcResponse> =
             Arc::new(move |key: &mut OperatingAccessKey| {
-                let mpc_contract = mpc_account.clone();
+                let actions = actions.clone();
+                let rpc_clone = rpc_clone.clone();
                 async move {
-                    key.submit_tx_to_call_function(
-                        &mpc_contract,
-                        "sign",
-                        &serde_json::to_vec(&SignArgsV1 {
-                            request: SignRequest {
-                                key_version: 0,
-                                path: "".to_string(),
-                                payload: rand::random(),
-                            },
-                        })
-                        .unwrap(),
-                        30,
-                        1,
-                        near_primitives::views::TxExecutionStatus::Included,
-                        false,
-                    )
-                    .await
+                    let signed_tx = key.sign_tx_from_actions(actions).await;
+                    let request = methods::send_tx::RpcSendTransactionRequest {
+                        signed_transaction: signed_tx.clone(),
+                        wait_until: near_primitives::views::TxExecutionStatus::Included,
+                    };
+                    TxRpcResponse {
+                        rpc_response: rpc_clone.submit(request).await,
+                        signed_tx,
+                    }
                 }
                 .boxed()
-            })
-        };
+            });
 
+        let rpc_clone = config.rpc.clone();
+        tokio::spawn(async move {
+            let mut txs: Vec<SignedTransaction> = Vec::new();
+            while let Some(x) = tx_receiver.recv().await {
+                txs.push(x);
+            }
+
+            let n_txs = txs.len();
+            let mut failed = 0;
+            for tx in txs {
+                let request = methods::EXPERIMENTAL_tx_status::RpcTransactionStatusRequest {
+                    transaction_info:
+                        methods::EXPERIMENTAL_tx_status::TransactionInfo::Transaction(near_jsonrpc_primitives::types::transactions::SignedTransaction::SignedTransaction(tx)) ,
+                    wait_until: TxExecutionStatus::Final,
+                };
+                let res = rpc_clone.submit(request).await.unwrap();
+                let Some(res) = res.final_execution_outcome else {
+                    failed += 1;
+                    continue;
+                };
+                let FinalExecutionStatus::SuccessValue(sig) = res.into_outcome().status else {
+                    failed += 1;
+                    continue;
+                };
+                // todo: verify signature
+                println!("{:?}", sig);
+                // adjust sleep time to not owerwhelm rpc node
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            println!(
+                "{} / {} signatures failed. Success Rate: {}",
+                failed,
+                n_txs,
+                (n_txs - failed) as f64 / n_txs as f64
+            );
+        });
+        // alternatively, timeout here?
         send_load(keys, tx_per_sec, sender).await;
     }
 }
 
-#[derive(Serialize)]
-pub struct SignArgsV1 {
-    pub request: SignRequest,
+pub struct TxRpcResponse {
+    pub rpc_response: Result<RpcTransactionResponse, JsonRpcError<RpcTransactionError>>,
+    pub signed_tx: SignedTransaction,
 }
 
-#[derive(Serialize)]
-pub struct SignArgsV2 {
-    pub request: SignRequestArgs,
-}
-
-impl DrainExpiredRequestsCmd {
-    pub async fn run(&self, name: &str, config: ParsedConfig) {
-        let setup = OperatingDevnetSetup::load(config.rpc.clone()).await;
-        let loadtest_setup = setup
-            .loadtest_setups
-            .get(name)
-            .expect(&format!("Loadtest setup with name {} does not exist", name));
-        let mpc_setup = setup.mpc_setups.get(&self.mpc_network).expect(&format!(
-            "MPC network with name {} does not exist",
-            self.mpc_network
-        ));
-        let mpc_account = mpc_setup
-            .contract
-            .clone()
-            .expect("MPC network does not have a contract");
-        println!(
-            "Going to drain expired requests against MPC network {} (contract {}) at {} QPS",
-            self.mpc_network, mpc_account, self.qps
-        );
-
-        let mut keys = Vec::new();
-        for account_id in &loadtest_setup.load_senders {
-            let account = setup.accounts.account(account_id);
-            keys.extend(account.all_access_keys().await);
-        }
-
-        let sender: LoadSenderAsyncFn<()> = Arc::new(move |key: &mut OperatingAccessKey| {
-            let mpc_contract = mpc_account.clone();
-            async move {
-                match key
-                    .submit_tx_to_call_function(
-                        &mpc_contract,
-                        "remove_timed_out_requests",
-                        &serde_json::to_vec(&RemoveTimedOutRequestsArgs {
-                            max_num_to_remove: 20,
-                        })
-                        .unwrap(),
-                        300,
-                        0,
-                        near_primitives::views::TxExecutionStatus::ExecutedOptimistic,
-                        false,
-                    )
-                    .await
-                {
-                    Ok(result) => match result.final_execution_outcome {
-                        Some(err) => match err.into_outcome().status {
-                            near_primitives::views::FinalExecutionStatus::SuccessValue(value) => {
-                                let value = String::from_utf8_lossy(&value).parse::<u32>().unwrap();
-                                println!("Removed {} requests", value);
-                                if value == 0 {
-                                    println!("Done removing requests. Exiting.");
-                                    std::process::exit(0);
-                                }
-                            }
-                            status => {
-                                println!("Error executing transaction: {:?}", status);
-                            }
-                        },
-                        None => println!("Error executing transaction: no outcome"),
-                    },
-                    Err(err) => {
-                        println!("Error sending transaction: {:?}", err);
-                    }
-                }
-                Ok(())
-            }
-            .boxed()
-        });
-        send_load(keys, self.qps as f64, sender).await;
-    }
-}
-
-#[derive(Serialize)]
-struct RemoveTimedOutRequestsArgs {
-    max_num_to_remove: u32,
-}
-
-type LoadSenderAsyncFn<R> = Arc<
-    dyn for<'a> Fn(&'a mut OperatingAccessKey) -> BoxFuture<'a, anyhow::Result<R>>
-        + Send
-        + Sync
-        + 'static,
->;
+type LoadSenderAsyncFn<R> =
+    Arc<dyn for<'a> Fn(&'a mut OperatingAccessKey) -> BoxFuture<'a, R> + Send + Sync + 'static>;
 
 /// Send parallel load up to the given QPS (may fluctuate within a second),
 /// using the sender function. The sender function will only be executed once at a time for each
@@ -470,6 +345,8 @@ async fn send_load<R: 'static>(
     qps: f64,
     sender: LoadSenderAsyncFn<R>,
 ) {
+    let (tx_sender, mut tx_receiver): (Sender<SignedTransaction>, Receiver<SignedTransaction>) =
+        tokio::sync::mpsc::channel(500);
     let mut handles = Vec::new();
     let (permits_sender, permits_receiver) = flume::bounded(qps.ceil() as usize);
     let total_txns_sent = Arc::new(AtomicUsize::new(0));
@@ -521,19 +398,4 @@ async fn send_load<R: 'static>(
         }
     }));
     futures::future::join_all(handles).await;
-}
-
-#[derive(Serialize)]
-struct ParallelSignArgsV1 {
-    target_contract: AccountId,
-    num_calls: u64,
-    seed: u64,
-}
-
-#[derive(Serialize)]
-struct ParallelSignArgsV2 {
-    target_contract: AccountId,
-    ecdsa_calls_by_domain: BTreeMap<u64, u64>,
-    eddsa_calls_by_domain: BTreeMap<u64, u64>,
-    seed: u64,
 }
