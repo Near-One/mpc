@@ -387,6 +387,9 @@ impl FakeIndexerCore {
                         let mut contract = contract.lock().await;
                         contract.vote_abort_key_event(account_id, abort.key_event_id);
                     }
+                    ChainSendTransactionRequest::VerifyTee() => {
+                        // do nothing
+                    }
                 }
             }
             self.block_update_sender.send(block_update).ok();
