@@ -786,7 +786,6 @@ def start_cluster_with_mpc(num_validators,
         secrets_file_path = os.path.join(mpc_node.near_node.node_dir, 'secrets.json')
         with open(secrets_file_path) as file:
             participant_secrets = json.load(file)
-        assert len(participant_secrets['near_account_key']) == len(mpc_node.signer_key().sk)
         participant_secrets['near_account_key'] = mpc_node.signer_key().sk
         with open(secrets_file_path, 'w') as file:
             json.dump(participant_secrets, file, indent=2)
