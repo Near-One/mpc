@@ -175,15 +175,9 @@ class MpcNode(NearNode):
         assert not self.is_running
         self.is_running = True
 
-        p2p_private_key = open(pathlib.Path(self.home_dir) / 'p2p_key').read()
-        near_secret_key = json.loads(
-            open(pathlib.Path(self.home_dir) /
-                 'validator_key.json').read())['secret_key']
         extra_env = {
             'RUST_LOG': 'INFO',  # mpc-node produces too much output on DEBUG
-            'MPC_SECRET_STORE_KEY': self.secret_store_key,
-            'MPC_P2P_PRIVATE_KEY': p2p_private_key,
-            'MPC_ACCOUNT_SK': near_secret_key,
+            'MPC_SECRET_STORE_KEY': self.secret_store_key
         }
         cmd = (MPC_BINARY_PATH, 'start', '--home-dir', self.home_dir)
         self.near_node.run_cmd(cmd=cmd, extra_env=extra_env)
@@ -787,6 +781,16 @@ def start_cluster_with_mpc(num_validators,
     last_block_hash = cluster.contract_node.last_block_hash()
     # Set up the node's home directories
     for mpc_node in mpc_nodes:
+        # Overwrite NEAR Secret Key with the one from `validator_key.json`.
+        # TODO(#476): It shouldn't be like that
+        secrets_file_path = os.path.join(mpc_node.near_node.node_dir, 'secrets.json')
+        with open(secrets_file_path) as file:
+            participant_secrets = json.load(file)
+        assert len(participant_secrets['near_account_key']) == len(mpc_node.signer_key().sk)
+        participant_secrets['near_account_key'] = mpc_node.signer_key().sk
+        with open(secrets_file_path, 'w') as file:
+            json.dump(participant_secrets, file, indent=2)
+
         # Indexer config must explicitly specify tracked shard
         fname = os.path.join(mpc_node.near_node.node_dir, 'config.json')
         with open(fname) as fd:
