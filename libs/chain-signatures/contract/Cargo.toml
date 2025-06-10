@@ -1,6 +1,6 @@
 [package]
 name = "mpc-contract"
-version = "2.1.1-rc.1"
+version = "2.1.2-rc.1"
 edition = "2021"
 
 [lib]
@@ -30,7 +30,7 @@ k256 = { version = "0.13.4", features = [
     "arithmetic",
     "expose-field",
 ] }
-dcap-qvl = { git = "https://github.com/mattlockyer/dcap-qvl" }
+dcap-qvl = { git = "https://github.com/mattlockyer/dcap-qvl", rev = "3caedd8fd0f365841abaf1430ff2922fcb09d9db" }
 
 near-gas = { version = "0.2.5", features = ["serde", "borsh", "schemars"] }
 near-account-id = "1"

@@ -284,7 +284,6 @@ mod tests {
     use crate::indexer::participants::convert_participant_infos;
     use mpc_contract::primitives::{
         participants::{ParticipantInfo, Participants},
-        test_utils::mock_tee_participant_info,
         thresholds::{Threshold, ThresholdParameters},
     };
     use near_indexer_primitives::types::AccountId;
@@ -363,12 +362,7 @@ mod tests {
             account_id_to_pk.insert(account_id.clone(), info.sign_pk.clone());
         }
         assert!(account_ids.is_sorted());
-        let params = ThresholdParameters::new(
-            chain_infos.clone(),
-            Threshold::new(3),
-            mock_tee_participant_info(),
-        )
-        .unwrap();
+        let params = ThresholdParameters::new(chain_infos.clone(), Threshold::new(3)).unwrap();
 
         let converted = convert_participant_infos(params, None).unwrap();
         assert_eq!(converted.threshold, 3);
@@ -392,12 +386,7 @@ mod tests {
     fn test_port_override() {
         let chain_infos = create_chain_participant_infos();
 
-        let params = ThresholdParameters::new(
-            chain_infos.clone(),
-            Threshold::new(3),
-            mock_tee_participant_info(),
-        )
-        .unwrap();
+        let params = ThresholdParameters::new(chain_infos.clone(), Threshold::new(3)).unwrap();
         let converted = convert_participant_infos(params.clone(), None)
             .unwrap()
             .participants;
@@ -420,12 +409,7 @@ mod tests {
             new_infos
                 .insert(account_id.clone(), bad_data.clone())
                 .unwrap();
-            let params = ThresholdParameters::new(
-                new_infos.clone(),
-                Threshold::new(3),
-                mock_tee_participant_info(),
-            )
-            .unwrap();
+            let params = ThresholdParameters::new(new_infos.clone(), Threshold::new(3)).unwrap();
             print!("\n\nmy params: \n{:?}\n", params);
             let converted = convert_participant_infos(params, None);
             print!("\n\nmyconverted: \n{:?}\n", converted);

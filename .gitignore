@@ -3,7 +3,7 @@
 venv
 .vscode
 
-/target/
+**/target/
 /pytest/output.log
 /pytest/venv/
 /pytest/*/__pycache__/

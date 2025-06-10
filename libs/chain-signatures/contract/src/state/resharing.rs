@@ -147,9 +147,7 @@ mod tests {
     use crate::primitives::{
         domain::{AddDomainsVotes, DomainId},
         key_state::{AttemptId, KeyEventId},
-        test_utils::{
-            gen_account_id, mock_tee_participant_info, set_test_env_for_tee_quote_verification,
-        },
+        test_utils::gen_account_id,
         thresholds::{Threshold, ThresholdParameters},
         votes::ThresholdParametersVotes,
     };
@@ -166,8 +164,7 @@ mod tests {
     /// We do this by starting from the Running state and calling vote_new_parameters to have it
     /// transition into Resharing. (This also tests the transitioning code path.)
     fn gen_resharing_state(num_domains: usize) -> (Environment, ResharingContractState) {
-        let block_timestamp = 1757785600_u64 * 1_000_000_u64; // 2025-05-21 00:00:00 UTC to ensure TEE quote verification succeeds
-        let mut env = Environment::new(Some(100), None, None, Some(block_timestamp));
+        let mut env = Environment::new(Some(100), None, None);
         let mut running = gen_running_state(num_domains);
         let proposal = gen_valid_params_proposal(&running.parameters);
         let mut resharing_state = None;
@@ -185,8 +182,6 @@ mod tests {
     }
 
     fn test_resharing_contract_state_for(num_domains: usize) {
-        set_test_env_for_tee_quote_verification();
-
         println!("Testing with {} domains", num_domains);
         let (mut env, mut state) = gen_resharing_state(num_domains);
         let candidates: BTreeSet<AccountId> = state
@@ -384,18 +379,9 @@ mod tests {
         new_participants_1.add_random_participants_till_n((old_participants.len() * 3).div_ceil(2));
         let new_participants_2 = new_participants_1
             .subset(new_participants_1.len() - old_participants.len()..new_participants_1.len());
-        let new_params_1 = ThresholdParameters::new(
-            new_participants_1,
-            new_threshold.clone(),
-            mock_tee_participant_info(),
-        )
-        .unwrap();
-        let new_params_2 = ThresholdParameters::new(
-            new_participants_2,
-            new_threshold,
-            mock_tee_participant_info(),
-        )
-        .unwrap();
+        let new_params_1 =
+            ThresholdParameters::new(new_participants_1, new_threshold.clone()).unwrap();
+        let new_params_2 = ThresholdParameters::new(new_participants_2, new_threshold).unwrap();
         assert!(state
             .previous_running_state
             .parameters

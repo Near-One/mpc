@@ -162,8 +162,7 @@ mod tests {
         num_domains: usize,
         num_generated: usize,
     ) -> (Environment, InitializingContractState) {
-        let block_timestamp = 1757785600_u64 * 1_000_000_u64; // 2025-05-21 00:00:00 UTC to ensure TEE quote verification succeeds
-        let mut env = Environment::new(None, None, None, Some(block_timestamp));
+        let mut env = Environment::new(None, None, None);
         let mut running = gen_running_state(num_generated);
         let domains_to_add = gen_domains_to_add(&running.domains, num_domains - num_generated);
 

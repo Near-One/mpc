@@ -1,11 +1,6 @@
-use super::tee::quote::get_collateral;
 use crate::errors::{Error, InvalidCandidateSet, InvalidParameters};
-use dcap_qvl::verify::{self, VerifiedReport};
 use near_sdk::{near, AccountId, PublicKey};
-use std::{
-    collections::BTreeSet,
-    fmt::{self, Display},
-};
+use std::{collections::BTreeSet, fmt::Display};
 
 pub mod hpke {
     pub type PublicKey = [u8; 32];
@@ -17,55 +12,6 @@ pub struct ParticipantInfo {
     pub url: String,
     /// The public key used for verifying messages.
     pub sign_pk: PublicKey,
-}
-
-#[near(serializers=[borsh, json])]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Default)]
-pub struct TeeParticipantInfo {
-    /// TEE Remote Attestation Quote that proves the participant's identity.
-    pub tee_quote: Vec<u8>,
-    /// Supplemental data for the TEE quote, including Intel certificates to verify it came from
-    /// genuine Intel hardware, along with details about the Trusted Computing Base (TCB)
-    /// versioning, status, and other relevant info.
-    pub quote_collateral: String,
-}
-
-/// Without this, the following tests fail with HostError(TotalLogLengthExceeded { length: 31510, limit: 16384 }):
-/// - tests::test_signature_simple
-/// - tests::test_signature_simple_legacy
-/// - tests::test_signature_timeout
-impl fmt::Debug for TeeParticipantInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fn hex_preview(bytes: &[u8], max: usize) -> String {
-            if bytes.len() <= max {
-                format!("{:02x?}", bytes)
-            } else {
-                format!("{:02x?}… ({} bytes)", &bytes[..max], bytes.len())
-            }
-        }
-        fn str_preview(s: &str, max: usize) -> String {
-            if s.len() <= max {
-                format!("{:?}", s)
-            } else {
-                format!("{:?}… ({} chars)", &s[..max], s.len())
-            }
-        }
-        f.debug_struct("TeeParticipantInfo")
-            .field("tee_quote", &hex_preview(&self.tee_quote, 256))
-            .field(
-                "quote_collateral",
-                &str_preview(&self.quote_collateral, 256),
-            )
-            .finish()
-    }
-}
-
-impl TeeParticipantInfo {
-    pub fn verify_quote(&self, timestamp: u64) -> Result<VerifiedReport, Error> {
-        let tee_collateral = get_collateral(self.quote_collateral.clone());
-        let verification_result = verify::verify(&self.tee_quote, &tee_collateral, timestamp);
-        verification_result.map_err(|_| InvalidCandidateSet::InvalidParticipantsTeeQuote.into())
-    }
 }
 
 #[near(serializers=[borsh, json])]
@@ -145,7 +91,6 @@ impl Participants {
     ///  - All participant IDs are unique.
     ///  - All account IDs are unique.
     ///  - The next_id is greater than all participant IDs.
-    ///  - All participant TEE quotes are valid.
     pub fn validate(&self) -> Result<(), Error> {
         let mut ids: BTreeSet<ParticipantId> = BTreeSet::new();
         let mut accounts: BTreeSet<AccountId> = BTreeSet::new();
@@ -237,18 +182,10 @@ pub mod tests {
         participants::{ParticipantId, Participants},
         test_utils::gen_accounts_and_info,
     };
-    use near_sdk::{test_utils::VMContextBuilder, testing_env};
     use rand::Rng;
-    use std::time::Duration;
 
     #[test]
     fn test_participants() {
-        let now_sec = 1_747_785_600u64; // 2025-05-21 00:00:00 UTC for TEE quote verification
-        let now_ns = Duration::from_secs(now_sec).as_nanos() as u64; // nanoseconds since epoch
-        let mut ctx = VMContextBuilder::new();
-        ctx.block_timestamp(now_ns);
-        testing_env!(ctx.build());
-
         let n = rand::thread_rng().gen_range(1..800);
         let expected = gen_accounts_and_info(n);
         let mut participants = Participants::new();

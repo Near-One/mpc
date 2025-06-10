@@ -190,10 +190,7 @@ pub mod tests {
             AttemptId, AuthenticatedAccountId, AuthenticatedParticipantId, EpochId, KeyForDomain,
             Keyset,
         },
-        test_utils::{
-            bogus_ed25519_public_key_extended, gen_account_id, gen_threshold_params,
-            set_test_env_for_tee_quote_verification,
-        },
+        test_utils::{bogus_ed25519_public_key_extended, gen_account_id, gen_threshold_params},
     };
     use near_sdk::{test_utils::VMContextBuilder, testing_env};
     use rand::Rng;
@@ -243,8 +240,6 @@ pub mod tests {
 
     #[test]
     fn test_authenticated_participant_id() {
-        set_test_env_for_tee_quote_verification();
-
         let proposed_parameters = gen_threshold_params(MAX_N);
         assert!(proposed_parameters.validate().is_ok());
         for (account_id, _, _) in proposed_parameters.participants().participants() {
@@ -261,8 +256,6 @@ pub mod tests {
 
     #[test]
     fn test_authenticated_account_id() {
-        set_test_env_for_tee_quote_verification();
-
         let proposed_parameters = gen_threshold_params(MAX_N);
         assert!(proposed_parameters.validate().is_ok());
         for (account_id, _, _) in proposed_parameters.participants().participants() {

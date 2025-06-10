@@ -1,9 +1,8 @@
 ## mpc
-This repository contains the code for the Near mpc node. It is a rewrite of [Near mpc](https://github.com/near/mpc). This repository will be moved to [Near mpc](https://github.com/near/mpc) soon.
+This repository contains the code for the Near mpc node. It is a rewrite of [Near mpc](https://github.com/near/mpc_old).
 
 ### Dependencies and submodules
 - **Nearcore Node**: This repository depends on the nearcore node, included as a submodule in the `/libs` directory.
-- **Chain signatures**: This repository contains squashed subtrees of the `contract` and `crypto-shared` folder from [near/mpc/chain-signatures](https://github.com/near/mpc/tree/develop/chain-signatures), required for integration tests.
 - **Other Dependencies**: All other dependencies are handled by Cargo.
 
 ### How it works

@@ -7,7 +7,6 @@ use crate::sign_request::SignatureId;
 use crate::signing::recent_blocks_tracker::tests::TestBlockMaker;
 use crate::tracking::{AutoAbortTask, AutoAbortTaskCollection};
 use mpc_contract::config::Config;
-use mpc_contract::primitives::test_utils::mock_tee_participant_info;
 use mpc_contract::primitives::{
     domain::{DomainConfig, DomainRegistry},
     key_state::{EpochId, KeyEventId, Keyset},
@@ -40,8 +39,7 @@ impl FakeMpcContractState {
         let config = Config {
             key_event_timeout_blocks: 10,
         };
-        let block_timestamp = 1757785600_u64 * 1_000_000_u64; // 2025-05-21 00:00:00 UTC to ensure TEE quote verification succeeds
-        let env = Environment::new(None, None, None, Some(block_timestamp));
+        let env = Environment::new(None, None, None);
         Self {
             state,
             config,
@@ -231,12 +229,7 @@ fn participants_config_to_threshold_parameters(
             )
             .expect("Failed to insert participant");
     }
-    ThresholdParameters::new(
-        participants,
-        Threshold::new(participants_config.threshold),
-        mock_tee_participant_info(),
-    )
-    .unwrap()
+    ThresholdParameters::new(participants, Threshold::new(participants_config.threshold)).unwrap()
 }
 
 /// Runs the fake indexer's shared state and logic. There's one instance of this per test.
