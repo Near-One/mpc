@@ -164,6 +164,8 @@ pub struct MpcContract {
     proposed_updates: ProposedUpdates,
     config: Config,
     tee_state: TeeState,
+    // todo: move `valid_tee` into `tee_state` once PR #410 is merged
+    valid_tee: bool,
 }
 
 impl MpcContract {
@@ -207,6 +209,7 @@ impl MpcContract {
             proposed_updates: ProposedUpdates::default(),
             config: Config::from(init_config),
             tee_state: Default::default(),
+            valid_tee: true,
         }
     }
 
@@ -423,6 +426,10 @@ impl VersionedMpcContract {
         let Self::V1(mpc_contract) = self else {
             env::panic_str("expected V1")
         };
+
+        if !mpc_contract.valid_tee {
+            env::panic_str("Due to previously failed tee validation, the network is not accepting new signature requests at this point in time. Try again later.")
+        }
 
         env::log_str(&serde_json::to_string(&near_sdk::env::random_seed_array()).unwrap());
 
@@ -945,13 +952,15 @@ impl VersionedMpcContract {
     }
 
     #[handle_result]
-    pub fn tee_validation(&mut self) -> Result<bool, Error> {
+    pub fn verify_tee(&mut self) -> Result<bool, Error> {
+        // todo: move the verification logic into `tee_state` once PR #410 is merged
         // should this endpoint be protected?
-        log!("verify_tee_status: signer={}", env::signer_account_id());
+        log!("verify_tee: signer={}", env::signer_account_id());
         match self {
             Self::V1(contract) => {
                 let ProtocolContractState::Running(running_state) = &mut contract.protocol_state
                 else {
+                    // todo: document this well.
                     env::panic_str("require running state");
                 };
                 let current_params = running_state.parameters.clone();
@@ -987,17 +996,19 @@ impl VersionedMpcContract {
                     let to_add = threshold.saturating_sub(remaining);
 
                     if to_add > 0 {
-                        log!("less than `threshold` participants are left with a valid tee status. Removing as many as possible.");
-                        // do we really want to do this? if there are fewer than `threshold`
-                        // participants left, maybe we should require manual intervention?
-                        new_participants
-                            .extend(participants_to_remove.iter().take(to_add).cloned());
+                        log!("Less than `threshold` participants are left with a valid TEE status. This requires manual intervention. We will not accept new signature requests as a safety precaution.");
+                        contract.valid_tee = false;
+                        return Ok(false);
                     }
+                    // here, we set it to true, because at this point, we have at least `threshold`
+                    // number of participants running a valid docker image.
+                    contract.valid_tee = true;
 
-                    let n_participants_new = new_participants.len();
-
-                    let new_threshold = (3 * n_participants_new + 4) / 5; // minimum 60%
-                    let new_threshold = new_threshold.max(2); // but also minimum 2
+                    // do we want to adjust the threshold?
+                    //let n_participants_new = new_participants.len();
+                    //let new_threshold = (3 * n_participants_new + 4) / 5; // minimum 60%
+                    //let new_threshold = new_threshold.max(2); // but also minimum 2
+                    let new_threshold = threshold;
 
                     let new_participants = Participants::init(
                         current_params.participants().next_id(),
@@ -1006,10 +1017,6 @@ impl VersionedMpcContract {
                     let tp = ThresholdParameters::new(
                         new_participants,
                         Threshold::new(new_threshold as u64),
-                        TeeParticipantInfo {
-                            tee_quote: vec![],
-                            quote_collateral: String::new(),
-                        },
                     )
                     .expect("error");
                     current_params.validate_incoming_proposal(&tp)?;
@@ -1087,6 +1094,7 @@ impl VersionedMpcContract {
             pending_requests: LookupMap::new(StorageKey::PendingRequestsV2),
             proposed_updates: Default::default(),
             tee_state: Default::default(),
+            valid_tee: true,
         }))
     }
 
