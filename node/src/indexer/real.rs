@@ -11,7 +11,7 @@ use tokio::select;
 use tracing::{error, info};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 
 /// Spawns a real indexer, returning a handle to the indexer, [`IndexerApi`].
