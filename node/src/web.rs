@@ -3,7 +3,7 @@ use crate::tracking::TaskHandle;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Response, StatusCode};
-use axum::response::{Html, IntoResponse};
+use axum::response::IntoResponse;
 use axum::serve;
 use futures::future::BoxFuture;
 use mpc_contract::state::ProtocolContractState;
@@ -104,10 +104,6 @@ async fn contract_state(mut state: State<WebServerState>) -> Result<String, Anyh
     ))
 }
 
-async fn third_party_licenses() -> Html<&'static str> {
-    Html(include_str!("../../third-party-licenses/licenses.html"))
-}
-
 /// Starts the web server. This is an async function that returns a future.
 /// The function itself will return error if the server cannot be started.
 ///
@@ -128,7 +124,6 @@ pub async fn start_web_server(
         .route("/debug/blocks", axum::routing::get(debug_blocks))
         .route("/debug/signatures", axum::routing::get(debug_signatures))
         .route("/debug/contract", axum::routing::get(contract_state))
-        .route("/licenses", axum::routing::get(third_party_licenses))
         .route("/health", axum::routing::get(|| async { "OK" }))
         .with_state(WebServerState {
             root_task_handle,
