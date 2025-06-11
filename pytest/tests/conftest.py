@@ -47,24 +47,24 @@ def compile_contract():
     print("compiling contract")
     git_repo = git.Repo('.', search_parent_directories=True)
     git_root = Path(git_repo.git.rev_parse("--show-toplevel"))
-    chain_signatures = git_root / "libs" / "chain-signatures"
+    chain_signatures = git_root
 
     subprocess.run([
         "cargo", "build", "-p", "mpc-contract",
-        "--target=wasm32-unknown-unknown", "--release"
+        "--target=wasm32-unknown-unknown", "--profile=release-contract"
     ],
                    cwd=chain_signatures,
                    check=True,
                    stdout=sys.stdout,
                    stderr=sys.stderr)
     
-    subprocess.run(["wasm-opt", "-Oz", "target/wasm32-unknown-unknown/release/mpc_contract.wasm", "-o", "target/wasm32-unknown-unknown/release/mpc_contract.wasm"],
+    subprocess.run(["wasm-opt", "-Oz", "target/wasm32-unknown-unknown/release-contract/mpc_contract.wasm", "-o", "target/wasm32-unknown-unknown/release/mpc_contract.wasm"],
                    cwd=chain_signatures,
                    check=True,
                    stdout=sys.stdout,
                    stderr=sys.stderr)
 
-    compiled_contract = chain_signatures / "target" / "wasm32-unknown-unknown" / "release" / "mpc_contract.wasm"
+    compiled_contract = chain_signatures / "target" / "wasm32-unknown-unknown" / "release-contract" / "mpc_contract.wasm"
     os.makedirs(os.path.dirname(contracts.COMPILED_CONTRACT_PATH),
                 exist_ok=True)
     shutil.copy(compiled_contract, contracts.COMPILED_CONTRACT_PATH)

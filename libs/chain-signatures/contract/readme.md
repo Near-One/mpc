@@ -207,7 +207,7 @@ These functions require the caller to be a participant or candidate.
 Note that due to the Rust compiler version used in this project and a lack of compatibility with the runtime version used in near-workspaces,
 we need to use wasm-opt to strip the contract of unused features. Otherwise the contract cannot be deserialized by near-workspaces runtime.
 
-```
-cargo build --release --target=wasm32-unknown-unknown
-wasm-opt -Oz -o target/wasm32-unknown-unknown/release/mpc_contract.wasm target/wasm32-unknown-unknown/release/mpc_contract.wasm
+```bash
+cargo build --package mpc-contract --profile release-contract --target=wasm32-unknown-unknown
+wasm-opt -Oz -o target/wasm32-unknown-unknown/release-contract/mpc_contract.wasm target/wasm32-unknown-unknown/release-contract/mpc_contract.wasm
 ```

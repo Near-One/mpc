@@ -5,26 +5,24 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-anyhow = "1.0.97"
+anyhow = { workspace = true }
 borsh = { version = "1.5.7", features = ["derive"] }
-clap = { version = "4.5.31", features = ["derive"] }
-flume = "0.11.1"
-futures = "0.3.31"
-hex = "0.4.3"
+clap = { workspace = true }
+flume = { workspace = true }
+futures = { workspace = true }
+hex = { workspace = true }
 near-crypto = "0.28.0"
 near-jsonrpc-client = "0.15.1"
 near-jsonrpc-primitives = "0.28.0"
 near-primitives = "0.28.0"
-near-sdk = { version = "5.8.1" }
+near-sdk = { workspace = true }
 rand = "0.9.0"
-reqwest = "0.12.12"
-serde = { version = "1.0.218", features = ["derive"] }
-serde_json = "1.0.140"
-serde_yaml = "0.9.34"
-tokio = { version = "1.43.0", features = ["full"] }
-
-legacy-mpc-contract = { package = "mpc-contract", git = "https://github.com/Near-One/mpc/", rev = "1d4954dff28e8eb988fb7762eff414a602a2b124" }
-mpc-contract = { path = "../libs/chain-signatures/contract", features = ["test-utils", "dev-utils"]}
-
-
-[workspace]
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true }
+mpc-contract = { path = "../libs/chain-signatures/contract", features = [
+    "test-utils",
+] }
+legacy-mpc-contract = { workspace = true }

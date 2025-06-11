@@ -422,9 +422,14 @@ async fn test_contract_sign_request_eddsa() -> anyhow::Result<()> {
     let err = sign_and_validate(&request, None, &contract)
         .await
         .expect_err("should have failed with timeout");
-    assert!(err
-        .to_string()
-        .contains(&errors::SignError::Timeout.to_string()));
+
+    let error_string = err.to_string();
+    assert!(
+        err.to_string()
+            .contains(&errors::SignError::Timeout.to_string()),
+        "{}",
+        error_string
+    );
 
     Ok(())
 }

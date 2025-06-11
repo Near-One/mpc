@@ -49,8 +49,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub const CONTRACT_FILE_PATH: &str = "../target/wasm32-unknown-unknown/release/mpc_contract.wasm";
+pub const CONTRACT_FILE_PATH: &str =
+    "../../../target/wasm32-unknown-unknown/release-contract/mpc_contract.wasm";
 pub const PARTICIPANT_LEN: usize = 3;
+// pub const PROJECT_ROOT_DIRECTORY: &str =
 
 pub fn candidates(names: Option<Vec<AccountId>>) -> Participants {
     let mut participants: Participants = Participants::new();
@@ -121,9 +123,13 @@ pub fn current_contract() -> &'static Vec<u8> {
     CONTRACT.get_or_init(|| {
         let pkg_dir = Path::new(env!("CARGO_MANIFEST_DIR")); // this should point to
                                                              // libs/chain-signatures/contract
-        let project_dir = pkg_dir.join("../"); // pointing to libs/chain-signatures
+        let project_dir = pkg_dir.join("../../../"); // pointing to libs/chain-signatures
 
-        let wasm_path = project_dir.join("target/wasm32-unknown-unknown/release/mpc_contract.wasm");
+        let wasm_path =
+            project_dir.join("target/wasm32-unknown-unknown/release-contract/mpc_contract.wasm");
+
+        println!("wasm path: {:?}", wasm_path);
+
         // get lock-file:
         let lock_path = project_dir.join(".contract.itest.build.lock");
         let mut lockfile = OpenOptions::new()
@@ -152,7 +158,12 @@ pub fn current_contract() -> &'static Vec<u8> {
 
         if do_build {
             let status = Command::new("cargo")
-                .args(["build", "--release", "--target=wasm32-unknown-unknown"])
+                .args([
+                    "build",
+                    "--package=mpc-contract",
+                    "--profile=release-contract",
+                    "--target=wasm32-unknown-unknown",
+                ])
                 .current_dir(&project_dir)
                 .status()
                 .expect("Failed to run cargo build");
@@ -176,6 +187,7 @@ pub fn current_contract() -> &'static Vec<u8> {
                 .write_all(serde_json::to_string(&BuildLock::new()).unwrap().as_bytes())
                 .expect("Failed to write timestamp to lockfile");
         }
+
         std::fs::read(CONTRACT_FILE_PATH).unwrap()
     })
 }

@@ -60,7 +60,7 @@ impl ThresholdParameters {
         if k.value() < MIN_THRESHOLD_ABSOLUTE {
             return Err(InvalidThreshold::MinAbsRequirementFailed.into());
         }
-        let percentage_bound = (3 * n_shares + 4) / 5; // minimum 60%
+        let percentage_bound = (3 * n_shares).div_ceil(5); // minimum 60%
         if k.value() < percentage_bound {
             return Err(InvalidThreshold::MinRelRequirementFailed.message(format!(
                 "require at least {}, found {:?}",

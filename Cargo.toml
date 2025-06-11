@@ -1,8 +1,85 @@
 [workspace]
-members = ["node"]
+members = ["node", "libs/chain-signatures/contract", "devnet"]
 resolver = "2"
-exclude = ["libs", "pytest"]
+exclude = ["libs/nearcore", "pytest"]
 
 [profile.dev-release]
 inherits = "release"
 debug = true
+
+[profile.release-contract]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+# optimize for binary size.
+# See https://doc.rust-lang.org/rustc/codegen-options/index.html#opt-level
+opt-level = "s"
+
+[workspace.dependencies]
+actix = "0.13.0"
+aes-gcm = "0.10.3"
+anyhow = "1.0.92"
+async-trait = "0.1.83"
+axum = "0.7.9"
+backon = { version = "1.5.1", features = ["tokio-sleep"] }
+borsh = { version = "1.5.1", features = ["derive"] }
+cait-sith = { git = "https://github.com/Near-One/cait-sith", rev = "5e0ce40a16dc3e0889277f66bb2a6400d6ef36a5", features = [
+    "k256",
+] }
+clap = { version = "4.5.20", features = ["derive", "env"] }
+curve25519-dalek = "4.1.3"
+flume = "0.11.1"
+futures = "0.3.31"
+futures-util = "0.3.31"
+frost-ed25519 = "2.1.0"
+gcloud-sdk = { version = "0.26.2", default-features = false, features = [
+    "google-cloud-secretmanager-v1",
+    "tls-webpki-roots",
+] }
+hex = { version = "0.4.3", features = ["serde"] }
+hex-literal = "0.4.1"
+hkdf = "0.12.4"
+http = "1.3.1"
+humantime = "2.1.0"
+itertools = "0.12.1"
+k256 = "0.13.4"
+lazy_static = "1.5.0"
+lru = "0.12.5"
+near-jsonrpc-client = "0.16.1"
+near-jsonrpc-primitives = "0.28.0"
+near-primitives = "0.28.0"
+near-sdk = "5.2.1"
+prometheus = "0.13.4"
+rand = { version = "0.8.5" }
+rand_xorshift = "0.3"
+rcgen = "0.13.1"
+reqwest = "0.12.20"
+rocksdb = "0.21.0"
+rustls = { version = "0.23.23", default-features = false }
+serde = { version = "1.0.214", features = ["derive"] }
+serde_json = "1.0.132"
+serde_yaml = "0.9.34"
+serial_test = "3.2.0"
+sha3 = "0.10.8"
+tempfile = "=3.14.0"
+time = "0.3.41"
+tokio = { version = "1.41.0", features = ["full"] }
+tokio-util = "0.7.12"
+tokio-rustls = { version = "0.26.1", default-features = false }
+tokio-stream = { version = "0.1" }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+url = "2"
+x509-parser = "0.16.0"
+
+near-indexer = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
+near-indexer-primitives = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
+near-client = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
+near-config-utils = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
+near-crypto = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
+near-o11y = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
+near-time = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
+# todo: update once 1.1.0 is pulbished (though the api did not change)
+legacy-mpc-contract = { package = "mpc-contract", git = "https://github.com/Near-One/mpc/", rev = "1d4954dff28e8eb988fb7762eff414a602a2b124" }

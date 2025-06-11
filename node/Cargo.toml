@@ -5,67 +5,62 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-actix = "0.13.0"
-aes-gcm = "0.10.3"
-anyhow = "1.0.92"
-async-trait = "0.1.83"
-axum = "0.7.9"
-backon = { version = "1.5.1", features = ["tokio-sleep"] }
-borsh = { version = "1.5.1", features = ["derive"] }
-cait-sith = { git = "https://github.com/Near-One/cait-sith", rev = "68d38188468733dd890dabd8d35b8b7a011e71dd", features = [
-    "k256",
-] }
-clap = { version = "4.5.20", features = ["derive", "env"] }
+actix = { workspace = true }
+aes-gcm = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+backon = { workspace = true }
+borsh = { workspace = true }
+cait-sith = { workspace = true }
+clap = { workspace = true }
 dstack-sdk = { git = "https://github.com/Dstack-TEE/dstack.git", tag = "v0.5.2" }
-flume = "0.11.1"
-futures = "0.3.31"
-futures-util = "0.3.31"
-gcloud-sdk = { version = "0.26.2", default-features = false, features = [
-    "google-cloud-secretmanager-v1",
-    "tls-webpki-roots",
-] }
-hex = { version = "0.4.3", features = ["serde"] }
-hex-literal = "0.4.1"
-hkdf = "0.12.4"
-http = "1.3.1"
-humantime = "2.1.0"
-k256 = "0.13.4"
-lazy_static = "1.5.0"
-lru = "0.12.5"
-near-sdk = "5.2.1"
-prometheus = "0.13.4"
-rand = "0.8.5"
-rand_xorshift = "0.3"
-rcgen = "0.13.1"
-rocksdb = "0.21.0"
-rustls = { version = "0.23.23", default-features = false }
-reqwest = { version = "0.12.9", features = ["multipart"] }
-serde = { version = "1.0.214", features = ["derive"] }
-serde_json = "1.0.132"
-serde_yaml = "0.9.34"
-sha3 = "0.10.8"
-tempfile = "=3.14.0"
-time = "0.3.41"
-tokio = { version = "1.41.0", features = ["full"] }
-tokio-util = "0.7.12"
-tokio-rustls = { version = "0.26.1", default-features = false }
-tokio-stream = { version = "0.1" }
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-url = "2"
-x509-parser = "0.16.0"
+flume = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+gcloud-sdk = { workspace = true }
+hex = { workspace = true }
+hex-literal = { workspace = true }
+hkdf = { workspace = true }
+http = { workspace = true }
+humantime = { workspace = true }
+k256 = { workspace = true }
+lazy_static = { workspace = true }
+lru = { workspace = true }
+near-sdk = { workspace = true }
+prometheus = { workspace = true }
+rand = { workspace = true }
+rand_xorshift = { workspace = true }
+rcgen = { workspace = true }
+reqwest = { workspace = true }
+rocksdb = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha3 = { workspace = true }
+tempfile = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+x509-parser = { workspace = true }
+
 
 curve25519-dalek = "4.1.3"
+near-indexer = { workspace = true }
+near-indexer-primitives = { workspace = true }
+near-client = { workspace = true }
+near-config-utils = { workspace = true }
+near-crypto = { workspace = true }
+near-o11y = { workspace = true }
+near-time = { workspace = true }
 
-near-indexer = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
-near-indexer-primitives = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
-near-client = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
-near-config-utils = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
-near-crypto = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
-near-o11y = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
-near-time = { git = "https://github.com/near/nearcore", tag = "2.6.0-rc.1" }
-# todo: update once 1.1.0 is pulbished (though the api did not change)
-legacy-mpc-contract = { package = "mpc-contract", git = "https://github.com/Near-One/mpc/", rev = "1d4954dff28e8eb988fb7762eff414a602a2b124" }
+legacy-mpc-contract = { workspace = true }
 mpc-contract = { path = "../libs/chain-signatures/contract/", features = [
     "dev-utils",
 ] }
@@ -73,11 +68,11 @@ mpc-contract = { path = "../libs/chain-signatures/contract/", features = [
 # See error E0283 with multiple impls satisfying `u128: std::cmp::PartialOrd<_>`
 deranged = "=0.4.0"
 
+
 [dev-dependencies]
+serial_test = { workspace = true }
+itertools = { workspace = true }
 assert_matches = "1.5.0"
-serial_test = "3.2.0"
-reqwest = "0.12.9"
-itertools = "0.12.1"
 mpc-contract = { path = "../libs/chain-signatures/contract/", features = [
     "test-utils",
 ] }
