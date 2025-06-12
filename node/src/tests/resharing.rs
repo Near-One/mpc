@@ -89,7 +89,14 @@ async fn test_key_resharing_simple() {
     .is_some());
 }
 
-// Test two nodes joining and two old nodes leaving.
+// Tests that key resharing works, when new nodes join, and the nodes
+// from the original set leave the network.
+//
+// Test scenario:
+// 1. Setup network with 4 nodes.
+// 2. Add 2 new nodes. Perform resharing.
+// 3. Remove 2 nodes from the original participant set. Perform resharing.
+// 4. Test that key resharing was successful by submitting the signature requests.
 #[tokio::test]
 #[serial]
 async fn test_key_resharing_multistage() {
@@ -109,12 +116,6 @@ async fn test_key_resharing_multistage() {
         PortSeed::KEY_RESHARING_MULTISTAGE_TEST,
     );
 
-    // Initialize the contract with two fewer participants.
-    let mut participants_1 = setup.participants.clone();
-    participants_1.participants.pop();
-    participants_1.participants.pop();
-    participants_1.threshold = 3;
-
     let domain = DomainConfig {
         id: DomainId(0),
         scheme: SignatureScheme::Secp256k1,
@@ -132,7 +133,7 @@ async fn test_key_resharing_multistage() {
         .map(|config| AutoAbortTask::from(tokio::spawn(config.run())))
         .collect::<Vec<_>>();
 
-    // Sanity check.
+    // Sanity check that requests work.
     assert!(request_signature_and_await_response(
         &mut setup.indexer,
         "user0",
@@ -145,7 +146,6 @@ async fn test_key_resharing_multistage() {
     // Have the fifth node join.
     let mut participants_2 = setup.participants.clone();
     participants_2.participants.pop();
-    participants_1.threshold = 3;
     setup
         .indexer
         .contract_mut()
@@ -288,10 +288,6 @@ async fn test_signature_requests_in_resharing_are_processed() {
         TXN_DELAY_BLOCKS,
         PortSeed::KEY_RESHARING_SIGNATURE_BUFFERING_TEST,
     );
-
-    // Initialize the contract with one fewer participant.
-    let mut initial_participants = setup.participants.clone();
-    initial_participants.participants.pop();
 
     let domain = DomainConfig {
         id: DomainId(0),
