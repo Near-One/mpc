@@ -1,7 +1,7 @@
 [workspace]
 members = ["node", "devnet"]
 resolver = "2"
-exclude = ["libs", "pytest"]
+exclude = ["libs", "pytest", "utils"]
 
 [profile.dev-release]
 inherits = "release"
