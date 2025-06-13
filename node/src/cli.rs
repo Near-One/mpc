@@ -12,6 +12,7 @@ use crate::{
         permanent::{PermanentKeyStorage, PermanentKeyStorageBackend, PermanentKeyshareData},
         GcpPermanentKeyStorageConfig, KeyStorageConfig,
     },
+    p2p,
     p2p::testing::{generate_test_p2p_configs, PortSeed},
     tracking::{self, start_root_task},
     web::start_web_server,
@@ -24,6 +25,7 @@ use near_crypto::SecretKey;
 use near_indexer_primitives::types::Finality;
 use near_sdk::AccountId;
 use near_time::Clock;
+use serde::Serialize;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -33,6 +35,8 @@ use tokio::sync::oneshot;
 #[derive(Parser, Debug)]
 pub enum Cli {
     Start(StartCmd),
+    /// Generates a new P2P key for this node, which is used to communicate with other nodes in the network.
+    GenerateSecrets(GenerateSecretsCmd),
     /// Generates/downloads required files for Near node to run
     Init(InitConfigArgs),
     /// Imports a keyshare from JSON and stores it in the local encrypted storage
@@ -86,6 +90,7 @@ pub struct StartCmd {
     pub home_dir: String,
     /// Hex-encoded 16 byte AES key for local storage encryption.
     /// This key should come from a secure secret storage.
+    /// TODO(#444): After TEE integration decide on what to do with AES encryption key
     #[arg(env("MPC_SECRET_STORE_KEY"))]
     pub secret_store_key_hex: String,
     /// If provided, the root keyshare is stored on GCP.
@@ -94,13 +99,12 @@ pub struct StartCmd {
     pub gcp_keyshare_secret_id: Option<String>,
     #[arg(env("GCP_PROJECT_ID"))]
     pub gcp_project_id: Option<String>,
-    /// p2p private key for TLS. It must be in the format of "ed25519:...".
-    #[arg(env("MPC_P2P_PRIVATE_KEY"))]
-    pub p2p_private_key: SecretKey,
-    /// Near account secret key. Must correspond to the my_near_account_id
-    /// specified in the config.
-    #[arg(env("MPC_ACCOUNT_SK"))]
-    pub account_secret_key: SecretKey,
+}
+
+#[derive(Parser, Debug)]
+pub struct GenerateSecretsCmd {
+    #[arg(long, env("MPC_HOME_DIR"))]
+    pub home_dir: String,
 }
 
 #[derive(Parser, Debug)]
@@ -134,8 +138,13 @@ pub struct ExportKeyshareCmd {
 impl StartCmd {
     async fn run(self) -> anyhow::Result<()> {
         let home_dir = PathBuf::from(self.home_dir.clone());
-        let secrets =
-            SecretsConfig::from_cli(&self.secret_store_key_hex, self.p2p_private_key.clone())?;
+
+        let Some(secrets) = GenerateSecretsCmd::maybe_get_existing(&self.home_dir)? else {
+            anyhow::bail!(
+                "p2p and near account secret key does not exist. Generate it via CLI first"
+            );
+        };
+
         let config = load_config_file(&home_dir)?;
 
         let (web_contract_sender, web_contract_receiver) =
@@ -146,11 +155,15 @@ impl StartCmd {
             home_dir.clone(),
             config.indexer.clone(),
             config.my_near_account_id.clone(),
-            self.account_secret_key.clone(),
+            secrets.near_account_key.clone(),
             web_contract_sender,
             indexer_exit_sender,
         );
 
+        let secrets = SecretsConfig::from_cli(
+            &self.secret_store_key_hex,
+            secrets.p2p_secret.unwrap_as_ed25519().clone(),
+        )?;
         let root_future = Self::create_root_future(
             home_dir.clone(),
             config.clone(),
@@ -232,10 +245,80 @@ impl StartCmd {
     }
 }
 
+#[derive(Debug, Serialize, serde::Deserialize)]
+struct Secrets {
+    p2p_secret: SecretKey,
+    near_account_key: SecretKey,
+}
+
+impl Secrets {
+    pub fn dump_public_keys(&self) {
+        println!("p2p public key: {}", self.p2p_secret.public_key());
+        println!(
+            "near account public key: {}",
+            self.near_account_key.public_key()
+        );
+    }
+}
+
+impl GenerateSecretsCmd {
+    const SECRETS_FILE_NAME: &'static str = "secrets.json";
+
+    fn maybe_get_existing(home_dir: &String) -> anyhow::Result<Option<Secrets>> {
+        let file_path = PathBuf::from(home_dir).join(Self::SECRETS_FILE_NAME);
+        let secrets = if file_path.exists() {
+            let str = std::fs::read_to_string(&file_path)?;
+            let secrets_file: Secrets = serde_json::from_str(&str)?;
+            Some(secrets_file)
+        } else {
+            None
+        };
+        Ok(secrets)
+    }
+
+    fn generate(&self) -> anyhow::Result<Secrets> {
+        let home_dir = &PathBuf::from(&self.home_dir);
+        if !home_dir.exists() {
+            std::fs::create_dir_all(home_dir)?;
+        }
+        let p2p_secret = {
+            let (secret_key, _public_key) = p2p::keygen::generate_keypair()?;
+            SecretKey::ED25519(secret_key)
+        };
+        let near_account_key = SecretKey::from_random(near_crypto::KeyType::ED25519);
+        let secrets = Secrets {
+            p2p_secret,
+            near_account_key,
+        };
+
+        let path = home_dir.join(Self::SECRETS_FILE_NAME);
+        std::fs::write(&path, serde_json::to_vec(&secrets)?)?;
+        eprintln!("p2p and near account key generated in {}", path.display());
+
+        Ok(secrets)
+    }
+
+    fn generate_or_get_existing(&self) -> anyhow::Result<Secrets> {
+        let secrets = if let Some(secrets) = Self::maybe_get_existing(&self.home_dir)? {
+            eprintln!("p2p and near account secret key already exists. Using existing.");
+            secrets
+        } else {
+            eprintln!("p2p and near account secret key not found. Generating...");
+            self.generate()?
+        };
+        secrets.dump_public_keys();
+        Ok(secrets)
+    }
+}
+
 impl Cli {
     pub async fn run(self) -> anyhow::Result<()> {
         match self {
             Cli::Start(start) => start.run().await,
+            Cli::GenerateSecrets(cmd) => {
+                cmd.generate_or_get_existing()?;
+                Ok(())
+            }
             Cli::Init(config) => near_indexer::init_configs(
                 &config.dir,
                 config.chain_id,
@@ -284,9 +367,28 @@ impl Cli {
         desired_triples_to_buffer: usize,
         desired_presignatures_to_buffer: usize,
     ) -> anyhow::Result<()> {
-        let configs = generate_test_p2p_configs(participants, threshold, PortSeed::CLI_FOR_PYTEST)?;
+        let p2p_key_pairs = participants
+            .iter()
+            .enumerate()
+            .map(|(idx, _account_id)| {
+                let subdir = format!("{}/{}", output_dir, idx);
+                let p2p_key_cmd = GenerateSecretsCmd { home_dir: subdir };
+                p2p_key_cmd.generate_or_get_existing().map(|secret| {
+                    (
+                        secret.p2p_secret.unwrap_as_ed25519().clone(),
+                        secret.p2p_secret.public_key().unwrap_as_ed25519().clone(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let configs = generate_test_p2p_configs(
+            participants,
+            threshold,
+            PortSeed::CLI_FOR_PYTEST,
+            Some(p2p_key_pairs),
+        )?;
         let participants_config = configs[0].0.participants.clone();
-        for (i, (_, p2p_private_key)) in configs.into_iter().enumerate() {
+        for (i, (_config, _p2p_private_key)) in configs.into_iter().enumerate() {
             let subdir = format!("{}/{}", output_dir, i);
             std::fs::create_dir_all(&subdir)?;
             let file_config = self.create_file_config(
@@ -295,8 +397,6 @@ impl Cli {
                 desired_triples_to_buffer,
                 desired_presignatures_to_buffer,
             )?;
-            let secret_key = SecretKey::ED25519(p2p_private_key.clone());
-            std::fs::write(format!("{}/p2p_key", subdir), secret_key.to_string())?;
             std::fs::write(
                 format!("{}/config.yaml", subdir),
                 serde_yaml::to_string(&file_config)?,
@@ -465,6 +565,33 @@ mod tests {
             private_share,
             public_key: public_key.to_affine(),
         })
+    }
+
+    #[test]
+    fn test_p2p_cmd() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let home_dir = temp_dir.path().to_string_lossy().to_string();
+
+        let cmd = GenerateSecretsCmd {
+            home_dir: home_dir.clone(),
+        };
+
+        assert!(GenerateSecretsCmd::maybe_get_existing(&home_dir)?.is_none());
+
+        let expected_secrets = cmd.generate_or_get_existing()?;
+
+        // check that the key will not be overwritten
+        assert!(cmd.generate_or_get_existing().is_ok());
+
+        let actual_secrets = cmd.generate_or_get_existing()?;
+
+        assert_eq!(actual_secrets.p2p_secret, expected_secrets.p2p_secret);
+        assert_eq!(
+            actual_secrets.near_account_key,
+            expected_secrets.near_account_key
+        );
+
+        Ok(())
     }
 
     #[test]

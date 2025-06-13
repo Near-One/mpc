@@ -614,11 +614,49 @@ impl MeshNetworkTransportReceiver for TlsMeshReceiver {
     }
 }
 
+pub mod keygen {
+    use crate::p2p::{PKCS8_HEADER, PKCS8_MIDDLE};
+
+    /// Generates an ED25519 keypair, returning the pem-encoded private key and the
+    /// hex-encoded public key.
+    pub fn generate_keypair(
+    ) -> anyhow::Result<(near_crypto::ED25519SecretKey, near_crypto::ED25519PublicKey)> {
+        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
+        Ok((
+            keypair_to_raw_ed25519_secret_key(&key_pair)?,
+            near_crypto::ED25519PublicKey(key_pair.public_key_raw().try_into()?),
+        ))
+    }
+
+    /// Converts a keypair to an ED25519 secret key, asserting that it is the
+    /// exact kind of keypair we expect.
+    pub fn keypair_to_raw_ed25519_secret_key(
+        keypair: &rcgen::KeyPair,
+    ) -> anyhow::Result<near_crypto::ED25519SecretKey> {
+        let pkcs8_encoded = keypair.serialize_der();
+        if pkcs8_encoded.len() != 16 + 32 + 3 + 32 {
+            anyhow::bail!("Invalid PKCS8 length");
+        }
+        if pkcs8_encoded[..16] != PKCS8_HEADER {
+            anyhow::bail!("Invalid PKCS8 header");
+        }
+        if pkcs8_encoded[16 + 32..16 + 32 + 3] != PKCS8_MIDDLE {
+            anyhow::bail!("Invalid PKCS8 middle");
+        }
+
+        let mut key = [0u8; 64];
+        key[..32].copy_from_slice(&pkcs8_encoded[16..16 + 32]);
+        key[32..].copy_from_slice(&pkcs8_encoded[16 + 32 + 3..]);
+
+        Ok(near_crypto::ED25519SecretKey(key))
+    }
+}
+
 pub mod testing {
-    use super::{PKCS8_HEADER, PKCS8_MIDDLE};
     use crate::config::{MpcConfig, ParticipantInfo, ParticipantsConfig};
+    use crate::p2p::keygen::generate_keypair;
     use crate::primitives::ParticipantId;
-    use near_crypto::ED25519SecretKey;
+    use near_crypto::{ED25519PublicKey, ED25519SecretKey};
     use near_sdk::AccountId;
 
     /// A unique seed for each integration test to avoid port conflicts during testing.
@@ -654,51 +692,29 @@ pub mod testing {
         pub const BASIC_MULTIDOMAIN_TEST: Self = Self(8);
     }
 
-    /// Converts a keypair to an ED25519 secret key, asserting that it is the
-    /// exact kind of keypair we expect.
-    pub fn keypair_to_raw_ed25519_secret_key(
-        keypair: &rcgen::KeyPair,
-    ) -> anyhow::Result<near_crypto::ED25519SecretKey> {
-        let pkcs8_encoded = keypair.serialize_der();
-        if pkcs8_encoded.len() != 16 + 32 + 3 + 32 {
-            anyhow::bail!("Invalid PKCS8 length");
-        }
-        if pkcs8_encoded[..16] != PKCS8_HEADER {
-            anyhow::bail!("Invalid PKCS8 header");
-        }
-        if pkcs8_encoded[16 + 32..16 + 32 + 3] != PKCS8_MIDDLE {
-            anyhow::bail!("Invalid PKCS8 middle");
-        }
-
-        let mut key = [0u8; 64];
-        key[..32].copy_from_slice(&pkcs8_encoded[16..16 + 32]);
-        key[32..].copy_from_slice(&pkcs8_encoded[16 + 32 + 3..]);
-
-        Ok(near_crypto::ED25519SecretKey(key))
-    }
-
-    /// Generates an ED25519 keypair, returning the pem-encoded private key and the
-    /// hex-encoded public key.
-    pub fn generate_keypair(
-    ) -> anyhow::Result<(near_crypto::ED25519SecretKey, near_crypto::ED25519PublicKey)> {
-        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
-        Ok((
-            keypair_to_raw_ed25519_secret_key(&key_pair)?,
-            near_crypto::ED25519PublicKey(key_pair.public_key_raw().try_into().unwrap()),
-        ))
-    }
-
     pub fn generate_test_p2p_configs(
         participant_accounts: &[AccountId],
         threshold: usize,
         // this is a hack to make sure that when tests run in parallel, they don't
         // collide on the same port.
         port_seed: PortSeed,
+        // Supply `Some` value here if you want to use pre-existing p2p key pairs
+        p2p_keypairs: Option<Vec<(ED25519SecretKey, ED25519PublicKey)>>,
     ) -> anyhow::Result<Vec<(MpcConfig, ED25519SecretKey)>> {
+        let p2p_keypairs = if let Some(p2p_keypairs) = p2p_keypairs {
+            p2p_keypairs
+        } else {
+            participant_accounts
+                .iter()
+                .map(|_account_id| generate_keypair())
+                .collect::<Result<Vec<_>, _>>()?
+        };
         let mut participants = Vec::new();
-        let mut keypairs = Vec::new();
-        for (i, participant_account) in participant_accounts.iter().enumerate() {
-            let (p2p_private_key, p2p_public_key) = generate_keypair()?;
+        for (i, (participant_account, (_p2p_secret_key, p2p_public_key))) in participant_accounts
+            .iter()
+            .zip(p2p_keypairs.iter())
+            .enumerate()
+        {
             participants.push(ParticipantInfo {
                 id: ParticipantId::from_raw(rand::random()),
                 address: "127.0.0.1".to_string(),
@@ -706,11 +722,10 @@ pub mod testing {
                 p2p_public_key: near_crypto::PublicKey::ED25519(p2p_public_key.clone()),
                 near_account_id: participant_account.clone(),
             });
-            keypairs.push((p2p_private_key, p2p_public_key));
         }
 
         let mut configs = Vec::new();
-        for (i, keypair) in keypairs.into_iter().enumerate() {
+        for (i, keypair) in p2p_keypairs.into_iter().enumerate() {
             let participants = ParticipantsConfig {
                 threshold: threshold as u64,
                 participants: participants.clone(),
@@ -731,10 +746,9 @@ pub mod testing {
 mod tests {
     use crate::config::MpcConfig;
     use crate::network::{MeshNetworkTransportReceiver, MeshNetworkTransportSender};
+    use crate::p2p::keygen::{generate_keypair, keypair_to_raw_ed25519_secret_key};
     use crate::p2p::raw_ed25519_secret_key_to_keypair;
-    use crate::p2p::testing::{
-        generate_keypair, generate_test_p2p_configs, keypair_to_raw_ed25519_secret_key, PortSeed,
-    };
+    use crate::p2p::testing::{generate_test_p2p_configs, PortSeed};
     use crate::primitives::{
         ChannelId, MpcMessage, MpcStartMessage, MpcTaskId, ParticipantId, PeerMessage, UniqueId,
     };
@@ -762,6 +776,7 @@ mod tests {
             &["test0".parse().unwrap(), "test1".parse().unwrap()],
             2,
             PortSeed::P2P_BASIC_TEST,
+            None,
         )
         .unwrap();
         let participant0 = configs[0].0.my_participant_id;
@@ -868,6 +883,7 @@ mod tests {
             ],
             4,
             PortSeed::P2P_WAIT_FOR_READY_TEST,
+            None,
         )
         .unwrap();
 

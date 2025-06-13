@@ -179,7 +179,7 @@ pub struct SecretsConfig {
 impl SecretsConfig {
     pub fn from_cli(
         local_storage_aes_key_hex: &str,
-        p2p_private_key: near_crypto::SecretKey,
+        p2p_private_key: near_crypto::ED25519SecretKey,
     ) -> anyhow::Result<Self> {
         let local_storage_aes_key = hex::decode(local_storage_aes_key_hex)
             .context("Encryption key must be 32 hex characters")?;
@@ -187,10 +187,6 @@ impl SecretsConfig {
             .as_slice()
             .try_into()
             .context("Encryption key must be 16 bytes (32 bytes hex)")?;
-
-        let near_crypto::SecretKey::ED25519(p2p_private_key) = p2p_private_key else {
-            anyhow::bail!("P2P private key must be ed25519");
-        };
         Ok(Self {
             p2p_private_key,
             local_storage_aes_key,
