@@ -22,6 +22,7 @@ use crate::runtime::AsyncDroppableRuntime;
 use crate::sign_request::SignRequestStorage;
 use crate::tracking::{self};
 use crate::web::SignatureDebugRequest;
+use anyhow::Context;
 use cait_sith::{ecdsa, eddsa};
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -91,17 +92,70 @@ enum MpcJobResult {
 
 impl Coordinator {
     pub async fn run(mut self) -> anyhow::Result<()> {
+        // This future is cancel safe
+        let mut wait_for_new_mpc_state = async move || loop {
+            self.indexer
+                .contract_state_receiver
+                .changed()
+                .await
+                .context("Contract state watcher closed")?;
+
+            let (height, state) = &*self.indexer.contract_state_receiver.borrow_and_update();
+
+            match ContractState::from_contract_state(state, *height, None) {
+                Ok(state) => break anyhow::Ok(state),
+                Err(err) => {
+                    error!("Failed to parse contract state: {:?}", err);
+                    continue;
+                }
+            }
+        };
+
+        // This is the initial state. We stop this state for any state changes.
+        let mut job = MpcJob {
+            name: "WaitingForSync",
+            fut: futures::future::ready(Ok(MpcJobResult::HaltUntilInterrupted)).boxed(),
+            stop_fn: Box::new(|_| true),
+        };
+
         loop {
-            let state = self.indexer.contract_state_receiver.borrow().clone();
-            let mut job: MpcJob = match state {
-                ContractState::WaitingForSync => {
-                    // This is the initial state. We stop this state for any state changes.
-                    MpcJob {
-                        name: "WaitingForSync",
-                        fut: futures::future::ready(Ok(MpcJobResult::HaltUntilInterrupted)).boxed(),
-                        stop_fn: Box::new(|_| true),
+            // Wait for current job to be cancelled or complete by itself.
+            let state =  loop {
+                tokio::select! {
+                    res = &mut job.fut => {
+                        match res {
+                            Err(e) => {
+                                tracing::error!("[{}] failed: {:?}", job.name, e);
+                                break;
+                            }
+                            Ok(MpcJobResult::Done) => {
+                                tracing::info!("[{}] finished successfully", job.name);
+                                break;
+                            }
+                            Ok(MpcJobResult::HaltUntilInterrupted) => {
+                                tracing::info!("[{}] halted; waiting for state change or timeout", job.name);
+                                // Replace it with a never-completing future so next iteration we wait for
+                                // only state change or timeout.
+                                job.fut = futures::future::pending().boxed();
+                                continue;
+                            }
+                        }
+                    }
+                    new_state = wait_for_new_mpc_state() => {
+                        let new_state = new_state.with_context(|| format!("[{}] contract state receiver closed", job.name))?;
+
+                        if (job.stop_fn)(&new_state) {
+                            tracing::info!(
+                                "[{}] contract state changed incompatibly, stopping",
+                                job.name
+                            );
+                            break new_state;
+                        }
                     }
                 }
+            }
+
+            let mut job: MpcJob = match state.clone() {
                 ContractState::Invalid => {
                     // Invalid state. Similar to initial state; we do nothing until the state changes.
                     MpcJob {
@@ -240,42 +294,6 @@ impl Coordinator {
             tracing::info!("[{}] Starting", job.name);
             let _report_guard =
                 ReportCurrentJobGuard::new(job.name, self.currently_running_job_name.clone());
-
-            loop {
-                tokio::select! {
-                    res = &mut job.fut => {
-                        match res {
-                            Err(e) => {
-                                tracing::error!("[{}] failed: {:?}", job.name, e);
-                                break;
-                            }
-                            Ok(MpcJobResult::Done) => {
-                                tracing::info!("[{}] finished successfully", job.name);
-                                break;
-                            }
-                            Ok(MpcJobResult::HaltUntilInterrupted) => {
-                                tracing::info!("[{}] halted; waiting for state change or timeout", job.name);
-                                // Replace it with a never-completing future so next iteration we wait for
-                                // only state change or timeout.
-                                job.fut = futures::future::pending().boxed();
-                                continue;
-                            }
-                        }
-                    }
-                    res = self.indexer.contract_state_receiver.changed() => {
-                        if res.is_err() {
-                            anyhow::bail!("[{}] contract state receiver closed", job.name);
-                        }
-                        if (job.stop_fn)(&self.indexer.contract_state_receiver.borrow()) {
-                            tracing::info!(
-                                "[{}] contract state changed incompatibly, stopping",
-                                job.name
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
         }
     }
 

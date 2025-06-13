@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 /// Maintains the state for the current key generation or resharing.
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEvent {
     /// The epoch ID that we're generating or resharing keys for.
     epoch_id: EpochId,
@@ -219,7 +219,7 @@ enum VoteSuccessResult {
 
 /// State for a single attempt at generating or resharing a key.
 #[near(serializers=[borsh, json])]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KeyEventInstance {
     attempt_id: AttemptId,
     /// The block in which KeyEvent::start() was called.

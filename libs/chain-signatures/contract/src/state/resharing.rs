@@ -19,7 +19,7 @@ use near_sdk::near;
 ///  - The previous running state's keys are needed to copy the public keys.
 ///  - We use the previous running state's DomainRegistry.
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "dev-utils", derive(Clone))]
 pub struct ResharingContractState {
     pub previous_running_state: RunningContractState,

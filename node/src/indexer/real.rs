@@ -1,15 +1,14 @@
 use super::handler::listen_blocks;
-use super::participants::{monitor_contract_state, ContractState};
+use super::participants::monitor_contract_state;
 use super::stats::{indexer_logger, IndexerStats};
 use super::tx_sender::handle_txn_requests;
 use super::{IndexerAPI, IndexerState};
 use crate::config::{load_respond_config_file, IndexerConfig, RespondConfigFile};
-use mpc_contract::state::ProtocolContractState;
 use near_crypto::SecretKey;
 use near_sdk::AccountId;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Spawns a real indexer, returning a handle to the indexer, [`IndexerApi`].
 ///
@@ -20,17 +19,14 @@ pub fn spawn_real_indexer(
     indexer_config: IndexerConfig,
     my_near_account_id: AccountId,
     account_secret_key: SecretKey,
-    protocol_state_sender: watch::Sender<ProtocolContractState>,
     indexer_exit_sender: oneshot::Sender<anyhow::Result<()>>,
 ) -> IndexerAPI {
-    let (chain_config_sender, chain_config_receiver) =
-        tokio::sync::watch::channel::<ContractState>(ContractState::WaitingForSync);
+    let (protocol_watcher_sender, protocol_watcher_receiver) = oneshot::channel();
     let (block_update_sender, block_update_receiver) = mpsc::unbounded_channel();
     let (chain_txn_sender, chain_txn_receiver) = mpsc::channel(10000);
 
     // TODO(#156): replace actix with tokio
-    std::thread::spawn(move || {
-        actix::System::new().block_on(async {
+    actix::System::new().block_on(async {
             let indexer =
                 near_indexer::Indexer::new(indexer_config.to_near_indexer_config(home_dir.clone()))
                     .expect("Failed to initialize the Indexer");
@@ -57,12 +53,12 @@ pub fn spawn_real_indexer(
             ));
             // TODO: migrate this into IndexerState
             let stats: Arc<Mutex<IndexerStats>> = Arc::new(Mutex::new(IndexerStats::new()));
-            actix::spawn(monitor_contract_state(
+            let contract_state_receiver = monitor_contract_state(
                 indexer_state.clone(),
-                indexer_config.port_override,
-                chain_config_sender,
-                protocol_state_sender,
-            ));
+            ).await;
+
+            protocol_watcher_sender.send(contract_state_receiver);
+
             actix::spawn(indexer_logger(Arc::clone(&stats), indexer_state.view_client.clone()));
             actix::spawn(handle_txn_requests(
                 chain_txn_receiver,
@@ -84,10 +80,13 @@ pub fn spawn_real_indexer(
                 tracing::error!("Indexer thread could not send result back to main driver.")
             };
         });
-    });
+
+    let contract_state_receiver = protocol_watcher_receiver
+        .blocking_recv()
+        .expect("Infallible");
 
     IndexerAPI {
-        contract_state_receiver: chain_config_receiver,
+        contract_state_receiver,
         block_update_receiver: Arc::new(Mutex::new(block_update_receiver)),
         txn_sender: chain_txn_sender,
     }

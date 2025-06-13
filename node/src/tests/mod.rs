@@ -2,7 +2,6 @@ use cait_sith::ecdsa::presign::PresignOutput;
 use cait_sith::ecdsa::triples::TripleGenerationOutput;
 use cait_sith::protocol::{run_protocol, Participant, Protocol};
 use k256::{AffinePoint, Scalar, Secp256k1};
-use mpc_contract::state::ProtocolContractState;
 use std::collections::HashMap;
 
 use crate::config::{
@@ -13,6 +12,7 @@ use crate::coordinator::Coordinator;
 use crate::db::SecretDB;
 use crate::indexer::fake::FakeIndexerManager;
 use crate::indexer::handler::{SignArgs, SignatureRequestFromChain};
+use crate::indexer::participants::ContractState;
 use crate::indexer::IndexerAPI;
 use crate::keyshare::KeyStorageConfig;
 use crate::p2p::testing::{generate_test_p2p_configs, PortSeed};
@@ -208,7 +208,7 @@ impl OneNodeTestConfig {
                 let root_task_handle = tracking::current_task();
                 let (signature_debug_request_sender, _) = tokio::sync::broadcast::channel(10);
                 let (_, web_contract_receiver) =
-                    tokio::sync::watch::channel(ProtocolContractState::NotInitialized);
+                    tokio::sync::watch::channel(ContractState::WaitingForSync);
                 let web_server = start_web_server(
                     root_task_handle,
                     signature_debug_request_sender.clone(),

@@ -20,7 +20,7 @@ use std::collections::BTreeSet;
 ///    Resharing state to reshare keys for new participants and also change the
 ///    threshold if desired.
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "dev-utils", derive(Clone))]
 pub struct RunningContractState {
     /// The domains for which we have a key ready for signature processing.

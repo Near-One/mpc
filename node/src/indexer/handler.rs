@@ -148,20 +148,17 @@ fn maybe_get_sign_args(
     let ExecutionStatusView::SuccessReceiptId(next_receipt_id) = outcome.status else {
         return None;
     };
-    let ReceiptEnumView::Action { ref actions, .. } = receipt.receipt else {
+    let ReceiptEnumView::Action { actions, .. } = &receipt.receipt else {
         return None;
     };
-    if actions.len() != 1 {
-        return None;
-    }
+
     let ActionView::FunctionCall {
-        ref method_name,
-        ref args,
-        ..
-    } = actions[0]
+        method_name, args, ..
+    } = actions.first()?
     else {
         return None;
     };
+
     if method_name != "sign" {
         return None;
     }

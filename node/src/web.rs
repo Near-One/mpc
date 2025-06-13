@@ -1,17 +1,23 @@
-use crate::config::WebUIConfig;
-use crate::tracking::TaskHandle;
-use axum::body::Body;
-use axum::extract::State;
-use axum::http::{Response, StatusCode};
-use axum::response::{Html, IntoResponse};
-use axum::serve;
-use futures::future::BoxFuture;
-use mpc_contract::state::ProtocolContractState;
-use mpc_contract::utils::protocol_state_to_string;
-use prometheus::{default_registry, Encoder, TextEncoder};
 use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc, watch};
+
+use axum::{
+    body::Body,
+    extract::State,
+    http::{Response, StatusCode},
+    response::{Html, IntoResponse},
+    routing::get,
+    serve,
+};
+use futures::future::BoxFuture;
+use mpc_contract::{state::ProtocolContractState, utils::protocol_state_to_string};
+use near_indexer_primitives::types::BlockHeight;
+use prometheus::{default_registry, Encoder, TextEncoder};
+use tokio::{
+    net::TcpListener,
+    sync::{broadcast, mpsc, watch},
+};
+
+use crate::{config::WebUIConfig, tracking::TaskHandle};
 
 /// Wrapper to make Axum understand how to convert anyhow::Error into a 500
 /// response.
@@ -47,7 +53,7 @@ struct WebServerState {
     /// Sender for debug requests that need the MPC client to respond.
     signature_debug_request_sender: broadcast::Sender<SignatureDebugRequest>,
     /// Receiver for contract state
-    contract_state_receiver: watch::Receiver<ProtocolContractState>,
+    contract_state_receiver: watch::Receiver<(BlockHeight, ProtocolContractState)>,
 }
 
 async fn debug_tasks(State(state): State<WebServerState>) -> String {
@@ -98,10 +104,9 @@ async fn debug_signatures(state: State<WebServerState>) -> Result<String, Anyhow
     debug_request_from_node(state, SignatureDebugRequestKind::RecentSignatures).await
 }
 
-async fn contract_state(mut state: State<WebServerState>) -> Result<String, AnyhowErrorWrapper> {
-    Ok(protocol_state_to_string(
-        &state.contract_state_receiver.borrow_and_update(),
-    ))
+async fn contract_state(state: State<WebServerState>) -> String {
+    let contract_state: &ProtocolContractState = &state.contract_state_receiver.borrow().1;
+    protocol_state_to_string(&contract_state)
 }
 
 async fn third_party_licenses() -> Html<&'static str> {
@@ -118,18 +123,18 @@ pub async fn start_web_server(
     root_task_handle: Arc<crate::tracking::TaskHandle>,
     signature_debug_request_sender: broadcast::Sender<SignatureDebugRequest>,
     config: WebUIConfig,
-    contract_state_receiver: watch::Receiver<ProtocolContractState>,
+    contract_state_receiver: watch::Receiver<(BlockHeight, ProtocolContractState)>,
 ) -> anyhow::Result<BoxFuture<'static, anyhow::Result<()>>> {
     use futures::FutureExt;
 
     let router = axum::Router::new()
-        .route("/metrics", axum::routing::get(metrics))
-        .route("/debug/tasks", axum::routing::get(debug_tasks))
-        .route("/debug/blocks", axum::routing::get(debug_blocks))
-        .route("/debug/signatures", axum::routing::get(debug_signatures))
-        .route("/debug/contract", axum::routing::get(contract_state))
-        .route("/licenses", axum::routing::get(third_party_licenses))
-        .route("/health", axum::routing::get(|| async { "OK" }))
+        .route("/metrics", get(metrics))
+        .route("/debug/tasks", get(debug_tasks))
+        .route("/debug/blocks", get(debug_blocks))
+        .route("/debug/signatures", get(debug_signatures))
+        .route("/debug/contract", get(contract_state))
+        .route("/licenses", get(third_party_licenses))
+        .route("/health", get(|| async { "OK" }))
         .with_state(WebServerState {
             root_task_handle,
             signature_debug_request_sender,

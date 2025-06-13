@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 /// generated a key. This can be useful if the current set of participants are no longer all online
 /// and we wish to perform a resharing before adding domains again.
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "dev-utils", derive(Clone))]
 pub struct InitializingContractState {
     /// All domains, including the already existing ones and the ones we're generating a new key for

@@ -16,7 +16,7 @@ use resharing::ResharingContractState;
 use running::RunningContractState;
 
 #[near(serializers=[borsh, json])]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "dev-utils", derive(Clone))]
 pub enum ProtocolContractState {
     NotInitialized,
