@@ -35,6 +35,7 @@ use near_sdk::{
     AccountId, CryptoHash, CurveType, Gas, GasWeight, NearToken, Promise, PromiseError,
     PromiseOrValue, PublicKey,
 };
+use primitives::participants::Participants;
 use primitives::{
     domain::{DomainConfig, DomainId, DomainRegistry, SignatureScheme},
     key_state::{AuthenticatedParticipantId, EpochId, KeyEventId, Keyset},
@@ -157,6 +158,8 @@ pub struct MpcContract {
     proposed_updates: ProposedUpdates,
     config: Config,
     tee_state: TeeState,
+    // todo: move `valid_tee` into `tee_state` once PR #410 is merged
+    valid_tee: bool,
 }
 
 impl MpcContract {
@@ -200,6 +203,7 @@ impl MpcContract {
             proposed_updates: ProposedUpdates::default(),
             config: Config::from(init_config),
             tee_state: Default::default(),
+            valid_tee: true,
         }
     }
 
@@ -397,6 +401,10 @@ impl VersionedMpcContract {
         let Self::V2(mpc_contract) = self else {
             env::panic_str("expected V2")
         };
+
+        if !mpc_contract.valid_tee {
+            env::panic_str("Due to previously failed tee validation, the network is not accepting new signature requests at this point in time. Try again later.")
+        }
 
         env::log_str(&serde_json::to_string(&near_sdk::env::random_seed_array()).unwrap());
 
@@ -918,6 +926,87 @@ impl VersionedMpcContract {
             _ => env::panic_str("expected V2"),
         }
     }
+
+    #[handle_result]
+    pub fn verify_tee(&mut self) -> Result<bool, Error> {
+        // todo: move the verification logic into `tee_state` once PR #410 is merged
+        // should this endpoint be protected?
+        log!("verify_tee: signer={}", env::signer_account_id());
+        match self {
+            Self::V1(contract) => {
+                let ProtocolContractState::Running(running_state) = &mut contract.protocol_state
+                else {
+                    // todo: document this well.
+                    env::panic_str("require running state");
+                };
+                let current_params = running_state.parameters.clone();
+                let statuses = contract.tee_state.tee_status(
+                    current_params
+                        .participants()
+                        .participants()
+                        .iter()
+                        .map(|(acc_id, _, _)| acc_id.clone())
+                        .collect(),
+                );
+                let mut new_participants = Vec::new();
+                let mut participants_to_remove = Vec::new();
+                for p in current_params.participants().participants().iter() {
+                    match statuses.get(&p.0).unwrap() {
+                        TeeQuoteStatus::Valid => {
+                            new_participants.push(p.clone());
+                        }
+                        TeeQuoteStatus::None => {
+                            // for now, we accept.
+                            new_participants.push(p.clone());
+                        }
+                        TeeQuoteStatus::Invalid => {
+                            participants_to_remove.push(p.clone());
+                        }
+                    }
+                }
+                if participants_to_remove.is_empty() {
+                    Ok(true)
+                } else {
+                    let threshold = current_params.threshold().value() as usize;
+                    let remaining = new_participants.len();
+                    let to_add = threshold.saturating_sub(remaining);
+
+                    if to_add > 0 {
+                        log!("Less than `threshold` participants are left with a valid TEE status. This requires manual intervention. We will not accept new signature requests as a safety precaution.");
+                        contract.valid_tee = false;
+                        return Ok(false);
+                    }
+                    // here, we set it to true, because at this point, we have at least `threshold`
+                    // number of participants running a valid docker image.
+                    contract.valid_tee = true;
+
+                    // do we want to adjust the threshold?
+                    //let n_participants_new = new_participants.len();
+                    //let new_threshold = (3 * n_participants_new + 4) / 5; // minimum 60%
+                    //let new_threshold = new_threshold.max(2); // but also minimum 2
+                    let new_threshold = threshold;
+
+                    let new_participants = Participants::init(
+                        current_params.participants().next_id(),
+                        new_participants,
+                    );
+                    let tp = ThresholdParameters::new(
+                        new_participants,
+                        Threshold::new(new_threshold as u64),
+                    )
+                    .expect("error");
+                    current_params.validate_incoming_proposal(&tp)?;
+                    let res = running_state.transition_to_resharing_no_checks(&tp);
+                    if let Some(resharing) = res {
+                        contract.protocol_state = ProtocolContractState::Resharing(resharing);
+                    }
+
+                    Ok(false)
+                }
+            }
+            _ => env::panic_str("expected V1"),
+        }
+    }
 }
 
 // Contract developer helper API
@@ -981,6 +1070,7 @@ impl VersionedMpcContract {
             pending_requests: LookupMap::new(StorageKey::PendingRequestsV2),
             proposed_updates: Default::default(),
             tee_state: Default::default(),
+            valid_tee: true,
         }))
     }
 

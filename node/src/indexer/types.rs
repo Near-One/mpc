@@ -127,6 +127,7 @@ pub enum ChainSendTransactionRequest {
     VoteReshared(ChainVoteResharedArgs),
     StartReshare(ChainStartReshareArgs),
     VoteAbortKeyEvent(ChainVoteAbortKeyEventArgs),
+    VerifyTee(),
 }
 
 impl ChainSendTransactionRequest {
@@ -138,6 +139,7 @@ impl ChainSendTransactionRequest {
             ChainSendTransactionRequest::StartReshare(_) => "start_reshare_instance",
             ChainSendTransactionRequest::StartKeygen(_) => "start_keygen_instance",
             ChainSendTransactionRequest::VoteAbortKeyEvent(_) => "vote_abort_key_event",
+            ChainSendTransactionRequest::VerifyTee() => "verify_tee",
         }
     }
 
@@ -148,7 +150,8 @@ impl ChainSendTransactionRequest {
             | Self::VoteReshared(_)
             | Self::StartReshare(_)
             | Self::StartKeygen(_)
-            | Self::VoteAbortKeyEvent(_) => 300 * TGAS,
+            | Self::VoteAbortKeyEvent(_)
+            | Self::VerifyTee() => 300 * TGAS,
         }
     }
 }

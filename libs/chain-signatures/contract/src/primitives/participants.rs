@@ -109,10 +109,6 @@ impl Participants {
         }
         Ok(())
     }
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-impl Participants {
     pub fn init(
         next_id: ParticipantId,
         participants: Vec<(AccountId, ParticipantId, ParticipantInfo)>,
@@ -122,7 +118,10 @@ impl Participants {
             participants,
         }
     }
+}
 
+#[cfg(any(test, feature = "test-utils"))]
+impl Participants {
     pub fn id(&self, account_id: &AccountId) -> Result<ParticipantId, Error> {
         self.participants
             .iter()
