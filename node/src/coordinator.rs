@@ -674,6 +674,8 @@ impl Coordinator {
     }
 }
 
+/// updates the `epoch_id` in the database to `new_epoch_id`.
+/// if the value in the databse does not match `new_epoch_id`, it is updated and all triples and pre-signatures are deleted.
 pub fn delete_stale_triples_and_presignatures(
     db: &Arc<SecretDB>,
     new_epoch_id: EpochId,
@@ -713,9 +715,8 @@ pub fn delete_stale_triples_and_presignatures(
     tracing::info!("Deleting all triples and presignatures...");
     let _ = update_writer.delete_all(DBCol::Presignature);
     let _ = update_writer.delete_all(DBCol::Triple);
-    tracing::info!("Deleted all presignatures");
-
     update_writer.commit()?;
+    tracing::info!("Deleted all presignatures");
 
     Ok(())
 }
