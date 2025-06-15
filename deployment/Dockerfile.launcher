@@ -1,0 +1,21 @@
+FROM debian:bookworm-slim@sha256:4b44499bc2a6c78d726f3b281e6798009c0ae1f034b0bfaf6a227147dcff928b
+
+# Install packages with exact versions for reproducibility
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        docker.io=20.10.24+dfsg1-1+deb12u1 \
+        docker-compose=1.29.2-3 \
+        curl=7.88.1-10+deb12u12 \
+        jq=1.6-2.1 \
+        bash=5.2.15-2+b7 \
+        coreutils=9.1-1 \
+        python3=3.11.2-1+b1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -rf /var/log/* /var/cache/ldconfig/aux-cache
+
+COPY launcher.py /scripts/
+RUN chmod +x /scripts/launcher.py
+ENV PATH="/scripts:${PATH}"
+RUN mkdir -p /app-data
+RUN mkdir -p /mnt/shared
+CMD ["python3", "/scripts/launcher.py"]

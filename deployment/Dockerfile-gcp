@@ -1,7 +1,8 @@
-FROM rust:latest AS builder
-RUN apt-get update -y && apt-get install -y --no-install-recommends clang  # needed for rocksdb
+FROM rust:1.86-bullseye@sha256:3ae85170272532616218575edad2310507f72991766775d095a82acf56b29fd6 AS builder
+RUN apt-get update -y && apt-get install -y --no-install-recommends clang=1:11.0-51+nmu5 # needed for rocksdb
 
 WORKDIR /app
+COPY Makefile .
 COPY node node
 COPY Cargo.lock Cargo.lock
 COPY Cargo.toml Cargo.toml
@@ -9,16 +10,16 @@ COPY rust-toolchain.toml rust-toolchain.toml
 COPY libs/chain-signatures libs/chain-signatures
 COPY third-party-licenses third-party-licenses
 
-RUN cargo build --locked --release
+RUN make build-reproducible
 
-FROM google/cloud-sdk:debian_component_based AS runtime
+FROM google/cloud-sdk:debian_component_based@sha256:2724df777051d557c8ef2a272060ea3912d70f4f5313ec85c8d07d5da400ff73 AS runtime
 RUN apt-get update -y \
-    && apt-get install -y --no-install-recommends openssl ca-certificates
+    && apt-get install -y --no-install-recommends openssl=3.0.15-1~deb12u1 ca-certificates=20230311
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 WORKDIR /app
-COPY --from=builder /app/target/release/mpc-node mpc-node
+COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/mpc-node mpc-node
 COPY deployment/gcp-start.sh /app/gcp-start.sh
 RUN chmod +x /app/gcp-start.sh
 CMD [ "/app/gcp-start.sh" ]
